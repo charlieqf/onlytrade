@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onlytrade.dev/schemas/market.bar.v1.schema.json",
+  "title": "OnlyTrade Market Bar Frame v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "market",
+    "mode",
+    "provider",
+    "feed",
+    "seq",
+    "event_ts_ms",
+    "ingest_ts_ms",
+    "instrument",
+    "interval",
+    "window",
+    "session",
+    "bar"
+  ],
+  "properties": {
+    "schema_version": { "const": "market.bar.v1" },
+    "market": { "const": "CN-A" },
+    "mode": { "enum": ["mock", "real"] },
+    "provider": { "type": "string", "minLength": 1 },
+    "feed": { "const": "bars" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "event_ts_ms": { "type": "integer", "minimum": 0 },
+    "ingest_ts_ms": { "type": "integer", "minimum": 0 },
+    "instrument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "exchange", "timezone", "currency"],
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "exchange": { "enum": ["SSE", "SZSE", "OTHER"] },
+        "timezone": { "const": "Asia/Shanghai" },
+        "currency": { "const": "CNY" }
+      }
+    },
+    "interval": { "enum": ["1m", "5m", "15m", "30m", "60m", "1h", "4h", "1d"] },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ts_ms", "end_ts_ms", "trading_day"],
+      "properties": {
+        "start_ts_ms": { "type": "integer", "minimum": 0 },
+        "end_ts_ms": { "type": "integer", "minimum": 0 },
+        "trading_day": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "is_halt", "is_partial"],
+      "properties": {
+        "phase": {
+          "enum": [
+            "pre_open",
+            "continuous_am",
+            "lunch_break",
+            "continuous_pm",
+            "close_auction",
+            "closed"
+          ]
+        },
+        "is_halt": { "type": "boolean" },
+        "is_partial": { "type": "boolean" }
+      }
+    },
+    "bar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["open", "high", "low", "close", "volume_shares", "turnover_cny"],
+      "properties": {
+        "open": { "type": "number" },
+        "high": { "type": "number" },
+        "low": { "type": "number" },
+        "close": { "type": "number" },
+        "volume_shares": { "type": "number", "minimum": 0 },
+        "turnover_cny": { "type": "number", "minimum": 0 },
+        "vwap": { "type": "number" }
+      }
+    }
+  }
+}

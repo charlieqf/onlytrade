@@ -8,6 +8,42 @@ import type {
   SystemStatus,
   TraderInfo,
 } from '../types'
+import type { MarketBarFrameBatchV1, MarketBarFrameV1 } from '../contracts/marketData'
+import { generateMockFrameBatch, generateMockLegacyKlines } from './mockMarketData'
+
+let replayBatchCache: MarketBarFrameBatchV1 | null = null
+let replayBatchPromise: Promise<MarketBarFrameBatchV1 | null> | null = null
+
+async function loadReplayBatch(): Promise<MarketBarFrameBatchV1 | null> {
+  if (replayBatchCache) return replayBatchCache
+  if (replayBatchPromise) return replayBatchPromise
+
+  replayBatchPromise = fetch('/replay/cn-a/latest/frames.1m.json')
+    .then(async (res) => {
+      if (!res.ok) return null
+      const data = (await res.json()) as MarketBarFrameBatchV1
+      if (!data || !Array.isArray(data.frames)) return null
+      replayBatchCache = data
+      return data
+    })
+    .catch(() => null)
+    .finally(() => {
+      replayBatchPromise = null
+    })
+
+  return replayBatchPromise
+}
+
+function replayFramesForSymbol(
+  frames: MarketBarFrameV1[],
+  symbol: string,
+  limit: number
+): MarketBarFrameV1[] {
+  const filtered = frames.filter((f) => f.instrument.symbol === symbol)
+  const sorted = [...filtered].sort((a, b) => a.window.start_ts_ms - b.window.start_ts_ms)
+  const safeLimit = Math.max(1, Math.min(limit, 2000))
+  return sorted.slice(-safeLimit)
+}
 
 export type DemoMode = 'static' | 'mock-live' | 'live'
 
@@ -323,68 +359,6 @@ function getStatistics(): Statistics {
   }
 }
 
-function hashSymbol(symbol: string): number {
-  let hash = 0
-  for (let i = 0; i < symbol.length; i++) {
-    hash = (hash << 5) - hash + symbol.charCodeAt(i)
-    hash |= 0
-  }
-  return Math.abs(hash)
-}
-
-function intervalMs(interval: string): number {
-  switch (interval) {
-    case '1m': return 60_000
-    case '5m': return 5 * 60_000
-    case '15m': return 15 * 60_000
-    case '30m': return 30 * 60_000
-    case '1h': return 60 * 60_000
-    case '4h': return 4 * 60 * 60_000
-    case '1d': return 24 * 60 * 60_000
-    default: return 5 * 60_000
-  }
-}
-
-function generateKlines(symbol: string, interval: string, limit: number) {
-  const seed = hashSymbol(symbol)
-  const base = 80 + (seed % 1500)
-  const step = intervalMs(interval)
-  const now = Date.now()
-  const bars: Array<{
-    openTime: number
-    open: number
-    high: number
-    low: number
-    close: number
-    volume: number
-    quoteVolume: number
-  }> = []
-
-  let prev = base
-  for (let i = limit - 1; i >= 0; i--) {
-    const openTime = now - i * step
-    const drift = Math.sin((limit - i) / 12) * (base * 0.001)
-    const noise = ((seed + i * 17) % 11 - 5) * (base * 0.0006)
-    const open = prev
-    const close = Math.max(0.1, open + drift + noise)
-    const high = Math.max(open, close) * 1.004
-    const low = Math.min(open, close) * 0.996
-    const volume = 5000 + ((seed + i * 29) % 9000)
-    bars.push({
-      openTime,
-      open: Number(open.toFixed(4)),
-      high: Number(high.toFixed(4)),
-      low: Number(low.toFixed(4)),
-      close: Number(close.toFixed(4)),
-      volume,
-      quoteVolume: Number((volume * close).toFixed(2)),
-    })
-    prev = close
-  }
-
-  return bars
-}
-
 function generateEquityHistory(traderId: string, points = 72) {
   const base = 100000
   const rank = getCompetitionData().traders.find((t) => t.trader_id === traderId)
@@ -478,7 +452,7 @@ function parseUrl(input: string): URL {
   return new URL(input, 'http://localhost')
 }
 
-export function getStaticApiData(url: string, method: string, body?: any): any | undefined {
+export async function getStaticApiData(url: string, method: string, body?: any): Promise<any | undefined> {
   if (!isStaticDemoMode()) return undefined
   const parsed = parseUrl(url)
   const path = parsed.pathname
@@ -503,11 +477,71 @@ export function getStaticApiData(url: string, method: string, body?: any): any |
 
   if (method === 'GET' && path === '/api/positions/history') return getPositionHistory(traderId)
 
+  if (method === 'GET' && path === '/api/market/frames') {
+    const symbol = parsed.searchParams.get('symbol') || '600519.SH'
+    const interval = (parsed.searchParams.get('interval') || '5m') as '1m' | '5m' | '15m' | '30m' | '60m' | '1h' | '4h' | '1d'
+    const limit = Number(parsed.searchParams.get('limit') || '800')
+
+    const replaySource = parsed.searchParams.get('source')
+    const allowReplay = replaySource !== 'mock'
+    if (allowReplay && interval === '1m') {
+      const replay = await loadReplayBatch()
+      if (replay?.frames?.length) {
+        return {
+          ...replay,
+          mode: isMockLiveDemoMode() ? 'real' : replay.mode,
+          provider: isMockLiveDemoMode() ? 'replay-stream' : replay.provider,
+          frames: replayFramesForSymbol(
+            replay.frames,
+            symbol,
+            Number.isFinite(limit) ? Math.min(limit, 1500) : 800
+          ),
+        }
+      }
+    }
+
+    return generateMockFrameBatch({
+      symbol,
+      interval,
+      limit: Number.isFinite(limit) ? Math.min(limit, 1500) : 800,
+      mode: isMockLiveDemoMode() ? 'real' : 'mock',
+      provider: isMockLiveDemoMode() ? 'mock-replay-stream' : 'static-mock-feed',
+    })
+  }
+
   if (method === 'GET' && path === '/api/klines') {
     const symbol = parsed.searchParams.get('symbol') || '600519.SH'
-    const interval = parsed.searchParams.get('interval') || '5m'
+    const interval = (parsed.searchParams.get('interval') || '5m') as '1m' | '5m' | '15m' | '30m' | '60m' | '1h' | '4h' | '1d'
     const limit = Number(parsed.searchParams.get('limit') || '800')
-    return generateKlines(symbol, interval, Number.isFinite(limit) ? Math.min(limit, 1500) : 800)
+
+    const replaySource = parsed.searchParams.get('source')
+    const allowReplay = replaySource !== 'mock'
+    if (allowReplay && interval === '1m') {
+      const replay = await loadReplayBatch()
+      if (replay?.frames?.length) {
+        return replayFramesForSymbol(
+          replay.frames,
+          symbol,
+          Number.isFinite(limit) ? Math.min(limit, 1500) : 800
+        ).map((frame) => ({
+          openTime: frame.window.start_ts_ms,
+          open: frame.bar.open,
+          high: frame.bar.high,
+          low: frame.bar.low,
+          close: frame.bar.close,
+          volume: frame.bar.volume_shares,
+          quoteVolume: frame.bar.turnover_cny,
+        }))
+      }
+    }
+
+    return generateMockLegacyKlines({
+      symbol,
+      interval,
+      limit: Number.isFinite(limit) ? Math.min(limit, 1500) : 800,
+      mode: isMockLiveDemoMode() ? 'real' : 'mock',
+      provider: isMockLiveDemoMode() ? 'mock-replay-stream' : 'static-mock-feed',
+    })
   }
 
   if (method === 'GET' && path === '/api/orders') return []

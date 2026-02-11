@@ -191,7 +191,7 @@ export class HttpClient {
         }
       }
 
-      const mocked = getStaticApiData(requestUrl, method, options.data)
+      const mocked = await getStaticApiData(requestUrl, method, options.data)
       if (mocked !== undefined) {
         return {
           success: true,

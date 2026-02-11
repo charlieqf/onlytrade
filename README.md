@@ -28,12 +28,25 @@ VITE_DEMO_MODE=mock-live npm run dev
 
 Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 
+### Build Yesterday Replay Pack (A-share)
+
+```bash
+node scripts/fetch-cn-replay.mjs
+```
+
+This fetches yesterday 1m bars (Yahoo) for a starter CN-A symbol set and writes:
+
+- `data/replay/cn-a/<YYYY-MM-DD>/frames.1m.jsonl`
+- `onlytrade-web/public/replay/cn-a/latest/frames.1m.json`
+
 ## Planning + Progress
 
 - `docs/IMPLEMENTATION_PLAN.md`
 - `docs/DEMO_MILESTONES.md`
 - `docs/PROGRESS.md`
 - `docs/UI_COMPLETE_CHECKLIST.md`
+- `docs/MARKET_DATA_STANDARD.md`
+- `docs/A_SHARE_REALTIME_RETRIEVAL.md`
 - `docs/TESTING.md`
 
 ## Third-party

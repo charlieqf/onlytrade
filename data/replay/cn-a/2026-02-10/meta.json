@@ -1,0 +1,15 @@
+{
+  "trading_day": "2026-02-10",
+  "provider": "yahoo-finance",
+  "interval": "1m",
+  "symbols": [
+    "000858.SZ",
+    "300750.SZ",
+    "600036.SH",
+    "600519.SH",
+    "601318.SH"
+  ],
+  "frame_count": 1194,
+  "generated_at": "2026-02-11T08:12:43.230Z",
+  "source_note": "Yahoo Finance 1m bars replay pack for frontend mock/replay use"
+}

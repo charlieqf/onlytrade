@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onlytrade.dev/schemas/market.frames.v1.schema.json",
+  "title": "OnlyTrade Market Frames Batch v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "market", "mode", "provider", "frames"],
+  "properties": {
+    "schema_version": { "const": "market.frames.v1" },
+    "market": { "const": "CN-A" },
+    "mode": { "enum": ["mock", "real"] },
+    "provider": { "type": "string", "minLength": 1 },
+    "frames": {
+      "type": "array",
+      "items": { "$ref": "market.bar.v1.schema.json" }
+    }
+  }
+}

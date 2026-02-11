@@ -5,6 +5,7 @@ This project follows a contract-first approach.
 - Contracts are defined here.
 - Example payloads live in `onlytrade-web/tests/fixtures/`.
 - Backend should serve these shapes (fixtures first, then real implementations behind the same contracts).
+- Market data uses one canonical schema for both mock and real modes (`market.bar.v1`).
 
 ## Conventions
 
@@ -36,6 +37,7 @@ The near-finished frontend (`/lobby`, `/room`, `/leaderboard`) currently depends
 - `POST /api/equity-history-batch`
 - `GET /api/positions/history?trader_id=&limit=`
 - `GET /api/symbols?exchange=sim-cn`
+- `GET /api/market/frames?symbol=&interval=&limit=`
 - `GET /api/klines?symbol=&interval=&limit=&exchange=`
 - `GET /api/orders?trader_id=&symbol=&status=&limit=`
 - `GET /api/open-orders?trader_id=&symbol=`
@@ -153,9 +155,76 @@ Example:
 }
 ```
 
+### GET /api/market/frames?symbol=&interval=&limit=
+
+Canonical market-data endpoint.
+
+Returns `market.frames.v1` where each frame is `market.bar.v1`.
+
+This is the standard format for both mock and real data.
+
+Frontend demo behavior:
+
+- If replay data exists under `onlytrade-web/public/replay/cn-a/latest/frames.1m.json`, static mode serves replay-backed frames for `interval=1m`.
+- Add `source=mock` query to force generated mock frames.
+
+Example:
+
+```json
+{
+  "success": true,
+  "data": {
+    "schema_version": "market.frames.v1",
+    "market": "CN-A",
+    "mode": "mock",
+    "provider": "onlytrade-mock-feed",
+    "frames": [
+      {
+        "schema_version": "market.bar.v1",
+        "market": "CN-A",
+        "mode": "mock",
+        "provider": "onlytrade-mock-feed",
+        "feed": "bars",
+        "seq": 1,
+        "event_ts_ms": 1768022100000,
+        "ingest_ts_ms": 1768022100123,
+        "instrument": {
+          "symbol": "600519.SH",
+          "exchange": "SSE",
+          "timezone": "Asia/Shanghai",
+          "currency": "CNY"
+        },
+        "interval": "1m",
+        "window": {
+          "start_ts_ms": 1768022040000,
+          "end_ts_ms": 1768022100000,
+          "trading_day": "2026-02-11"
+        },
+        "session": {
+          "phase": "continuous_am",
+          "is_halt": false,
+          "is_partial": false
+        },
+        "bar": {
+          "open": 1510.2,
+          "high": 1512.8,
+          "low": 1509.6,
+          "close": 1511.9,
+          "volume_shares": 8200,
+          "turnover_cny": 12397580,
+          "vwap": 1511.9
+        }
+      }
+    ]
+  }
+}
+```
+
 ### GET /api/klines?symbol=&interval=&limit=&exchange=
 
-Wrapped OHLCV list used by room kline chart.
+Legacy compatibility endpoint for current chart components.
+
+Must be derived from canonical `market.bar.v1` frames (not a separate data source).
 
 ### GET /api/orders?trader_id=&symbol=&status=&limit=
 

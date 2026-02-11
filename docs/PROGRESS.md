@@ -42,6 +42,9 @@ Reference: `docs/DEMO_MILESTONES.md`
 ### Backend
 - [x] Define API contracts (payload schemas + sample JSON)
 - [x] Expand contract doc to match current frontend data dependencies
+- [x] Define unified market-data schema for mock + real (`market.bar.v1`)
+- [x] Document A-share realtime retrieval architecture (`docs/A_SHARE_REALTIME_RETRIEVAL.md`)
+- [x] Prepare replay pack tooling for yesterday CN-A bars (`scripts/fetch-cn-replay.mjs`)
 - [ ] Minimal API service returning fixtures
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)

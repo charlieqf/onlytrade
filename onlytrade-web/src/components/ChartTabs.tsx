@@ -8,14 +8,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 
 interface ChartTabsProps {
   traderId: string
-  selectedSymbol?: string // 从外部选择的币种
+  selectedSymbol?: string
   updateKey?: number // 强制更新的 key
-  exchangeId?: string // 交易所ID
+  exchangeId?: string
 }
 
 type ChartTab = 'equity' | 'kline'
 type Interval = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d'
-type MarketType = 'hyperliquid' | 'crypto' | 'stocks' | 'forex' | 'metals'
+type MarketType = 'a-shares'
 
 interface SymbolInfo {
   symbol: string
@@ -23,13 +23,16 @@ interface SymbolInfo {
   category: string
 }
 
-// 市场类型配置
+// Static milestone focuses on one market mode only: A-shares.
 const MARKET_CONFIG = {
-  hyperliquid: { exchange: 'hyperliquid', defaultSymbol: 'BTC', icon: '🔷', label: { zh: 'HL', en: 'HL' }, color: 'cyan', hasDropdown: true },
-  crypto: { exchange: 'binance', defaultSymbol: 'BTCUSDT', icon: '₿', label: { zh: '加密', en: 'Crypto' }, color: 'yellow', hasDropdown: false },
-  stocks: { exchange: 'alpaca', defaultSymbol: 'AAPL', icon: '📈', label: { zh: '美股', en: 'Stocks' }, color: 'green', hasDropdown: false },
-  forex: { exchange: 'forex', defaultSymbol: 'EUR/USD', icon: '💱', label: { zh: '外汇', en: 'Forex' }, color: 'blue', hasDropdown: false },
-  metals: { exchange: 'metals', defaultSymbol: 'XAU/USD', icon: '🥇', label: { zh: '金属', en: 'Metals' }, color: 'amber', hasDropdown: false },
+  'a-shares': {
+    exchange: 'sim-cn',
+    defaultSymbol: '600519.SH',
+    icon: 'CN',
+    label: { zh: 'A股', en: 'A-Shares' },
+    color: 'gold',
+    hasDropdown: false,
+  },
 }
 
 const INTERVALS: { value: Interval; label: string }[] = [
@@ -44,17 +47,14 @@ const INTERVALS: { value: Interval; label: string }[] = [
 
 // 根据交易所ID推断市场类型
 function getMarketTypeFromExchange(exchangeId: string | undefined): MarketType {
-  if (!exchangeId) return 'hyperliquid'
-  const lower = exchangeId.toLowerCase()
-  if (lower.includes('hyperliquid')) return 'hyperliquid'
-  // 其他交易所默认使用 crypto 类型
-  return 'crypto'
+  void exchangeId
+  return 'a-shares'
 }
 
 export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: ChartTabsProps) {
   const { language } = useLanguage()
   const [activeTab, setActiveTab] = useState<ChartTab>('equity')
-  const [chartSymbol, setChartSymbol] = useState<string>('BTC')
+  const [chartSymbol, setChartSymbol] = useState<string>('600519.SH')
   const [interval, setInterval] = useState<Interval>('5m')
   const [symbolInput, setSymbolInput] = useState('')
   const [marketType, setMarketType] = useState<MarketType>(() => getMarketTypeFromExchange(exchangeId))
@@ -71,8 +71,7 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
 
   // 根据市场类型确定交易所
   const marketConfig = MARKET_CONFIG[marketType]
-  // 优先使用传入的 exchangeId（非 hyperliquid 时）
-  const currentExchange = marketType === 'hyperliquid' ? 'hyperliquid' : (exchangeId || marketConfig.exchange)
+  const currentExchange = exchangeId || marketConfig.exchange
 
   // 获取可用币种列表
   useEffect(() => {
@@ -107,13 +106,6 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // 切换市场类型时更新默认符号
-  const handleMarketTypeChange = (type: MarketType) => {
-    setMarketType(type)
-    setChartSymbol(MARKET_CONFIG[type].defaultSymbol)
-    setShowDropdown(false)
-  }
-
   // 过滤后的币种列表
   const filteredSymbols = availableSymbols.filter(s =>
     s.symbol.toLowerCase().includes(searchFilter.toLowerCase())
@@ -132,11 +124,7 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
   const handleSymbolSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (symbolInput.trim()) {
-      let symbol = symbolInput.trim().toUpperCase()
-      // 加密货币自动加 USDT 后缀
-      if (marketType === 'crypto' && !symbol.endsWith('USDT')) {
-        symbol = symbol + 'USDT'
-      }
+      const symbol = symbolInput.trim().toUpperCase()
       setChartSymbol(symbol)
       setSymbolInput('')
     }
@@ -182,26 +170,11 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
             <span className="md:hidden">Kline</span>
           </button>
 
-          {/* Market Type Pills - Only when kline active, HIDDEN on mobile to save space */}
           {activeTab === 'kline' && (
-            <div className="hidden md:flex items-center gap-1 ml-2 border-l border-white/10 pl-2">
-              {(Object.keys(MARKET_CONFIG) as MarketType[]).map((type) => {
-                const config = MARKET_CONFIG[type]
-                const isActive = marketType === type
-                return (
-                  <button
-                    key={type}
-                    onClick={() => handleMarketTypeChange(type)}
-                    className={`px-2.5 py-1 text-[10px] font-medium rounded transition-all border ${isActive
-                      ? 'bg-white/10 text-white border-white/20'
-                      : 'text-nofx-text-muted border-transparent hover:text-nofx-text-main hover:bg-white/5'
-                      }`}
-                  >
-                    <span className="mr-1 opacity-70">{config.icon}</span>
-                    {language === 'zh' ? config.label.zh : config.label.en}
-                  </button>
-                )
-              })}
+            <div className="hidden md:flex items-center gap-2 ml-2 border-l border-white/10 pl-2">
+              <span className="text-[10px] px-2 py-1 rounded border border-nofx-gold/25 bg-nofx-gold/10 text-nofx-gold font-semibold">
+                {language === 'zh' ? 'A股' : 'A-Shares'}
+              </span>
             </div>
           )}
         </div>

@@ -42,9 +42,10 @@ function getExchangeDisplayNameFromList(
     exchangeId: string | undefined,
     exchanges: Exchange[] | undefined
 ): string {
-    if (!exchangeId) return 'Unknown'
+    if (!exchangeId) return 'CN-SIM'
+    if (exchangeId.toLowerCase().includes('sim-cn')) return 'CN-SIM'
     const exchange = exchanges?.find((e) => e.id === exchangeId)
-    if (!exchange) return exchangeId.substring(0, 8).toUpperCase() + '...'
+    if (!exchange) return 'CN-SIM'
     const typeName = exchange.exchange_type?.toUpperCase() || exchange.name
     return exchange.account_name
         ? `${typeName} - ${exchange.account_name}`
@@ -56,10 +57,11 @@ function getExchangeTypeFromList(
     exchangeId: string | undefined,
     exchanges: Exchange[] | undefined
 ): string {
-    if (!exchangeId) return 'binance'
+    if (!exchangeId) return 'sim-cn'
+    if (exchangeId.toLowerCase().includes('sim-cn')) return 'sim-cn'
     const exchange = exchanges?.find((e) => e.id === exchangeId)
-    if (!exchange) return 'binance' // Default to binance for charts
-    return exchange.exchange_type?.toLowerCase() || 'binance'
+    if (!exchange) return 'sim-cn'
+    return exchange.exchange_type?.toLowerCase() || 'sim-cn'
 }
 
 // Helper function to check if exchange is a perp-dex type (wallet-based)
@@ -469,7 +471,7 @@ export function TraderDashboardPage({
                         </span>
                         <span className="w-px h-3 bg-white/10 hidden md:block" />
                         <span className="flex items-center gap-2">
-                            <span className="opacity-60">Exchange:</span>
+                            <span className="opacity-60">Market:</span>
                             <span className="text-nofx-text-main font-semibold">
                                 {getExchangeDisplayNameFromList(
                                     selectedTrader.exchange_id,
@@ -479,9 +481,9 @@ export function TraderDashboardPage({
                         </span>
                         <span className="w-px h-3 bg-white/10 hidden md:block" />
                         <span className="flex items-center gap-2">
-                            <span className="opacity-60">Strategy:</span>
+                            <span className="opacity-60">Style:</span>
                             <span className="text-nofx-gold font-semibold tracking-wide">
-                                {selectedTrader.strategy_name || 'No Strategy'}
+                                {selectedTrader.strategy_name || 'Virtual AI'}
                             </span>
                         </span>
                         {status && (
@@ -512,7 +514,7 @@ export function TraderDashboardPage({
                     <StatCard
                         title={t('totalEquity', language)}
                         value={`${account?.total_equity?.toFixed(2) || '0.00'}`}
-                        unit="USDT"
+                        unit="CNY"
                         change={account?.total_pnl_pct || 0}
                         positive={(account?.total_pnl ?? 0) > 0}
                         icon="💰"
@@ -520,14 +522,14 @@ export function TraderDashboardPage({
                     <StatCard
                         title={t('availableBalance', language)}
                         value={`${account?.available_balance?.toFixed(2) || '0.00'}`}
-                        unit="USDT"
+                        unit="CNY"
                         subtitle={`${account?.available_balance && account?.total_equity ? ((account.available_balance / account.total_equity) * 100).toFixed(1) : '0.0'}% ${t('free', language)}`}
                         icon="💳"
                     />
                     <StatCard
                         title={t('totalPnL', language)}
                         value={`${account?.total_pnl !== undefined && account.total_pnl >= 0 ? '+' : ''}${account?.total_pnl?.toFixed(2) || '0.00'}`}
-                        unit="USDT"
+                        unit="CNY"
                         change={account?.total_pnl_pct || 0}
                         positive={(account?.total_pnl ?? 0) >= 0}
                         icon="📈"

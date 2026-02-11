@@ -67,6 +67,9 @@ const getQuoteUnit = (exchange: string): string => {
   if (['alpaca'].includes(exchange)) {
     return 'USD'
   }
+  if (['sim-cn', 'cn', 'ashare', 'a-share'].includes(exchange)) {
+    return 'CNY'
+  }
   if (['forex', 'metals'].includes(exchange)) {
     return '' // 外汇/贵金属没有真实成交量
   }
@@ -76,6 +79,9 @@ const getQuoteUnit = (exchange: string): string => {
 // 获取成交量数量单位
 const getBaseUnit = (exchange: string, symbol: string): string => {
   if (['alpaca'].includes(exchange)) {
+    return '股'
+  }
+  if (['sim-cn', 'cn', 'ashare', 'a-share'].includes(exchange)) {
     return '股'
   }
   if (['forex', 'metals'].includes(exchange)) {
@@ -95,11 +101,11 @@ const formatVolume = (value: number): string => {
 }
 
 export function AdvancedChart({
-  symbol = 'BTCUSDT',
+  symbol = '600519.SH',
   interval = '5m',
   traderID,
   height = 550,
-  exchange = 'binance', // 默认使用 binance
+  exchange = 'sim-cn',
   onSymbolChange: _onSymbolChange, // Available for future use
 }: AdvancedChartProps) {
   void _onSymbolChange // Prevent unused warning
@@ -934,11 +940,11 @@ export function AdvancedChart({
             <span
               className="text-[10px] px-1.5 py-0.5 rounded font-medium uppercase"
               style={{
-                background: exchange === 'hyperliquid' ? 'rgba(80, 227, 194, 0.1)' : 'rgba(243, 186, 47, 0.1)',
-                color: exchange === 'hyperliquid' ? '#50E3C2' : '#F3BA2F',
+                background: 'rgba(243, 186, 47, 0.1)',
+                color: '#F3BA2F',
               }}
             >
-              {exchange?.toUpperCase()}
+              {exchange === 'sim-cn' ? 'CN-SIM' : exchange?.toUpperCase()}
             </span>
           </div>
 

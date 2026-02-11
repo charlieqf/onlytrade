@@ -5,6 +5,7 @@ import { Menu, X, ChevronDown } from 'lucide-react'
 import { t, type Language } from '../i18n/translations'
 import { useSystemConfig } from '../hooks/useSystemConfig'
 import { OFFICIAL_LINKS } from '../constants/branding'
+import { isStaticDemoMode } from '../demo/staticDemo'
 
 type Page =
   | 'lobby'
@@ -54,6 +55,7 @@ export default function HeaderBar({
   const userDropdownRef = useRef<HTMLDivElement>(null)
   const { config: systemConfig } = useSystemConfig()
   const registrationEnabled = systemConfig?.registration_enabled !== false
+  const staticDemo = isStaticDemoMode()
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -92,6 +94,11 @@ export default function HeaderBar({
           <span className="text-lg font-bold text-nofx-gold">
             OnlyTrade
           </span>
+          {staticDemo && (
+            <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-semibold uppercase tracking-wide">
+              Demo
+            </span>
+          )}
         </div>
 
         {/* Desktop Menu */}
@@ -105,7 +112,6 @@ export default function HeaderBar({
                 { page: 'lobby', path: '/lobby', label: language === 'zh' ? '大厅' : 'Lobby', requiresAuth: false },
                 { page: 'room', path: '/room', label: language === 'zh' ? '房间' : 'Room', requiresAuth: false },
                 { page: 'leaderboard', path: '/leaderboard', label: t('realtimeNav', language), requiresAuth: false },
-                { page: 'faq', path: '/faq', label: t('faqNav', language), requiresAuth: false },
               ]
 
               const handleNavClick = (tab: typeof navTabs[0]) => {
@@ -307,7 +313,6 @@ export default function HeaderBar({
                     { page: 'lobby', path: '/lobby', label: language === 'zh' ? '大厅' : 'Lobby', requiresAuth: false },
                     { page: 'room', path: '/room', label: language === 'zh' ? '房间' : 'Room', requiresAuth: false },
                     { page: 'leaderboard', path: '/leaderboard', label: t('realtimeNav', language), requiresAuth: false },
-                    { page: 'faq', path: '/faq', label: t('faqNav', language), requiresAuth: false },
                   ]
 
                   const handleMobileNavClick = (tab: typeof navTabs[0]) => {

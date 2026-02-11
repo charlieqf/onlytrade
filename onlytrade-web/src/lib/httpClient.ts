@@ -11,6 +11,7 @@
 
 import axios, { AxiosInstance, AxiosError, AxiosResponse } from 'axios'
 import { toast } from 'sonner'
+import { getStaticApiData, isStaticDemoMode } from '../demo/staticDemo'
 
 /**
  * Business response format - only business errors reach the caller
@@ -173,10 +174,36 @@ export class HttpClient {
       headers?: Record<string, string>
     } = {}
   ): Promise<ApiResponse<T>> {
+    const method = options.method || 'GET'
+
+    if (isStaticDemoMode()) {
+      let requestUrl = url
+      if (options.params && typeof options.params === 'object') {
+        const search = new URLSearchParams()
+        Object.entries(options.params).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            search.append(key, String(value))
+          }
+        })
+        const query = search.toString()
+        if (query) {
+          requestUrl = url.includes('?') ? `${url}&${query}` : `${url}?${query}`
+        }
+      }
+
+      const mocked = getStaticApiData(requestUrl, method, options.data)
+      if (mocked !== undefined) {
+        return {
+          success: true,
+          data: mocked as T,
+        }
+      }
+    }
+
     try {
       const response = await this.axiosInstance.request<T>({
         url,
-        method: options.method || 'GET',
+        method,
         data: options.data,
         params: options.params,
         headers: options.headers,

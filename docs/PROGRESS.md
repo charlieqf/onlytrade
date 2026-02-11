@@ -7,10 +7,11 @@ This file is the living progress tracker. Update it as work lands.
 - Repo bootstrapped with AGPL-3.0 license and third-party notices
 - Frontend forked into `onlytrade-web/` with `/lobby`, `/room`, `/leaderboard`
 - Frontend unit tests pass (Vitest)
+- Static demo mode implemented in frontend (`VITE_DEMO_MODE` defaults to static)
 
 ## Demo Milestones
 
-- [ ] Milestone 1: Static demo (content complete, static data)
+- [x] Milestone 1: Static demo (content complete, static data)
 - [ ] Milestone 2: Mock-live demo (app + agents look live with prepared mock streams)
 - [ ] Milestone 3: Real `gpt-4o-mini` agent logic on mock stock data
 
@@ -32,7 +33,7 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [ ] Room UI: rename labels to A-share terms (shares, lots, T+1)
 
 ### Backend
-- [ ] Define API contracts (payload schemas + sample JSON)
+- [x] Define API contracts (payload schemas + sample JSON)
 - [ ] Minimal API service returning fixtures
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)
@@ -40,7 +41,7 @@ Reference: `docs/DEMO_MILESTONES.md`
 
 ### Testing
 - [x] Unit tests (Vitest) in `onlytrade-web/src/**/*.test.*`
-- [ ] Add integration/E2E structure (Playwright recommended)
+- [x] Add integration/E2E structure (Playwright recommended)
 - [ ] Add one smoke test: lobby renders and navigation works
 
 ### Release

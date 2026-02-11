@@ -18,7 +18,9 @@ npm install
 npm run dev
 ```
 
-Note: the UI can boot without a backend, but most screens will be empty until API endpoints are implemented.
+Default mode is `static` demo mode (Milestone 1), so you can demo core pages without a backend.
+
+Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 
 ## Planning + Progress
 

@@ -10,6 +10,7 @@ This file is the living progress tracker. Update it as work lands.
 - Static demo mode implemented in frontend (`VITE_DEMO_MODE` defaults to static)
 - Milestone 2 started: mock-live demo mode scaffolded via `VITE_DEMO_MODE=mock-live`
 - Core frontend pass complete: app shell now centered on `/lobby`, `/room`, `/leaderboard` with Ask/Fuel + simulation-rule UI
+- UI-complete assessment added: `docs/UI_COMPLETE_CHECKLIST.md`
 
 ## Demo Milestones
 
@@ -36,6 +37,7 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Add frontend-only interaction panel (Ask/Fuel) in room
 - [x] Add visible simulation rules card in room and leaderboard
 - [x] Core demo UX near-final (lobby/room/leaderboard)
+- [x] Core frontend marked UI-complete for frontend-only scope (see `docs/UI_COMPLETE_CHECKLIST.md`)
 
 ### Backend
 - [x] Define API contracts (payload schemas + sample JSON)

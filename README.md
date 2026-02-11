@@ -33,6 +33,7 @@ Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 - `docs/IMPLEMENTATION_PLAN.md`
 - `docs/DEMO_MILESTONES.md`
 - `docs/PROGRESS.md`
+- `docs/UI_COMPLETE_CHECKLIST.md`
 - `docs/TESTING.md`
 
 ## Third-party

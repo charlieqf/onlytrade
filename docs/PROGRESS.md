@@ -8,6 +8,14 @@ This file is the living progress tracker. Update it as work lands.
 - Frontend forked into `onlytrade-web/` with `/lobby`, `/room`, `/leaderboard`
 - Frontend unit tests pass (Vitest)
 
+## Demo Milestones
+
+- [ ] Milestone 1: Static demo (content complete, static data)
+- [ ] Milestone 2: Mock-live demo (app + agents look live with prepared mock streams)
+- [ ] Milestone 3: Real `gpt-4o-mini` agent logic on mock stock data
+
+Reference: `docs/DEMO_MILESTONES.md`
+
 ## MVP Checklist
 
 ### Product Decisions

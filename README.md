@@ -23,6 +23,7 @@ Note: the UI can boot without a backend, but most screens will be empty until AP
 ## Planning + Progress
 
 - `docs/IMPLEMENTATION_PLAN.md`
+- `docs/DEMO_MILESTONES.md`
 - `docs/PROGRESS.md`
 - `docs/TESTING.md`
 

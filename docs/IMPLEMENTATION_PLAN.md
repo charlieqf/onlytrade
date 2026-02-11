@@ -15,6 +15,16 @@ Constraints locked in:
 - Market focus: Mainland China A-shares, HS300 universe
 - Entertainment/education framing (not investment advice)
 
+## Demo Delivery Track
+
+Alongside engineering phases, we deliver three demo milestones:
+
+- Milestone 1: static but content-complete app demo
+- Milestone 2: mock-live app + agent behavior demo (prepared datasets)
+- Milestone 3: real `gpt-4o-mini` agent reasoning with mock stock data
+
+Details and acceptance criteria: `docs/DEMO_MILESTONES.md`
+
 ## Phase 0 - Contracts + Fixtures (1-2 days)
 
 1) Define MVP contracts (frontend/backend boundary)

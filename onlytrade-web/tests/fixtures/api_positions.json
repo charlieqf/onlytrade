@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "data": [
+    {
+      "symbol": "600519.SH",
+      "side": "LONG",
+      "entry_price": 1500.0,
+      "mark_price": 1512.0,
+      "quantity": 100,
+      "position_value": 151200.0,
+      "unrealized_pnl": 1200.0,
+      "unrealized_pnl_pct": 0.8,
+      "leverage": 1,
+      "liq_price": 0
+    }
+  ]
+}

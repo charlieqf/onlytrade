@@ -1,0 +1,16 @@
+{
+  "success": true,
+  "data": [
+    {
+      "cycle": 128,
+      "timestamp": "2026-02-11T13:00:00Z",
+      "symbol": "600519.SH",
+      "action": "HOLD",
+      "success": true,
+      "error_message": "",
+      "input_prompt": "(omitted)",
+      "ai_thinking": "Market is stable; maintain position size and wait for confirmation.",
+      "executed_orders": []
+    }
+  ]
+}

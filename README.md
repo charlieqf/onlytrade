@@ -20,6 +20,12 @@ npm run dev
 
 Note: the UI can boot without a backend, but most screens will be empty until API endpoints are implemented.
 
+## Planning + Progress
+
+- `docs/IMPLEMENTATION_PLAN.md`
+- `docs/PROGRESS.md`
+- `docs/TESTING.md`
+
 ## Third-party
 
 See `THIRD_PARTY_NOTICES.md`.

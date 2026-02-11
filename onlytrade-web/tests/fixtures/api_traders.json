@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "data": [
+    {
+      "trader_id": "t_001",
+      "trader_name": "HS300 Momentum",
+      "ai_model": "qwen",
+      "is_running": true,
+      "show_in_competition": true
+    },
+    {
+      "trader_id": "t_002",
+      "trader_name": "Mean Reversion",
+      "ai_model": "deepseek",
+      "is_running": true,
+      "show_in_competition": true
+    }
+  ]
+}

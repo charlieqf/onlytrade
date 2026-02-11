@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "data": {
+    "total_cycles": 128,
+    "successful_cycles": 120,
+    "failed_cycles": 8,
+    "total_open_positions": 12,
+    "total_close_positions": 9
+  }
+}

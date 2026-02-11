@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": {
+    "is_running": true,
+    "ai_provider": "local",
+    "cycle_count": 128,
+    "last_cycle_time": "2026-02-11T13:00:00Z",
+    "strategy_type": "virtual",
+    "grid_symbol": null,
+    "success": true
+  }
+}

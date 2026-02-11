@@ -8,7 +8,6 @@ import { LoginPage } from './components/LoginPage'
 import { RegisterPage } from './components/RegisterPage'
 import { ResetPasswordPage } from './components/ResetPasswordPage'
 import { CompetitionPage } from './components/CompetitionPage'
-import { FAQPage } from './pages/FAQPage'
 import { LoginRequiredOverlay } from './components/LoginRequiredOverlay'
 import HeaderBar from './components/HeaderBar'
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext'
@@ -30,7 +29,6 @@ type Page =
   | 'lobby'
   | 'room'
   | 'leaderboard'
-  | 'faq'
   | 'login'
   | 'register'
 
@@ -42,20 +40,13 @@ function App() {
   const { loading: configLoading } = useSystemConfig()
   const [route, setRoute] = useState(window.location.pathname)
 
-  // Debug log
-  useEffect(() => {
-    console.log('[App] Mounted. Route:', window.location.pathname);
-  }, []);
-
-  // 从URL路径读取初始页面状态（支持刷新保持页面）
+  // Resolve page from current path.
   const getInitialPage = (): Page => {
     const path = window.location.pathname
-    const hash = window.location.hash.slice(1)
 
-    if (path === '/' || path === '' || path === '/lobby' || hash === 'lobby') return 'lobby'
-    if (path === '/leaderboard' || path === '/competition' || hash === 'leaderboard' || hash === 'competition') return 'leaderboard'
-    if (path === '/room' || path === '/dashboard' || hash === 'room') return 'room'
-    if (path === '/faq' || hash === 'faq') return 'faq'
+    if (path === '/' || path === '' || path === '/lobby') return 'lobby'
+    if (path === '/leaderboard' || path === '/competition') return 'leaderboard'
+    if (path === '/room' || path === '/dashboard') return 'room'
     return 'lobby'
   }
 
@@ -74,7 +65,6 @@ function App() {
       'lobby': '/lobby',
       'room': '/room',
       'leaderboard': '/leaderboard',
-      'faq': '/faq',
       'login': '/login',
       'register': '/register',
     }
@@ -117,27 +107,19 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState<string>('--:--:--')
   const [decisionsLimit, setDecisionsLimit] = useState<number>(5)
 
-  // 监听URL变化，同步页面状态
+  // Keep page state in sync with URL.
   useEffect(() => {
     const handleRouteChange = () => {
       const path = window.location.pathname
-      const hash = window.location.hash.slice(1)
       const params = new URLSearchParams(window.location.search)
       const traderParam = params.get('trader')
 
-      if (path === '/lobby' || path === '/' || hash === 'lobby' || hash === '') {
+      if (path === '/lobby' || path === '/') {
         setCurrentPage('lobby')
-      } else if (path === '/leaderboard' || path === '/competition' || hash === 'leaderboard' || hash === 'competition') {
+      } else if (path === '/leaderboard' || path === '/competition') {
         setCurrentPage('leaderboard')
-      } else if (path === '/faq' || hash === 'faq') {
-        setCurrentPage('faq')
-      } else if (
-        path === '/room' ||
-        path === '/dashboard' ||
-        hash === 'room'
-      ) {
+      } else if (path === '/room' || path === '/dashboard') {
         setCurrentPage('room')
-        // 如果 URL 中有 trader 参数（slug 格式），更新选中的 trader
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
@@ -145,10 +127,8 @@ function App() {
       setRoute(path)
     }
 
-    window.addEventListener('hashchange', handleRouteChange)
     window.addEventListener('popstate', handleRouteChange)
     return () => {
-      window.removeEventListener('hashchange', handleRouteChange)
       window.removeEventListener('popstate', handleRouteChange)
     }
   }, [])
@@ -239,16 +219,7 @@ function App() {
 
   const selectedTrader = traders?.find((t) => t.trader_id === selectedTraderId)
 
-  // Handle routing
-  useEffect(() => {
-    const handlePopState = () => {
-      setRoute(window.location.pathname)
-    }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
-
-  // Set current page based on route for consistent navigation state
+  // Set current page based on route for consistent navigation state.
   useEffect(() => {
     if (route === '/leaderboard' || route === '/competition') {
       setCurrentPage('leaderboard')
@@ -284,31 +255,6 @@ function App() {
   }
   if (route === '/register') {
     return <RegisterPage />
-  }
-  if (route === '/faq') {
-    return (
-      <div
-        className="min-h-screen"
-        style={{ background: '#0B0E11', color: '#EAECEF' }}
-      >
-        <HeaderBar
-          isLoggedIn={!!user}
-          currentPage="faq"
-          language={language}
-          onLanguageChange={setLanguage}
-          user={user}
-          onLogout={logout}
-          onLoginRequired={handleLoginRequired}
-          onPageChange={navigateToPage}
-        />
-        <FAQPage />
-        <LoginRequiredOverlay
-          isOpen={loginOverlayOpen}
-          onClose={() => setLoginOverlayOpen(false)}
-          featureName={loginOverlayFeature}
-        />
-      </div>
-    )
   }
   if (route === '/reset-password') {
     return <ResetPasswordPage />
@@ -387,12 +333,10 @@ function App() {
         </AnimatePresence>
       </main>
 
-      {/* Footer */}
-      {
-        <footer
-          className="mt-16"
-          style={{ borderTop: '1px solid #2B3139', background: '#181A20' }}
-        >
+      <footer
+        className="mt-16"
+        style={{ borderTop: '1px solid #2B3139', background: '#181A20' }}
+      >
           <div
             className="max-w-[1920px] mx-auto px-6 py-6 text-center text-sm"
             style={{ color: '#5E6673' }}
@@ -432,11 +376,9 @@ function App() {
                 </svg>
                 Source
               </a>
-              {/* Source link is the primary CTA for AGPL compliance */}
             </div>
           </div>
-        </footer>
-      }
+      </footer>
 
       {/* Login Required Overlay */}
       <LoginRequiredOverlay

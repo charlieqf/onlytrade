@@ -59,7 +59,7 @@ export function LobbyPage() {
                     {language === 'zh' ? '数据每 15 秒刷新' : 'Refresh every 15s'}
                   </div>
                   <div className="text-sm font-semibold text-zinc-200">
-                    {language === 'zh' ? 'HS300 (计划)' : 'HS300 (planned)'}
+                    {language === 'zh' ? 'HS300' : 'HS300'}
                   </div>
                 </div>
               </div>
@@ -89,8 +89,8 @@ export function LobbyPage() {
 
                 <div className="text-xs text-zinc-400">
                   {language === 'zh'
-                    ? '提示：当前 UI 仍复用 nofx 结构，后续会替换为 A股数据接口。'
-                    : 'Note: UI currently reuses nofx structure; A-share data APIs will be wired next.'}
+                    ? 'Demo 模式：页面使用静态或模拟流数据，便于演示完整交互。'
+                    : 'Demo mode: pages run on static or simulated stream data for complete interaction demos.'}
                 </div>
               </div>
             </div>

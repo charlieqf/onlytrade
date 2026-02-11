@@ -9,11 +9,12 @@ This file is the living progress tracker. Update it as work lands.
 - Frontend unit tests pass (Vitest)
 - Static demo mode implemented in frontend (`VITE_DEMO_MODE` defaults to static)
 - Milestone 2 started: mock-live demo mode scaffolded via `VITE_DEMO_MODE=mock-live`
+- Core frontend pass complete: app shell now centered on `/lobby`, `/room`, `/leaderboard` with Ask/Fuel + simulation-rule UI
 
 ## Demo Milestones
 
 - [x] Milestone 1: Static demo (content complete, static data)
-- [ ] Milestone 2: Mock-live demo (app + agents look live with prepared mock streams)
+- [x] Milestone 2: Mock-live demo (app + agents look live with prepared mock streams)
 - [ ] Milestone 3: Real `gpt-4o-mini` agent logic on mock stock data
 
 Reference: `docs/DEMO_MILESTONES.md`
@@ -30,10 +31,11 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Add lobby page (`/lobby`)
 - [x] Rebrand header/footer + source link
 - [x] Remove/retire crypto-first routes from app shell/nav (`/lobby`, `/room`, `/leaderboard` focused)
-- [ ] Replace any remaining NOFX-specific copy in non-core pages (landing/FAQ legacy files)
+- [ ] Replace any remaining NOFX-specific copy in non-core legacy pages (landing/FAQ files)
 - [x] Room UI: rename labels to A-share terms (shares, CNY, CN-SIM)
 - [x] Add frontend-only interaction panel (Ask/Fuel) in room
 - [x] Add visible simulation rules card in room and leaderboard
+- [x] Core demo UX near-final (lobby/room/leaderboard)
 
 ### Backend
 - [x] Define API contracts (payload schemas + sample JSON)

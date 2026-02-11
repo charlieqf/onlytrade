@@ -11,7 +11,6 @@ type Page =
   | 'lobby'
   | 'room'
   | 'leaderboard'
-  | 'faq'
   | 'login'
   | 'register'
 
@@ -30,7 +29,6 @@ interface HeaderBarProps {
 
 export default function HeaderBar({
   isLoggedIn = false,
-  isHomePage = false,
   currentPage,
   language = 'zh' as Language,
   onLanguageChange,
@@ -348,27 +346,6 @@ export default function HeaderBar({
                   ))
                 })()}
 
-                {/* Original Page Links */}
-                {isHomePage && (
-                  <div className="pt-6 border-t border-white/5 space-y-4">
-                    {[
-                      { key: 'features', label: t('features', language) },
-                      { key: 'howItWorks', label: t('howItWorks', language) },
-                    ].map((item, i) => (
-                      <motion.a
-                        key={item.key}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.5 + i * 0.1 }}
-                        href={`#${item.key === 'features' ? 'features' : 'how-it-works'}`}
-                        className="block text-lg font-mono text-zinc-600 hover:text-white"
-                        onClick={() => setMobileMenuOpen(false)}
-                      >
-                        {'>'} {item.label}
-                      </motion.a>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Bottom Actions */}

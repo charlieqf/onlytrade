@@ -116,12 +116,12 @@ export function TraderDashboardPage({
         setPositionsCurrentPage(1)
     }, [selectedTraderId, positionsPageSize])
 
-    // Auto-set chart symbol for grid trading
+    // Auto-set chart symbol from runtime hint if provided.
     useEffect(() => {
-        if (status?.strategy_type === 'grid_trading' && status?.grid_symbol) {
+        if (status?.grid_symbol) {
             setSelectedChartSymbol(status.grid_symbol)
         }
-    }, [status?.strategy_type, status?.grid_symbol])
+    }, [status?.grid_symbol])
 
     const handleAskSubmit = () => {
         const trimmed = askInput.trim()
@@ -363,7 +363,7 @@ export function TraderDashboardPage({
                         </span>
                         <span className="w-px h-3 bg-white/10 hidden md:block" />
                         <span className="flex items-center gap-2">
-                            <span className="opacity-60">Style:</span>
+                            <span className="opacity-60">Persona:</span>
                             <span className="text-nofx-gold font-semibold tracking-wide">
                                 {selectedTrader.strategy_name || 'Virtual AI'}
                             </span>

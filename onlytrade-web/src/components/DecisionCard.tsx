@@ -67,7 +67,7 @@ function ActionCard({ action, language, onSymbolClick }: { action: DecisionActio
             onClick={() => onSymbolClick?.(action.symbol)}
             title="Click to view chart"
           >
-            {action.symbol.replace('USDT', '')}
+            {action.symbol}
           </span>
           <span
             className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
@@ -140,13 +140,13 @@ function ActionCard({ action, language, onSymbolClick }: { action: DecisionActio
             )}
           </div>
 
-          {/* Leverage */}
+          {/* Position Size */}
           <div className="text-center">
             <div className="text-xs mb-1" style={{ color: '#848E9C' }}>
-              {t('leverage', language)}
+              {language === 'zh' ? '仓位' : 'Size'}
             </div>
             <div className="font-mono font-semibold" style={{ color: '#F0B90B' }}>
-              {action.leverage}x
+              {action.quantity || 0}
             </div>
           </div>
         </div>

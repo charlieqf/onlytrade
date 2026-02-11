@@ -29,12 +29,15 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Create `onlytrade-web/` from nofx
 - [x] Add lobby page (`/lobby`)
 - [x] Rebrand header/footer + source link
-- [ ] Remove/retire crypto-only pages from nav (keep code until backend exists)
-- [ ] Replace any remaining NOFX-specific copy in landing/FAQ
-- [ ] Room UI: rename labels to A-share terms (shares, lots, T+1)
+- [x] Remove/retire crypto-first routes from app shell/nav (`/lobby`, `/room`, `/leaderboard` focused)
+- [ ] Replace any remaining NOFX-specific copy in non-core pages (landing/FAQ legacy files)
+- [x] Room UI: rename labels to A-share terms (shares, CNY, CN-SIM)
+- [x] Add frontend-only interaction panel (Ask/Fuel) in room
+- [x] Add visible simulation rules card in room and leaderboard
 
 ### Backend
 - [x] Define API contracts (payload schemas + sample JSON)
+- [x] Expand contract doc to match current frontend data dependencies
 - [ ] Minimal API service returning fixtures
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)

@@ -1,10 +1,8 @@
-import { useState } from 'react'
-import { Trophy } from 'lucide-react'
+import { Trophy, Info } from 'lucide-react'
 import useSWR from 'swr'
 import { api } from '../lib/api'
 import type { CompetitionData } from '../types'
 import { ComparisonChart } from './ComparisonChart'
-import { TraderConfigViewModal } from './TraderConfigViewModal'
 import { getTraderColor } from '../utils/traderColors'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
@@ -13,8 +11,6 @@ import { DeepVoidBackground } from './DeepVoidBackground'
 
 export function CompetitionPage() {
   const { language } = useLanguage()
-  const [selectedTrader, setSelectedTrader] = useState<any>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
 
   const { data: competition } = useSWR<CompetitionData>(
     'competition',
@@ -25,23 +21,6 @@ export function CompetitionPage() {
       dedupingInterval: 10000,
     }
   )
-
-  const handleTraderClick = async (traderId: string) => {
-    try {
-      const traderConfig = await api.getTraderConfig(traderId)
-      setSelectedTrader(traderConfig)
-      setIsModalOpen(true)
-    } catch (error) {
-      console.error('Failed to fetch trader config:', error)
-      // 对于未登录用户，不显示详细配置，这是正常行为
-      // 竞赛页面主要用于查看排行榜和基本信息
-    }
-  }
-
-  const closeModal = () => {
-    setIsModalOpen(false)
-    setSelectedTrader(null)
-  }
 
   if (!competition) {
     return (
@@ -89,15 +68,15 @@ export function CompetitionPage() {
                 <h1
                   className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white"
                 >
-                  {t('aiCompetition', language)}
+                  {language === 'zh' ? '房间排行榜' : 'Room Leaderboard'}
                   <span
                     className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20"
                   >
-                    0 {t('traders', language)}
+                    0 {language === 'zh' ? '个交易员' : 'traders'}
                   </span>
                 </h1>
                 <p className="text-xs text-zinc-400">
-                  {t('liveBattle', language)}
+                  {language === 'zh' ? '虚拟交易表现对比（仅演示）' : 'Virtual trading performance comparison (demo)'}
                 </p>
               </div>
             </div>
@@ -145,22 +124,22 @@ export function CompetitionPage() {
               <h1
                 className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white"
               >
-                {t('aiCompetition', language)}
+                {language === 'zh' ? '房间排行榜' : 'Room Leaderboard'}
                 <span
                   className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20"
                 >
-                  {competition.count} {t('traders', language)}
+                  {competition.count} {language === 'zh' ? '个交易员' : 'traders'}
                 </span>
               </h1>
               <p className="text-xs text-zinc-400">
-                {t('liveBattle', language)}
+                {language === 'zh' ? '按虚拟收益率排序，实时刷新。' : 'Sorted by virtual returns, refreshed live.'}
               </p>
             </div>
           </div>
-          <div className="text-left md:text-right w-full md:w-auto">
-            <div className="text-xs mb-1 text-zinc-400">
-              {t('leader', language)}
-            </div>
+            <div className="text-left md:text-right w-full md:w-auto">
+              <div className="text-xs mb-1 text-zinc-400">
+                {language === 'zh' ? '当前领先' : 'Current Leader'}
+              </div>
             <div
               className="text-base md:text-lg font-bold text-nofx-gold"
             >
@@ -189,10 +168,10 @@ export function CompetitionPage() {
               <h2
                 className="text-lg font-bold flex items-center gap-2 text-white"
               >
-                {t('performanceComparison', language)}
+                {language === 'zh' ? '收益曲线对比' : 'Performance Curves'}
               </h2>
               <div className="text-xs text-zinc-400">
-                {t('realTimePnL', language)}
+                {language === 'zh' ? '动态刷新' : 'Dynamic refresh'}
               </div>
             </div>
             <ComparisonChart traders={sortedTraders.slice(0, 10)} />
@@ -207,12 +186,12 @@ export function CompetitionPage() {
               <h2
                 className="text-lg font-bold flex items-center gap-2 text-white"
               >
-                {t('leaderboard', language)}
+                {language === 'zh' ? '排行明细' : 'Leaderboard Details'}
               </h2>
               <div
                 className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_8px_rgba(240,185,11,0.1)]"
               >
-                {t('live', language)}
+                {language === 'zh' ? 'Demo Live' : 'Demo Live'}
               </div>
             </div>
             <div className="space-y-2">
@@ -226,8 +205,7 @@ export function CompetitionPage() {
                 return (
                   <div
                     key={trader.trader_id}
-                    onClick={() => handleTraderClick(trader.trader_id)}
-                    className="rounded p-3 transition-all duration-300 hover:translate-y-[-1px] cursor-pointer hover:shadow-lg"
+                    className="rounded p-3 transition-all duration-300 hover:translate-y-[-1px] hover:shadow-lg"
                     style={{
                       background: isLeader
                         ? 'linear-gradient(135deg, rgba(240, 185, 11, 0.08) 0%, #0B0E11 100%)'
@@ -274,8 +252,7 @@ export function CompetitionPage() {
                             className="text-xs mono font-semibold"
                             style={{ color: traderColor }}
                           >
-                            {trader.ai_model.toUpperCase()} +{' '}
-                            {trader.exchange.toUpperCase()}
+                            {trader.ai_model.toUpperCase()} · CN-SIM
                           </div>
                         </div>
                       </div>
@@ -333,7 +310,7 @@ export function CompetitionPage() {
                             {trader.position_count}
                           </div>
                           <div className="text-xs" style={{ color: '#848E9C' }}>
-                            {trader.margin_used_pct.toFixed(1)}%
+                            {language === 'zh' ? `占用 ${trader.margin_used_pct.toFixed(1)}%` : `Use ${trader.margin_used_pct.toFixed(1)}%`}
                           </div>
                         </div>
 
@@ -363,6 +340,18 @@ export function CompetitionPage() {
               })}
             </div>
           </div>
+        </div>
+
+        <div className="bg-black/40 border border-nofx-gold/20 rounded-xl p-4 backdrop-blur-md">
+          <div className="flex items-center gap-2 text-sm font-semibold text-nofx-gold mb-2">
+            <Info className="w-4 h-4" />
+            {language === 'zh' ? '模拟规则' : 'Simulation Rules'}
+          </div>
+          <ul className="text-xs text-zinc-300 space-y-1">
+            <li>{language === 'zh' ? '收益与排名来自虚拟交易账户（非真实资金）。' : 'Returns and ranking come from virtual accounts (no real funds).'}</li>
+            <li>{language === 'zh' ? '交易逻辑使用固定规则：下一根K线开盘成交 + 固定滑点。' : 'Trade logic uses fixed rules: next-bar-open fills + fixed slippage.'}</li>
+            <li>{language === 'zh' ? 'A股约束：100股一手，T+1。' : 'A-share constraints: 100-share lots and T+1.'}</li>
+          </ul>
         </div>
 
         {/* Head-to-Head Stats */}
@@ -473,13 +462,6 @@ export function CompetitionPage() {
             </div>
           </div>
         )}
-
-        {/* Trader Config View Modal */}
-        <TraderConfigViewModal
-          isOpen={isModalOpen}
-          onClose={closeModal}
-          traderData={selectedTrader}
-        />
       </div>
     </DeepVoidBackground>
   )

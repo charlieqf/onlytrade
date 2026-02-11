@@ -1,24 +1,18 @@
-import { useEffect, useState, useRef } from 'react'
-import { mutate } from 'swr'
-import { api } from '../lib/api'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { ChartTabs } from '../components/ChartTabs'
 import { DecisionCard } from '../components/DecisionCard'
 import { PositionHistory } from '../components/PositionHistory'
 import { PunkAvatar, getTraderAvatar } from '../components/PunkAvatar'
-import { confirmToast, notify } from '../lib/notify'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { LogOut, Loader2, Eye, EyeOff, Copy, Check } from 'lucide-react'
+import { Flame, Info, MessageSquare, Send } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
-import { GridRiskPanel } from '../components/strategy/GridRiskPanel'
 import type {
     SystemStatus,
     AccountInfo,
     Position,
     DecisionRecord,
-    Statistics,
     TraderInfo,
-    Exchange,
 } from '../types'
 
 // --- Helper Functions ---
@@ -37,60 +31,16 @@ function getModelDisplayName(modelId: string): string {
     }
 }
 
-// Helper function to get exchange display name from exchange ID (UUID)
-function getExchangeDisplayNameFromList(
-    exchangeId: string | undefined,
-    exchanges: Exchange[] | undefined
-): string {
+function getMarketDisplay(exchangeId: string | undefined): string {
     if (!exchangeId) return 'CN-SIM'
     if (exchangeId.toLowerCase().includes('sim-cn')) return 'CN-SIM'
-    const exchange = exchanges?.find((e) => e.id === exchangeId)
-    if (!exchange) return 'CN-SIM'
-    const typeName = exchange.exchange_type?.toUpperCase() || exchange.name
-    return exchange.account_name
-        ? `${typeName} - ${exchange.account_name}`
-        : typeName
+    return exchangeId.toUpperCase()
 }
 
-// Helper function to get exchange type from exchange ID (UUID) - for kline charts
-function getExchangeTypeFromList(
-    exchangeId: string | undefined,
-    exchanges: Exchange[] | undefined
-): string {
+function getExchangeType(exchangeId: string | undefined): string {
     if (!exchangeId) return 'sim-cn'
     if (exchangeId.toLowerCase().includes('sim-cn')) return 'sim-cn'
-    const exchange = exchanges?.find((e) => e.id === exchangeId)
-    if (!exchange) return 'sim-cn'
-    return exchange.exchange_type?.toLowerCase() || 'sim-cn'
-}
-
-// Helper function to check if exchange is a perp-dex type (wallet-based)
-function isPerpDexExchange(exchangeType: string | undefined): boolean {
-    if (!exchangeType) return false
-    const perpDexTypes = ['hyperliquid', 'lighter', 'aster']
-    return perpDexTypes.includes(exchangeType.toLowerCase())
-}
-
-// Helper function to get wallet address for perp-dex exchanges
-function getWalletAddress(exchange: Exchange | undefined): string | undefined {
-    if (!exchange) return undefined
-    const type = exchange.exchange_type?.toLowerCase()
-    switch (type) {
-        case 'hyperliquid':
-            return exchange.hyperliquidWalletAddr
-        case 'lighter':
-            return exchange.lighterWalletAddr
-        case 'aster':
-            return exchange.asterSigner
-        default:
-            return undefined
-    }
-}
-
-// Helper function to truncate wallet address for display
-function truncateAddress(address: string, startLen = 6, endLen = 4): string {
-    if (address.length <= startLen + endLen + 3) return address
-    return `${address.slice(0, startLen)}...${address.slice(-endLen)}`
+    return exchangeId.toLowerCase()
 }
 
 // --- Components ---
@@ -101,17 +51,22 @@ interface TraderDashboardPageProps {
     tradersError?: Error
     selectedTraderId?: string
     onTraderSelect: (traderId: string) => void
-    onNavigateToTraders: () => void
+    onNavigateToLobby: () => void
     status?: SystemStatus
     account?: AccountInfo
     positions?: Position[]
     decisions?: DecisionRecord[]
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
-    stats?: Statistics
     lastUpdate: string
     language: Language
-    exchanges?: Exchange[]
+}
+
+type RoomEvent = {
+    id: number
+    text: string
+    type: 'ask' | 'fuel' | 'system'
+    ts: string
 }
 
 export function TraderDashboardPage({
@@ -128,15 +83,21 @@ export function TraderDashboardPage({
     tradersError,
     selectedTraderId,
     onTraderSelect,
-    onNavigateToTraders,
-    exchanges,
+    onNavigateToLobby,
 }: TraderDashboardPageProps) {
-    const [closingPosition, setClosingPosition] = useState<string | null>(null)
     const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | undefined>(undefined)
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
-    const [showWalletAddress, setShowWalletAddress] = useState<boolean>(false)
-    const [copiedAddress, setCopiedAddress] = useState<boolean>(false)
+    const [askInput, setAskInput] = useState('')
+    const [fuelInput, setFuelInput] = useState('30')
+    const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
+        {
+            id: 1,
+            type: 'system',
+            text: language === 'zh' ? '房间已连接到模拟会话。' : 'Room connected to simulated session.',
+            ts: new Date().toLocaleTimeString(),
+        },
+    ])
 
     // Current positions pagination
     const [positionsPageSize, setPositionsPageSize] = useState<number>(20)
@@ -162,24 +123,40 @@ export function TraderDashboardPage({
         }
     }, [status?.strategy_type, status?.grid_symbol])
 
-    // Get current exchange info for perp-dex wallet display
-    const currentExchange = exchanges?.find(
-        (e) => e.id === selectedTrader?.exchange_id
-    )
-    const walletAddress = getWalletAddress(currentExchange)
-    const isPerpDex = isPerpDexExchange(currentExchange?.exchange_type)
-
-    // Copy wallet address to clipboard
-    const handleCopyAddress = async () => {
-        if (!walletAddress) return
-        try {
-            await navigator.clipboard.writeText(walletAddress)
-            setCopiedAddress(true)
-            setTimeout(() => setCopiedAddress(false), 2000)
-        } catch (err) {
-            console.error('Failed to copy address:', err)
-        }
+    const handleAskSubmit = () => {
+        const trimmed = askInput.trim()
+        if (!trimmed) return
+        setRoomEvents((prev) => [
+            {
+                id: Date.now(),
+                type: 'ask' as const,
+                text: trimmed,
+                ts: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+        ].slice(0, 8))
+        setAskInput('')
     }
+
+    const handleFuel = () => {
+        const amount = Number(fuelInput)
+        if (!Number.isFinite(amount) || amount <= 0) return
+        setRoomEvents((prev) => [
+            {
+                id: Date.now(),
+                type: 'fuel' as const,
+                text: language === 'zh' ? `为该房间增加 ${amount} 点燃料` : `Added ${amount} fuel points to this room`,
+                ts: new Date().toLocaleTimeString(),
+            },
+            ...prev,
+        ].slice(0, 8))
+    }
+
+    const roomEventSummary = useMemo(() => {
+        const asks = roomEvents.filter((e) => e.type === 'ask').length
+        const fuels = roomEvents.filter((e) => e.type === 'fuel').length
+        return { asks, fuels }
+    }, [roomEvents])
 
     // Handle symbol click from Decision Card
     const handleSymbolClick = (symbol: string) => {
@@ -189,47 +166,6 @@ export function TraderDashboardPage({
         setTimeout(() => {
             chartSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }, 100)
-    }
-
-    // 平仓操作
-    const handleClosePosition = async (symbol: string, side: string) => {
-        if (!selectedTraderId) return
-
-        const confirmMsg =
-            language === 'zh'
-                ? `确定要平仓 ${symbol} ${side === 'LONG' ? '多仓' : '空仓'} 吗？`
-                : `Are you sure you want to close ${symbol} ${side === 'LONG' ? 'LONG' : 'SHORT'} position?`
-
-        const confirmed = await confirmToast(confirmMsg, {
-            title: language === 'zh' ? '确认平仓' : 'Confirm Close',
-            okText: language === 'zh' ? '确认' : 'Confirm',
-            cancelText: language === 'zh' ? '取消' : 'Cancel',
-        })
-
-        if (!confirmed) return
-
-        setClosingPosition(symbol)
-        try {
-            await api.closePosition(selectedTraderId, symbol, side)
-            notify.success(
-                language === 'zh' ? '平仓成功' : 'Position closed successfully'
-            )
-            // 使用 SWR mutate 刷新数据而非重新加载页面
-            await Promise.all([
-                mutate(`positions-${selectedTraderId}`),
-                mutate(`account-${selectedTraderId}`),
-            ])
-        } catch (err: unknown) {
-            const errorMsg =
-                err instanceof Error
-                    ? err.message
-                    : language === 'zh'
-                        ? '平仓失败'
-                        : 'Failed to close position'
-            notify.error(errorMsg)
-        } finally {
-            setClosingPosition(null)
-        }
     }
 
     // If API failed with error, show empty state (likely backend not running)
@@ -310,10 +246,10 @@ export function TraderDashboardPage({
                         {t('dashboardEmptyDescription', language)}
                     </p>
                     <button
-                        onClick={onNavigateToTraders}
+                        onClick={onNavigateToLobby}
                         className="px-6 py-3 rounded-lg font-semibold transition-all hover:scale-105 active:scale-95 nofx-glass border border-nofx-gold/30 text-nofx-gold hover:bg-nofx-gold/10"
                     >
-                        {t('goToTradersPage', language)}
+                        {language === 'zh' ? '返回大厅' : 'Back to Lobby'}
                     </button>
                 </div>
             </div>
@@ -399,57 +335,6 @@ export function TraderDashboardPage({
                                     </select>
                                 </div>
                             )}
-
-                            {/* Wallet Address Display for Perp-DEX */}
-                            {exchanges && isPerpDex && (
-                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg nofx-glass border border-nofx-gold/20">
-                                    {walletAddress ? (
-                                        <>
-                                            <span className="text-xs font-mono text-nofx-gold">
-                                                {showWalletAddress
-                                                    ? walletAddress
-                                                    : truncateAddress(walletAddress)}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowWalletAddress(!showWalletAddress)}
-                                                className="p-1 rounded hover:bg-white/10 transition-colors"
-                                                title={
-                                                    showWalletAddress
-                                                        ? language === 'zh'
-                                                            ? '隐藏地址'
-                                                            : 'Hide address'
-                                                        : language === 'zh'
-                                                            ? '显示完整地址'
-                                                            : 'Show full address'
-                                                }
-                                            >
-                                                {showWalletAddress ? (
-                                                    <EyeOff className="w-3.5 h-3.5 text-nofx-text-muted" />
-                                                ) : (
-                                                    <Eye className="w-3.5 h-3.5 text-nofx-text-muted" />
-                                                )}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={handleCopyAddress}
-                                                className="p-1 rounded hover:bg-white/10 transition-colors"
-                                                title={language === 'zh' ? '复制地址' : 'Copy address'}
-                                            >
-                                                {copiedAddress ? (
-                                                    <Check className="w-3.5 h-3.5 text-nofx-green" />
-                                                ) : (
-                                                    <Copy className="w-3.5 h-3.5 text-nofx-text-muted" />
-                                                )}
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <span className="text-xs text-nofx-text-muted">
-                                            {language === 'zh' ? '未配置地址' : 'No address configured'}
-                                        </span>
-                                    )}
-                                </div>
-                            )}
                         </div>
                     </div>
                     <div className="flex items-center gap-6 text-sm flex-wrap text-nofx-text-muted font-mono pl-2">
@@ -473,10 +358,7 @@ export function TraderDashboardPage({
                         <span className="flex items-center gap-2">
                             <span className="opacity-60">Market:</span>
                             <span className="text-nofx-text-main font-semibold">
-                                {getExchangeDisplayNameFromList(
-                                    selectedTrader.exchange_id,
-                                    exchanges
-                                )}
+                                {getMarketDisplay(selectedTrader.exchange_id)}
                             </span>
                         </span>
                         <span className="w-px h-3 bg-white/10 hidden md:block" />
@@ -537,22 +419,13 @@ export function TraderDashboardPage({
                     <StatCard
                         title={t('positions', language)}
                         value={`${account?.position_count || 0}`}
-                        unit="ACTIVE"
-                        subtitle={`${t('margin', language)}: ${account?.margin_used_pct?.toFixed(1) || '0.0'}%`}
+                        unit={language === 'zh' ? '活跃' : 'ACTIVE'}
+                        subtitle={language === 'zh'
+                            ? `资金占用: ${account?.margin_used_pct?.toFixed(1) || '0.0'}%`
+                            : `Capital in use: ${account?.margin_used_pct?.toFixed(1) || '0.0'}%`}
                         icon="📊"
                     />
                 </div>
-
-                {/* Grid Risk Panel - Only show for grid trading strategy */}
-                {status?.strategy_type === 'grid_trading' && selectedTraderId && (
-                    <div className="mb-8 animate-slide-in" style={{ animationDelay: '0.05s' }}>
-                        <GridRiskPanel
-                            traderId={selectedTraderId}
-                            language={language}
-                            refreshInterval={5000}
-                        />
-                    </div>
-                )}
 
                 {/* Main Content Area */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -568,10 +441,7 @@ export function TraderDashboardPage({
                                 traderId={selectedTrader.trader_id}
                                 selectedSymbol={selectedChartSymbol}
                                 updateKey={chartUpdateKey}
-                                exchangeId={getExchangeTypeFromList(
-                                    selectedTrader.exchange_id,
-                                    exchanges
-                                )}
+                                exchangeId={getExchangeType(selectedTrader.exchange_id)}
                             />
                         </div>
 
@@ -589,7 +459,7 @@ export function TraderDashboardPage({
                                 </h2>
                                 {positions && positions.length > 0 && (
                                     <div className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 font-mono shadow-[0_0_10px_rgba(240,185,11,0.1)]">
-                                        {positions.length} {t('active', language)}
+                                        {positions.length} {language === 'zh' ? '活跃仓位' : 'active positions'}
                                     </div>
                                 )}
                             </div>
@@ -601,14 +471,11 @@ export function TraderDashboardPage({
                                                 <tr>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-left">{t('symbol', language)}</th>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-center">{t('side', language)}</th>
-                                                    <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-center">{language === 'zh' ? '操作' : 'Action'}</th>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right hidden md:table-cell" title={t('entryPrice', language)}>{language === 'zh' ? '入场价' : 'Entry'}</th>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right hidden md:table-cell" title={t('markPrice', language)}>{language === 'zh' ? '标记价' : 'Mark'}</th>
-                                                    <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right" title={t('quantity', language)}>{language === 'zh' ? '数量' : 'Qty'}</th>
+                                                    <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right" title={t('quantity', language)}>{language === 'zh' ? '股数' : 'Shares'}</th>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right hidden md:table-cell" title={t('positionValue', language)}>{language === 'zh' ? '价值' : 'Value'}</th>
-                                                    <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-center hidden md:table-cell" title={t('leverage', language)}>{language === 'zh' ? '杠杆' : 'Lev.'}</th>
                                                     <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right" title={t('unrealizedPnL', language)}>{language === 'zh' ? '未实现盈亏' : 'uPnL'}</th>
-                                                    <th className="px-1 pb-3 font-semibold text-nofx-text-muted whitespace-nowrap text-right hidden md:table-cell" title={t('liqPrice', language)}>{language === 'zh' ? '强平价' : 'Liq.'}</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -630,37 +497,22 @@ export function TraderDashboardPage({
                                                         <td className="px-1 py-3 font-mono font-semibold whitespace-nowrap text-left text-nofx-text-main group-hover/row:text-white transition-colors">
                                                             {pos.symbol}
                                                         </td>
+                                                        {(() => {
+                                                            const isLong = String(pos.side || '').toLowerCase() === 'long'
+                                                            return (
                                                         <td className="px-1 py-3 whitespace-nowrap text-center">
                                                             <span
-                                                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${pos.side === 'long' ? 'bg-nofx-green/10 text-nofx-green shadow-[0_0_8px_rgba(14,203,129,0.2)]' : 'bg-nofx-red/10 text-nofx-red shadow-[0_0_8px_rgba(246,70,93,0.2)]'}`}
+                                                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isLong ? 'bg-nofx-green/10 text-nofx-green shadow-[0_0_8px_rgba(14,203,129,0.2)]' : 'bg-nofx-red/10 text-nofx-red shadow-[0_0_8px_rgba(246,70,93,0.2)]'}`}
                                                             >
-                                                                {t(pos.side === 'long' ? 'long' : 'short', language)}
+                                                                {isLong ? (language === 'zh' ? '多' : 'LONG') : (language === 'zh' ? '空' : 'SHORT')}
                                                             </span>
                                                         </td>
-                                                        <td className="px-1 py-3 whitespace-nowrap text-center">
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation()
-                                                                    handleClosePosition(pos.symbol, pos.side.toUpperCase())
-                                                                }}
-                                                                disabled={closingPosition === pos.symbol}
-                                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed mx-auto bg-nofx-red/10 text-nofx-red border border-nofx-red/30 hover:bg-nofx-red/20"
-                                                                title={language === 'zh' ? '平仓' : 'Close Position'}
-                                                            >
-                                                                {closingPosition === pos.symbol ? (
-                                                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                                                ) : (
-                                                                    <LogOut className="w-3 h-3" />
-                                                                )}
-                                                                {language === 'zh' ? '平仓' : 'Close'}
-                                                            </button>
-                                                        </td>
+                                                            )
+                                                        })()}
                                                         <td className="px-1 py-3 font-mono whitespace-nowrap text-right text-nofx-text-main hidden md:table-cell">{formatPrice(pos.entry_price)}</td>
                                                         <td className="px-1 py-3 font-mono whitespace-nowrap text-right text-nofx-text-main hidden md:table-cell">{formatPrice(pos.mark_price)}</td>
                                                         <td className="px-1 py-3 font-mono whitespace-nowrap text-right text-nofx-text-main">{formatQuantity(pos.quantity)}</td>
                                                         <td className="px-1 py-3 font-mono font-bold whitespace-nowrap text-right text-nofx-text-main hidden md:table-cell">{(pos.quantity * pos.mark_price).toFixed(2)}</td>
-                                                        <td className="px-1 py-3 font-mono whitespace-nowrap text-center text-nofx-gold hidden md:table-cell">{pos.leverage}x</td>
                                                         <td className="px-1 py-3 font-mono whitespace-nowrap text-right">
                                                             <span
                                                                 className={`font-bold ${pos.unrealized_pnl >= 0 ? 'text-nofx-green shadow-nofx-green' : 'text-nofx-red shadow-nofx-red'}`}
@@ -670,7 +522,6 @@ export function TraderDashboardPage({
                                                                 {pos.unrealized_pnl.toFixed(2)}
                                                             </span>
                                                         </td>
-                                                        <td className="px-1 py-3 font-mono whitespace-nowrap text-right text-nofx-text-muted hidden md:table-cell">{formatPrice(pos.liquidation_price)}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -742,65 +593,141 @@ export function TraderDashboardPage({
                         </div>
                     </div>
 
-                    {/* Right Column: Recent Decisions */}
-                    <div
-                        className="nofx-glass p-6 animate-slide-in h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-120px)] flex flex-col"
-                        style={{ animationDelay: '0.2s' }}
-                    >
-                        {/* Header */}
-                        <div className="flex items-center gap-3 mb-5 pb-4 border-b border-white/5 shrink-0">
-                            <div
-                                className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-[0_4px_14px_rgba(99,102,241,0.4)]"
-                                style={{
-                                    background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)',
-                                }}
-                            >
-                                🧠
+                    {/* Right Column: Interaction + Thought Feed */}
+                    <div className="space-y-6">
+                        <div
+                            className="nofx-glass p-5 animate-slide-in"
+                            style={{ animationDelay: '0.18s' }}
+                        >
+                            <div className="flex items-start justify-between gap-4 mb-4">
+                                <div>
+                                    <h2 className="text-lg font-bold text-nofx-text-main flex items-center gap-2">
+                                        <MessageSquare className="w-4 h-4 text-nofx-gold" />
+                                        {language === 'zh' ? '房间互动' : 'Room Interactions'}
+                                    </h2>
+                                    <p className="text-xs text-nofx-text-muted mt-1">
+                                        {language === 'zh'
+                                            ? '前端演示版：提交问题和燃料操作会记录在本地事件流。'
+                                            : 'Frontend demo mode: ask/fuel actions are written to a local room event stream.'}
+                                    </p>
+                                </div>
+                                <div className="text-[11px] text-nofx-text-muted text-right">
+                                    <div>{language === 'zh' ? '提问' : 'Asks'}: <span className="text-white font-semibold">{roomEventSummary.asks}</span></div>
+                                    <div>{language === 'zh' ? '燃料' : 'Fuel'}: <span className="text-white font-semibold">{roomEventSummary.fuels}</span></div>
+                                </div>
                             </div>
-                            <div className="flex-1">
-                                <h2 className="text-xl font-bold text-nofx-text-main">
-                                    {t('recentDecisions', language)}
-                                </h2>
-                                {decisions && decisions.length > 0 && (
-                                    <div className="text-xs text-nofx-text-muted">
-                                        {t('lastCycles', language, { count: decisions.length })}
+
+                            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-3">
+                                <input
+                                    value={askInput}
+                                    onChange={(e) => setAskInput(e.target.value)}
+                                    placeholder={language === 'zh' ? '例如：为什么今天减仓 600519.SH？' : 'e.g. Why reduce 600519.SH today?'}
+                                    className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
+                                />
+                                <button
+                                    onClick={handleAskSubmit}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-gold text-black hover:opacity-90 transition-opacity"
+                                >
+                                    <Send className="w-3.5 h-3.5" />
+                                    {language === 'zh' ? '提问' : 'Ask'}
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-[1fr_auto] gap-2 mb-4">
+                                <input
+                                    value={fuelInput}
+                                    onChange={(e) => setFuelInput(e.target.value)}
+                                    className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
+                                />
+                                <button
+                                    onClick={handleFuel}
+                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-nofx-gold/30 text-nofx-gold bg-nofx-gold/10 hover:bg-nofx-gold/20 transition-colors"
+                                >
+                                    <Flame className="w-3.5 h-3.5" />
+                                    {language === 'zh' ? '加燃料' : 'Fuel'}
+                                </button>
+                            </div>
+
+                            <div className="rounded border border-white/10 bg-black/30 p-3 space-y-2">
+                                {roomEvents.map((event) => (
+                                    <div key={event.id} className="flex items-center justify-between gap-3 text-xs">
+                                        <span className="text-nofx-text-main">
+                                            {event.type === 'ask' ? 'Q' : event.type === 'fuel' ? 'F' : 'I'} - {event.text}
+                                        </span>
+                                        <span className="text-nofx-text-muted whitespace-nowrap">{event.ts}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="nofx-glass p-4 border border-nofx-gold/20 rounded-lg">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-nofx-gold mb-2">
+                                <Info className="w-4 h-4" />
+                                {language === 'zh' ? '模拟规则（Demo）' : 'Simulation Rules (Demo)'}
+                            </div>
+                            <ul className="text-xs text-nofx-text-muted space-y-1">
+                                <li>{language === 'zh' ? 'HS300 标的，虚拟仓位，无真实资金。' : 'HS300 symbols, virtual positions, no real funds.'}</li>
+                                <li>{language === 'zh' ? '成交按下一根K线开盘价 + 固定滑点。' : 'Fills use next-bar open + fixed slippage.'}</li>
+                                <li>{language === 'zh' ? 'A股约束：100股一手，T+1。' : 'A-share constraints: 100-share lots, T+1.'}</li>
+                            </ul>
+                        </div>
+
+                        <div
+                            className="nofx-glass p-6 animate-slide-in h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-120px)] flex flex-col"
+                            style={{ animationDelay: '0.2s' }}
+                        >
+                            <div className="flex items-center gap-3 mb-5 pb-4 border-b border-white/5 shrink-0">
+                                <div
+                                    className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-[0_4px_14px_rgba(99,102,241,0.4)]"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)',
+                                    }}
+                                >
+                                    🧠
+                                </div>
+                                <div className="flex-1">
+                                    <h2 className="text-xl font-bold text-nofx-text-main">
+                                        {language === 'zh' ? '思考与行动' : 'Thought & Actions'}
+                                    </h2>
+                                    {decisions && decisions.length > 0 && (
+                                        <div className="text-xs text-nofx-text-muted">
+                                            {t('lastCycles', language, { count: decisions.length })}
+                                        </div>
+                                    )}
+                                </div>
+                                <select
+                                    value={decisionsLimit}
+                                    onChange={(e) => onDecisionsLimitChange(Number(e.target.value))}
+                                    className="px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition-all bg-black/40 text-nofx-text-main border border-white/10 hover:border-nofx-accent focus:outline-none"
+                                >
+                                    <option value={5}>5</option>
+                                    <option value={10}>10</option>
+                                    <option value={20}>20</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                </select>
+                            </div>
+
+                            <div
+                                className="space-y-4 overflow-y-auto pr-2 custom-scrollbar"
+                                style={{ maxHeight: 'calc(100vh - 280px)' }}
+                            >
+                                {decisions && decisions.length > 0 ? (
+                                    decisions.map((decision, i) => (
+                                        <DecisionCard key={i} decision={decision} language={language} onSymbolClick={handleSymbolClick} />
+                                    ))
+                                ) : (
+                                    <div className="py-16 text-center text-nofx-text-muted opacity-60">
+                                        <div className="text-6xl mb-4 opacity-30 grayscale">🧠</div>
+                                        <div className="text-lg font-semibold mb-2 text-nofx-text-main">
+                                            {t('noDecisionsYet', language)}
+                                        </div>
+                                        <div className="text-sm">
+                                            {t('aiDecisionsWillAppear', language)}
+                                        </div>
                                     </div>
                                 )}
                             </div>
-                            {/* Limit Selector */}
-                            <select
-                                value={decisionsLimit}
-                                onChange={(e) => onDecisionsLimitChange(Number(e.target.value))}
-                                className="px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer transition-all bg-black/40 text-nofx-text-main border border-white/10 hover:border-nofx-accent focus:outline-none"
-                            >
-                                <option value={5}>5</option>
-                                <option value={10}>10</option>
-                                <option value={20}>20</option>
-                                <option value={50}>50</option>
-                                <option value={100}>100</option>
-                            </select>
-                        </div>
-
-                        {/* Decisions List - Scrollable */}
-                        <div
-                            className="space-y-4 overflow-y-auto pr-2 custom-scrollbar"
-                            style={{ maxHeight: 'calc(100vh - 280px)' }}
-                        >
-                            {decisions && decisions.length > 0 ? (
-                                decisions.map((decision, i) => (
-                                    <DecisionCard key={i} decision={decision} language={language} onSymbolClick={handleSymbolClick} />
-                                ))
-                            ) : (
-                                <div className="py-16 text-center text-nofx-text-muted opacity-60">
-                                    <div className="text-6xl mb-4 opacity-30 grayscale">🧠</div>
-                                    <div className="text-lg font-semibold mb-2 text-nofx-text-main">
-                                        {t('noDecisionsYet', language)}
-                                    </div>
-                                    <div className="text-sm">
-                                        {t('aiDecisionsWillAppear', language)}
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>

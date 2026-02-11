@@ -108,7 +108,7 @@ function StatCard({
 }
 
 // Symbol Stats Row
-function SymbolStatsRow({ stat }: { stat: SymbolStats }) {
+function SymbolStatsRow({ stat, language }: { stat: SymbolStats; language: 'en' | 'zh' }) {
   const totalPnl = stat.total_pnl || 0
   const winRate = stat.win_rate || 0
   const pnlColor = totalPnl >= 0 ? '#0ECB81' : '#F6465D'
@@ -122,16 +122,16 @@ function SymbolStatsRow({ stat }: { stat: SymbolStats }) {
     >
       <div className="flex items-center gap-3">
         <span className="font-mono font-semibold" style={{ color: '#EAECEF' }}>
-          {(stat.symbol || '').replace('USDT', '')}
+          {stat.symbol || '-'}
         </span>
         <span className="text-xs" style={{ color: '#848E9C' }}>
-          {stat.total_trades || 0} trades
+          {stat.total_trades || 0} {language === 'zh' ? '笔' : 'trades'}
         </span>
       </div>
       <div className="flex items-center gap-6">
         <div className="text-right">
           <div className="text-xs" style={{ color: '#848E9C' }}>
-            Win Rate
+            {language === 'zh' ? '胜率' : 'Win Rate'}
           </div>
           <div className="font-mono font-semibold" style={{ color: winRateColor }}>
             {winRate.toFixed(1)}%
@@ -139,7 +139,7 @@ function SymbolStatsRow({ stat }: { stat: SymbolStats }) {
         </div>
         <div className="text-right min-w-[80px]">
           <div className="text-xs" style={{ color: '#848E9C' }}>
-            P&L
+            {language === 'zh' ? '收益' : 'PnL'}
           </div>
           <div className="font-mono font-semibold" style={{ color: pnlColor }}>
             {totalPnl >= 0 ? '+' : ''}
@@ -266,7 +266,7 @@ function PositionRow({ position }: { position: HistoricalPosition }) {
       <td className="py-3 px-4">
         <div className="flex items-center gap-2">
           <span className="font-mono font-semibold" style={{ color: '#EAECEF' }}>
-            {(position.symbol || '').replace('USDT', '')}
+            {position.symbol || '-'}
           </span>
           <span
             className="px-2 py-0.5 rounded text-xs font-semibold uppercase"
@@ -640,8 +640,8 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
             </span>
           </div>
           <div className="space-y-1">
-            {symbolStats.slice(0, 10).map((stat) => (
-              <SymbolStatsRow key={stat.symbol} stat={stat} />
+              {symbolStats.slice(0, 10).map((stat) => (
+              <SymbolStatsRow key={stat.symbol} stat={stat} language={language} />
             ))}
           </div>
         </div>
@@ -677,7 +677,7 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
               <option value="all">{t('positionHistory.allSymbols', language)}</option>
               {uniqueSymbols.map((symbol) => (
                 <option key={symbol} value={symbol}>
-                  {(symbol || '').replace('USDT', '')}
+                  {symbol || '-'}
                 </option>
               ))}
             </select>

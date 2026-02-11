@@ -9,30 +9,17 @@ import { motion, AnimatePresence } from 'framer-motion'
 interface ChartTabsProps {
   traderId: string
   selectedSymbol?: string
-  updateKey?: number // 强制更新的 key
+  updateKey?: number
   exchangeId?: string
 }
 
 type ChartTab = 'equity' | 'kline'
 type Interval = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d'
-type MarketType = 'a-shares'
 
 interface SymbolInfo {
   symbol: string
   name: string
   category: string
-}
-
-// Static milestone focuses on one market mode only: A-shares.
-const MARKET_CONFIG = {
-  'a-shares': {
-    exchange: 'sim-cn',
-    defaultSymbol: '600519.SH',
-    icon: 'CN',
-    label: { zh: 'A股', en: 'A-Shares' },
-    color: 'gold',
-    hasDropdown: false,
-  },
 }
 
 const INTERVALS: { value: Interval; label: string }[] = [
@@ -45,55 +32,44 @@ const INTERVALS: { value: Interval; label: string }[] = [
   { value: '1d', label: '1d' },
 ]
 
-// 根据交易所ID推断市场类型
-function getMarketTypeFromExchange(exchangeId: string | undefined): MarketType {
-  void exchangeId
-  return 'a-shares'
-}
-
 export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: ChartTabsProps) {
   const { language } = useLanguage()
   const [activeTab, setActiveTab] = useState<ChartTab>('equity')
   const [chartSymbol, setChartSymbol] = useState<string>('600519.SH')
   const [interval, setInterval] = useState<Interval>('5m')
   const [symbolInput, setSymbolInput] = useState('')
-  const [marketType, setMarketType] = useState<MarketType>(() => getMarketTypeFromExchange(exchangeId))
   const [availableSymbols, setAvailableSymbols] = useState<SymbolInfo[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // 当交易所ID变化时，自动切换市场类型
-  useEffect(() => {
-    const newMarketType = getMarketTypeFromExchange(exchangeId)
-    setMarketType(newMarketType)
-  }, [exchangeId])
+  const currentExchange = exchangeId || 'sim-cn'
 
-  // 根据市场类型确定交易所
-  const marketConfig = MARKET_CONFIG[marketType]
-  const currentExchange = exchangeId || marketConfig.exchange
-
-  // 获取可用币种列表
+  // Load room symbol universe (A-share focused).
   useEffect(() => {
-    if (marketConfig.hasDropdown) {
-      fetch(`/api/symbols?exchange=${marketConfig.exchange}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.symbols) {
-            // 按类别排序: crypto > stock > forex > commodity > index
-            const categoryOrder: Record<string, number> = { crypto: 0, stock: 1, forex: 2, commodity: 3, index: 4 }
-            const sorted = [...data.symbols].sort((a: SymbolInfo, b: SymbolInfo) => {
-              const orderA = categoryOrder[a.category] ?? 5
-              const orderB = categoryOrder[b.category] ?? 5
-              if (orderA !== orderB) return orderA - orderB
-              return a.symbol.localeCompare(b.symbol)
-            })
-            setAvailableSymbols(sorted)
-          }
-        })
-        .catch(err => console.error('Failed to fetch symbols:', err))
-    }
-  }, [marketType, marketConfig.exchange, marketConfig.hasDropdown])
+    fetch('/api/symbols?exchange=sim-cn')
+      .then((res) => res.json())
+      .then((data) => {
+        const list = Array.isArray(data?.symbols) ? data.symbols : []
+        if (list.length > 0) {
+          const sorted = [...list].sort((a: SymbolInfo, b: SymbolInfo) => a.symbol.localeCompare(b.symbol))
+          setAvailableSymbols(sorted)
+          return
+        }
+        setAvailableSymbols([
+          { symbol: '600519.SH', name: 'Kweichow Moutai', category: 'stock' },
+          { symbol: '601318.SH', name: 'Ping An', category: 'stock' },
+          { symbol: '300750.SZ', name: 'CATL', category: 'stock' },
+        ])
+      })
+      .catch(() => {
+        setAvailableSymbols([
+          { symbol: '600519.SH', name: 'Kweichow Moutai', category: 'stock' },
+          { symbol: '601318.SH', name: 'Ping An', category: 'stock' },
+          { symbol: '300750.SZ', name: 'CATL', category: 'stock' },
+        ])
+      })
+  }, [])
 
   // 点击外部关闭下拉
   useEffect(() => {
@@ -184,58 +160,44 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
           <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto min-w-0">
             {/* Symbol Dropdown */}
             <div className="shrink-0 relative" ref={dropdownRef}>
-              {marketConfig.hasDropdown ? (
-                <>
-                  <button
-                    onClick={() => setShowDropdown(!showDropdown)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 bg-black/40 border border-white/10 rounded text-[11px] font-bold text-nofx-text-main hover:border-nofx-gold/30 hover:text-nofx-gold transition-all"
-                  >
-                    <span>{chartSymbol}</span>
-                    <ChevronDown className={`w-3 h-3 text-nofx-text-muted transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showDropdown && (
-                    <div className="absolute top-full right-0 mt-2 w-64 bg-[#0B0E11] border border-white/10 rounded-lg shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] z-50 overflow-hidden nofx-glass ring-1 ring-white/5">
-                      <div className="p-2 border-b border-white/5">
-                        <div className="flex items-center gap-2 px-2 py-1.5 bg-black/40 rounded border border-white/10 focus-within:border-nofx-gold/50 transition-colors">
-                          <Search className="w-3.5 h-3.5 text-nofx-text-muted" />
-                          <input
-                            type="text"
-                            value={searchFilter}
-                            onChange={(e) => setSearchFilter(e.target.value)}
-                            placeholder="Search symbol..."
-                            className="flex-1 bg-transparent text-[11px] text-white placeholder-gray-600 focus:outline-none font-mono"
-                            autoFocus
-                          />
-                        </div>
-                      </div>
-                      <div className="overflow-y-auto max-h-60 custom-scrollbar">
-                        {['crypto', 'stock', 'forex', 'commodity', 'index'].map(category => {
-                          const categorySymbols = filteredSymbols.filter(s => s.category === category)
-                          if (categorySymbols.length === 0) return null
-                          const labels: Record<string, string> = { crypto: 'Crypto', stock: 'Stocks', forex: 'Forex', commodity: 'Commodities', index: 'Index' }
-                          return (
-                            <div key={category}>
-                              <div className="px-3 py-1.5 text-[9px] font-bold text-nofx-text-muted/60 bg-white/5 uppercase tracking-wider">{labels[category]}</div>
-                              {categorySymbols.map(s => (
-                                <button
-                                  key={s.symbol}
-                                  onClick={() => { setChartSymbol(s.symbol); setShowDropdown(false); setSearchFilter('') }}
-                                  className={`w-full px-3 py-2 text-left text-[11px] font-mono hover:bg-white/5 transition-all flex items-center justify-between ${chartSymbol === s.symbol ? 'bg-nofx-gold/10 text-nofx-gold' : 'text-nofx-text-muted'}`}
-                                >
-                                  <span>{s.symbol}</span>
-                                  <span className="text-[9px] opacity-40">{s.name}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )
-                        })}
+              <>
+                <button
+                  onClick={() => setShowDropdown(!showDropdown)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-black/40 border border-white/10 rounded text-[11px] font-bold text-nofx-text-main hover:border-nofx-gold/30 hover:text-nofx-gold transition-all"
+                >
+                  <span>{chartSymbol}</span>
+                  <ChevronDown className={`w-3 h-3 text-nofx-text-muted transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                {showDropdown && (
+                  <div className="absolute top-full right-0 mt-2 w-64 bg-[#0B0E11] border border-white/10 rounded-lg shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] z-50 overflow-hidden nofx-glass ring-1 ring-white/5">
+                    <div className="p-2 border-b border-white/5">
+                      <div className="flex items-center gap-2 px-2 py-1.5 bg-black/40 rounded border border-white/10 focus-within:border-nofx-gold/50 transition-colors">
+                        <Search className="w-3.5 h-3.5 text-nofx-text-muted" />
+                        <input
+                          type="text"
+                          value={searchFilter}
+                          onChange={(e) => setSearchFilter(e.target.value)}
+                          placeholder={language === 'zh' ? '搜索代码...' : 'Search symbol...'}
+                          className="flex-1 bg-transparent text-[11px] text-white placeholder-gray-600 focus:outline-none font-mono"
+                          autoFocus
+                        />
                       </div>
                     </div>
-                  )}
-                </>
-              ) : (
-                <span className="px-2.5 py-1 bg-black/40 border border-white/10 rounded text-[11px] font-bold text-nofx-text-main font-mono">{chartSymbol}</span>
-              )}
+                    <div className="overflow-y-auto max-h-60 custom-scrollbar">
+                      {filteredSymbols.map((s) => (
+                        <button
+                          key={s.symbol}
+                          onClick={() => { setChartSymbol(s.symbol); setShowDropdown(false); setSearchFilter('') }}
+                          className={`w-full px-3 py-2 text-left text-[11px] font-mono hover:bg-white/5 transition-all flex items-center justify-between ${chartSymbol === s.symbol ? 'bg-nofx-gold/10 text-nofx-gold' : 'text-nofx-text-muted'}`}
+                        >
+                          <span>{s.symbol}</span>
+                          <span className="text-[9px] opacity-40">{s.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             </div>
 
             {/* Interval Selector - Allow scrolling if needed */}

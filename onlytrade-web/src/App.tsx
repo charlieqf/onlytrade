@@ -4,18 +4,11 @@ import useSWR from 'swr'
 import { api } from './lib/api'
 import { TraderDashboardPage } from './pages/TraderDashboardPage'
 import { LobbyPage } from './pages/LobbyPage'
-
-import { AITradersPage } from './components/AITradersPage'
 import { LoginPage } from './components/LoginPage'
 import { RegisterPage } from './components/RegisterPage'
 import { ResetPasswordPage } from './components/ResetPasswordPage'
 import { CompetitionPage } from './components/CompetitionPage'
-import { LandingPage } from './pages/LandingPage'
 import { FAQPage } from './pages/FAQPage'
-import { StrategyStudioPage } from './pages/StrategyStudioPage'
-import { DebateArenaPage } from './pages/DebateArenaPage'
-import { StrategyMarketPage } from './pages/StrategyMarketPage'
-import { DataPage } from './pages/DataPage'
 import { LoginRequiredOverlay } from './components/LoginRequiredOverlay'
 import HeaderBar from './components/HeaderBar'
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext'
@@ -25,29 +18,18 @@ import { t } from './i18n/translations'
 import { useSystemConfig } from './hooks/useSystemConfig'
 
 import { OFFICIAL_LINKS } from './constants/branding'
-import { BacktestPage } from './components/BacktestPage'
 import type {
   SystemStatus,
   AccountInfo,
   Position,
   DecisionRecord,
-  Statistics,
   TraderInfo,
-  Exchange,
 } from './types'
 
 type Page =
   | 'lobby'
   | 'room'
   | 'leaderboard'
-  | 'competition'
-  | 'traders'
-  | 'trader'
-  | 'backtest'
-  | 'strategy'
-  | 'strategy-market'
-  | 'data'
-  | 'debate'
   | 'faq'
   | 'login'
   | 'register'
@@ -56,7 +38,7 @@ type Page =
 
 function App() {
   const { language, setLanguage } = useLanguage()
-  const { user, token, logout, isLoading } = useAuth()
+  const { user, logout, isLoading } = useAuth()
   const { loading: configLoading } = useSystemConfig()
   const [route, setRoute] = useState(window.location.pathname)
 
@@ -68,19 +50,12 @@ function App() {
   // 从URL路径读取初始页面状态（支持刷新保持页面）
   const getInitialPage = (): Page => {
     const path = window.location.pathname
-    const hash = window.location.hash.slice(1) // 去掉 #
+    const hash = window.location.hash.slice(1)
 
     if (path === '/' || path === '' || path === '/lobby' || hash === 'lobby') return 'lobby'
     if (path === '/leaderboard' || path === '/competition' || hash === 'leaderboard' || hash === 'competition') return 'leaderboard'
-    if (path === '/room' || path === '/dashboard' || hash === 'room' || hash === 'trader' || hash === 'details') return 'room'
-
-    // Legacy pages kept for now
-    if (path === '/traders' || hash === 'traders') return 'traders'
-    if (path === '/backtest' || hash === 'backtest') return 'backtest'
-    if (path === '/strategy' || hash === 'strategy') return 'strategy'
-    if (path === '/strategy-market' || hash === 'strategy-market') return 'strategy-market'
-    if (path === '/data' || hash === 'data') return 'data'
-    if (path === '/debate' || hash === 'debate') return 'debate'
+    if (path === '/room' || path === '/dashboard' || hash === 'room') return 'room'
+    if (path === '/faq' || hash === 'faq') return 'faq'
     return 'lobby'
   }
 
@@ -99,14 +74,6 @@ function App() {
       'lobby': '/lobby',
       'room': '/room',
       'leaderboard': '/leaderboard',
-      'competition': '/competition',
-      'strategy-market': '/strategy-market',
-      'data': '/data',
-      'traders': '/traders',
-      'trader': '/dashboard',
-      'backtest': '/backtest',
-      'strategy': '/strategy',
-      'debate': '/debate',
       'faq': '/faq',
       'login': '/login',
       'register': '/register',
@@ -158,27 +125,16 @@ function App() {
       const params = new URLSearchParams(window.location.search)
       const traderParam = params.get('trader')
 
-      if (path === '/traders' || hash === 'traders') {
-        setCurrentPage('traders')
-      } else if (path === '/lobby' || path === '/' || hash === 'lobby' || hash === '') {
+      if (path === '/lobby' || path === '/' || hash === 'lobby' || hash === '') {
         setCurrentPage('lobby')
       } else if (path === '/leaderboard' || path === '/competition' || hash === 'leaderboard' || hash === 'competition') {
         setCurrentPage('leaderboard')
-      } else if (path === '/backtest' || hash === 'backtest') {
-        setCurrentPage('backtest')
-      } else if (path === '/strategy' || hash === 'strategy') {
-        setCurrentPage('strategy')
-      } else if (path === '/strategy-market' || hash === 'strategy-market') {
-        setCurrentPage('strategy-market')
-      } else if (path === '/data' || hash === 'data') {
-        setCurrentPage('data')
-      } else if (path === '/debate' || hash === 'debate') {
-        setCurrentPage('debate')
+      } else if (path === '/faq' || hash === 'faq') {
+        setCurrentPage('faq')
       } else if (
         path === '/room' ||
         path === '/dashboard' ||
-        hash === 'trader' ||
-        hash === 'details'
+        hash === 'room'
       ) {
         setCurrentPage('room')
         // 如果 URL 中有 trader 参数（slug 格式），更新选中的 trader
@@ -197,28 +153,12 @@ function App() {
     }
   }, [])
 
-  // 切换页面时更新URL hash (当前通过按钮直接调用setCurrentPage，这个函数暂时保留用于未来扩展)
-  // const navigateToPage = (page: Page) => {
-  //   setCurrentPage(page);
-  //   window.location.hash = page === 'competition' ? '' : 'trader';
-  // };
-
   // Public trader list (virtual-only product: room list should be viewable without auth)
   const { data: traders, error: tradersError } = useSWR<TraderInfo[]>(
     'public-traders',
     api.getPublicTraders,
     {
       refreshInterval: 30000,
-      shouldRetryOnError: false,
-    }
-  )
-
-  // 获取exchanges列表（用于显示交易所名称）
-  const { data: exchanges } = useSWR<Exchange[]>(
-    user && token ? 'exchanges' : null,
-    api.getExchangeConfigs,
-    {
-      refreshInterval: 60000, // 1分钟刷新一次
       shouldRetryOnError: false,
     }
   )
@@ -285,18 +225,6 @@ function App() {
     () => api.getLatestDecisions(selectedTraderId, decisionsLimit),
     {
       refreshInterval: 30000, // 30秒刷新（决策更新频率较低）
-      revalidateOnFocus: false,
-      dedupingInterval: 20000,
-    }
-  )
-
-  const { data: stats } = useSWR<Statistics>(
-    currentPage === 'room' && selectedTraderId
-      ? `statistics-${selectedTraderId}`
-      : null,
-    () => api.getStatistics(selectedTraderId),
-    {
-      refreshInterval: 30000, // 30秒刷新（统计数据更新频率较低）
       revalidateOnFocus: false,
       dedupingInterval: 20000,
     }
@@ -385,56 +313,6 @@ function App() {
   if (route === '/reset-password') {
     return <ResetPasswordPage />
   }
-  // Data page - publicly accessible with embedded dashboard
-  if (route === '/data') {
-    const dataPageNavigate = (page: Page) => {
-      const pathMap: Record<string, string> = {
-        'data': '/data',
-        'competition': '/competition',
-        'strategy-market': '/strategy-market',
-        'traders': '/traders',
-        'trader': '/dashboard',
-        'backtest': '/backtest',
-        'strategy': '/strategy',
-        'debate': '/debate',
-        'faq': '/faq',
-      }
-      const path = pathMap[page]
-      if (path) {
-        window.location.href = path
-      }
-    }
-    return (
-      <div
-        className="min-h-screen"
-        style={{ background: '#0B0E11', color: '#EAECEF' }}
-      >
-        <HeaderBar
-          isLoggedIn={!!user}
-          currentPage="data"
-          language={language}
-          onLanguageChange={setLanguage}
-          user={user}
-          onLogout={logout}
-          onLoginRequired={handleLoginRequired}
-          onPageChange={dataPageNavigate}
-        />
-        <main className="pt-16">
-          <DataPage />
-        </main>
-        <LoginRequiredOverlay
-          isOpen={loginOverlayOpen}
-          onClose={() => setLoginOverlayOpen(false)}
-          featureName={loginOverlayFeature}
-        />
-      </div>
-    )
-  }
-  // Legacy marketing landing kept at /landing
-  if (route === '/landing') {
-    return <LandingPage />
-  }
-
   return (
     <div
       className="min-h-screen"
@@ -465,25 +343,6 @@ function App() {
               <LobbyPage />
             ) : currentPage === 'leaderboard' ? (
               <CompetitionPage />
-            ) : currentPage === 'data' ? (
-              <DataPage />
-            ) : currentPage === 'strategy-market' ? (
-              <StrategyMarketPage />
-            ) : currentPage === 'traders' ? (
-              <AITradersPage
-                onTraderSelect={(traderId) => {
-                  setSelectedTraderId(traderId)
-                  window.history.pushState({}, '', '/dashboard')
-                  setRoute('/dashboard')
-                  setCurrentPage('trader')
-                }}
-              />
-            ) : currentPage === 'backtest' ? (
-              <BacktestPage />
-            ) : currentPage === 'strategy' ? (
-              <StrategyStudioPage />
-            ) : currentPage === 'debate' ? (
-              <DebateArenaPage />
             ) : currentPage === 'room' ? (
               selectedTrader ? (
                 <TraderDashboardPage
@@ -494,7 +353,6 @@ function App() {
                   decisions={decisions}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
-                  stats={stats}
                   lastUpdate={lastUpdate}
                   language={language}
                   traders={traders}
@@ -509,12 +367,11 @@ function App() {
                       window.history.replaceState({}, '', url.toString())
                     }
                   }}
-                  onNavigateToTraders={() => {
+                  onNavigateToLobby={() => {
                     window.history.pushState({}, '', '/lobby')
                     setRoute('/lobby')
                     setCurrentPage('lobby')
                   }}
-                  exchanges={exchanges}
                 />
               ) : (
                 <div className="px-6 py-10 text-sm text-zinc-300">
@@ -524,14 +381,14 @@ function App() {
                 </div>
               )
             ) : (
-              <CompetitionPage />
+              <LobbyPage />
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
-      {/* Footer - Hidden on debate page */}
-      {currentPage !== 'debate' && (
+      {/* Footer */}
+      {
         <footer
           className="mt-16"
           style={{ borderTop: '1px solid #2B3139', background: '#181A20' }}
@@ -579,7 +436,7 @@ function App() {
             </div>
           </div>
         </footer>
-      )}
+      }
 
       {/* Login Required Overlay */}
       <LoginRequiredOverlay

@@ -8,6 +8,7 @@ This file is the living progress tracker. Update it as work lands.
 - Frontend forked into `onlytrade-web/` with `/lobby`, `/room`, `/leaderboard`
 - Frontend unit tests pass (Vitest)
 - Static demo mode implemented in frontend (`VITE_DEMO_MODE` defaults to static)
+- Milestone 2 started: mock-live demo mode scaffolded via `VITE_DEMO_MODE=mock-live`
 
 ## Demo Milestones
 

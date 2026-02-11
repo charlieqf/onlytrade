@@ -20,6 +20,12 @@ npm run dev
 
 Default mode is `static` demo mode (Milestone 1), so you can demo core pages without a backend.
 
+Milestone 2 mode:
+
+```bash
+VITE_DEMO_MODE=mock-live npm run dev
+```
+
 Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 
 ## Planning + Progress

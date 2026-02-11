@@ -9,8 +9,29 @@ import type {
   TraderInfo,
 } from '../types'
 
+export type DemoMode = 'static' | 'mock-live' | 'live'
+
+const DEMO_MODE_RAW = (import.meta.env.VITE_DEMO_MODE || 'static').toLowerCase()
+const DEMO_BOOT_TS = Date.now()
+const MOCK_LIVE_STEP_MS = 8000
+
+export function getDemoMode(): DemoMode {
+  if (DEMO_MODE_RAW === 'live') return 'live'
+  if (DEMO_MODE_RAW === 'mock-live' || DEMO_MODE_RAW === 'mocklive') return 'mock-live'
+  return 'static'
+}
+
 export function isStaticDemoMode(): boolean {
-  return (import.meta.env.VITE_DEMO_MODE || 'static').toLowerCase() !== 'live'
+  return getDemoMode() !== 'live'
+}
+
+export function isMockLiveDemoMode(): boolean {
+  return getDemoMode() === 'mock-live'
+}
+
+function getMockTick(): number {
+  if (!isMockLiveDemoMode()) return 0
+  return Math.floor((Date.now() - DEMO_BOOT_TS) / MOCK_LIVE_STEP_MS)
 }
 
 const TRADERS: TraderInfo[] = [
@@ -40,7 +61,7 @@ const TRADERS: TraderInfo[] = [
   },
 ]
 
-const COMPETITION: CompetitionData = {
+const BASE_COMPETITION: CompetitionData = {
   count: 3,
   traders: [
     {
@@ -82,16 +103,48 @@ const COMPETITION: CompetitionData = {
   ],
 }
 
+function getCompetitionData(): CompetitionData {
+  if (!isMockLiveDemoMode()) {
+    return BASE_COMPETITION
+  }
+
+  const tick = getMockTick()
+  const initial = 100000
+
+  const traders = BASE_COMPETITION.traders.map((trader, idx) => {
+    const phase = idx * 2.1
+    const wave = Math.sin((tick + phase) / 2.8) * 0.55
+    const drift = (idx === 0 ? 0.015 : idx === 1 ? 0.004 : -0.006) * tick
+    const pct = Number((trader.total_pnl_pct + wave + drift).toFixed(2))
+    const pnl = Number(((initial * pct) / 100).toFixed(2))
+    const equity = Number((initial + pnl).toFixed(2))
+
+    return {
+      ...trader,
+      total_pnl_pct: pct,
+      total_pnl: pnl,
+      total_equity: equity,
+      position_count: 1 + ((tick + idx) % 3),
+    }
+  })
+
+  return {
+    count: traders.length,
+    traders,
+  }
+}
+
 function getStatus(traderId = 't_001'): SystemStatus {
+  const tick = getMockTick()
   const trader = TRADERS.find((t) => t.trader_id === traderId) || TRADERS[0]
   return {
     trader_id: trader.trader_id,
     trader_name: trader.trader_name,
     ai_model: trader.ai_model,
     is_running: true,
-    start_time: new Date(Date.now() - 1000 * 60 * 95).toISOString(),
-    runtime_minutes: 95,
-    call_count: 128,
+    start_time: new Date(Date.now() - 1000 * 60 * (95 + tick)).toISOString(),
+    runtime_minutes: 95 + tick,
+    call_count: 128 + tick,
     initial_balance: 100000,
     scan_interval: '10s',
     stop_until: '',
@@ -102,11 +155,13 @@ function getStatus(traderId = 't_001'): SystemStatus {
 }
 
 function getAccount(traderId = 't_001'): AccountInfo {
-  const rank = COMPETITION.traders.find((t) => t.trader_id === traderId) || COMPETITION.traders[0]
+  const competition = getCompetitionData()
+  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0]
+  const floating = Number((Math.sin(getMockTick() / 3) * 800).toFixed(2))
   return {
     total_equity: rank.total_equity,
-    wallet_balance: rank.total_equity - 1200,
-    unrealized_profit: 1200,
+    wallet_balance: rank.total_equity - Math.max(0, floating),
+    unrealized_profit: floating,
     available_balance: rank.total_equity * 0.92,
     total_pnl: rank.total_pnl,
     total_pnl_pct: rank.total_pnl_pct,
@@ -119,16 +174,18 @@ function getAccount(traderId = 't_001'): AccountInfo {
 }
 
 function getPositions(traderId = 't_001'): Position[] {
+  const tick = getMockTick()
+  const drift = Math.sin((tick + 1) / 2)
   const base: Position[] = [
     {
       symbol: '600519.SH',
       side: 'LONG',
       entry_price: 1498.2,
-      mark_price: 1512.4,
+      mark_price: Number((1512.4 + drift * 4.5).toFixed(2)),
       quantity: 100,
       leverage: 1,
-      unrealized_pnl: 1420,
-      unrealized_pnl_pct: 0.95,
+      unrealized_pnl: Number((1420 + drift * 480).toFixed(2)),
+      unrealized_pnl_pct: Number((0.95 + drift * 0.32).toFixed(2)),
       liquidation_price: 0,
       margin_used: 0,
     },
@@ -136,11 +193,11 @@ function getPositions(traderId = 't_001'): Position[] {
       symbol: '300750.SZ',
       side: 'LONG',
       entry_price: 186.3,
-      mark_price: 182.8,
+      mark_price: Number((182.8 - drift * 1.2).toFixed(2)),
       quantity: 300,
       leverage: 1,
-      unrealized_pnl: -1050,
-      unrealized_pnl_pct: -1.88,
+      unrealized_pnl: Number((-1050 - drift * 220).toFixed(2)),
+      unrealized_pnl_pct: Number((-1.88 - drift * 0.25).toFixed(2)),
       liquidation_price: 0,
       margin_used: 0,
     },
@@ -151,16 +208,78 @@ function getPositions(traderId = 't_001'): Position[] {
   return base
 }
 
+const DECISION_SCRIPT = [
+  {
+    action: 'open_long',
+    symbol: '600519.SH',
+    price: 1510.2,
+    stop_loss: 1480,
+    take_profit: 1568,
+    confidence: 74,
+    reasoning: 'Trend and volume remain supportive; keep position sizing conservative.',
+    input_prompt: 'HS300 momentum snapshot',
+    execution_log: 'virtual fill applied at next bar open',
+  },
+  {
+    action: 'hold',
+    symbol: '300750.SZ',
+    price: 182.8,
+    confidence: 68,
+    reasoning: 'No clear downside break; hold and wait for confirmation.',
+    input_prompt: 'risk review',
+    execution_log: 'no new order emitted',
+  },
+  {
+    action: 'open_long',
+    symbol: '601318.SH',
+    price: 48.6,
+    stop_loss: 47.2,
+    take_profit: 50.9,
+    confidence: 71,
+    reasoning: 'Relative strength improving with low drawdown risk.',
+    input_prompt: 'rotation check',
+    execution_log: 'virtual order queued and filled',
+  },
+  {
+    action: 'close_long',
+    symbol: '600519.SH',
+    price: 1528.0,
+    confidence: 66,
+    reasoning: 'Target reached on schedule; lock gains and reduce concentration.',
+    input_prompt: 'take-profit rule',
+    execution_log: 'partial close executed',
+  },
+  {
+    action: 'hold',
+    symbol: '601318.SH',
+    price: 49.1,
+    confidence: 63,
+    reasoning: 'Still inside trend channel; no adjustment needed.',
+    input_prompt: 'channel monitor',
+    execution_log: 'no action',
+  },
+]
+
 function getDecisions(): DecisionRecord[] {
   const now = Date.now()
-  return [
-    {
-      timestamp: new Date(now - 1000 * 60 * 5).toISOString(),
-      cycle_number: 128,
+  const tick = getMockTick()
+  const count = isMockLiveDemoMode()
+    ? Math.min(DECISION_SCRIPT.length, 2 + (tick % DECISION_SCRIPT.length))
+    : 2
+
+  return Array.from({ length: count }).map((_, idx) => {
+    const scriptIndex = (tick + idx) % DECISION_SCRIPT.length
+    const script = DECISION_SCRIPT[scriptIndex]
+    const ts = new Date(now - idx * 1000 * 60 * 5).toISOString()
+    const cycle = 128 + tick - idx
+
+    return {
+      timestamp: ts,
+      cycle_number: cycle,
       system_prompt: 'demo',
-      input_prompt: 'HS300 momentum snapshot',
+      input_prompt: script.input_prompt,
       cot_trace: 'compressed-demo-rationale',
-      decision_json: '{"action":"hold"}',
+      decision_json: JSON.stringify({ action: script.action, symbol: script.symbol }),
       account_state: {
         total_balance: 102345.12,
         available_balance: 94123.4,
@@ -172,68 +291,35 @@ function getDecisions(): DecisionRecord[] {
       candidate_coins: ['600519.SH', '300750.SZ', '601318.SH'],
       decisions: [
         {
-          action: 'open_long',
-          symbol: '600519.SH',
-          quantity: 100,
+          action: script.action,
+          symbol: script.symbol,
+          quantity: script.action === 'hold' ? 0 : 100,
           leverage: 1,
-          price: 1510.2,
-          stop_loss: 1480,
-          take_profit: 1568,
-          confidence: 74,
-          reasoning: 'Trend and volume remain supportive; keep position sizing conservative.',
-          order_id: 100128,
-          timestamp: new Date(now - 1000 * 60 * 5).toISOString(),
+          price: script.price,
+          stop_loss: script.stop_loss,
+          take_profit: script.take_profit,
+          confidence: script.confidence,
+          reasoning: script.reasoning,
+          order_id: 100000 + cycle,
+          timestamp: ts,
           success: true,
         },
       ],
-      execution_log: ['virtual fill applied at next bar open'],
+      execution_log: [script.execution_log],
       success: true,
       error_message: '',
-    },
-    {
-      timestamp: new Date(now - 1000 * 60 * 15).toISOString(),
-      cycle_number: 127,
-      system_prompt: 'demo',
-      input_prompt: 'risk review',
-      cot_trace: 'compressed-demo-rationale',
-      decision_json: '{"action":"hold"}',
-      account_state: {
-        total_balance: 101980.23,
-        available_balance: 93220,
-        total_unrealized_profit: 280,
-        position_count: 2,
-        margin_used_pct: 0,
-      },
-      positions: [],
-      candidate_coins: ['600519.SH'],
-      decisions: [
-        {
-          action: 'hold',
-          symbol: '600519.SH',
-          quantity: 0,
-          leverage: 1,
-          price: 1502.0,
-          confidence: 68,
-          reasoning: 'No clear downside break; hold and wait for confirmation.',
-          order_id: 100127,
-          timestamp: new Date(now - 1000 * 60 * 15).toISOString(),
-          success: true,
-        },
-      ],
-      execution_log: ['no new order emitted'],
-      success: true,
-      error_message: '',
-    },
-  ]
+    }
+  })
 }
 
 function getStatistics(): Statistics {
+  const tick = getMockTick()
   return {
-    total_cycles: 128,
-    successful_cycles: 122,
+    total_cycles: 128 + tick,
+    successful_cycles: 122 + tick,
     failed_cycles: 6,
-    total_open_positions: 37,
-    total_close_positions: 35,
+    total_open_positions: 37 + Math.floor(tick / 2),
+    total_close_positions: 35 + Math.floor(tick / 3),
   }
 }
 
@@ -301,7 +387,7 @@ function generateKlines(symbol: string, interval: string, limit: number) {
 
 function generateEquityHistory(traderId: string, points = 72) {
   const base = 100000
-  const rank = COMPETITION.traders.find((t) => t.trader_id === traderId)
+  const rank = getCompetitionData().traders.find((t) => t.trader_id === traderId)
   const targetPct = (rank?.total_pnl_pct ?? 0) / 100
   const now = Date.now()
   const step = 10 * 60_000
@@ -397,10 +483,11 @@ export function getStaticApiData(url: string, method: string, body?: any): any |
   const parsed = parseUrl(url)
   const path = parsed.pathname
   const traderId = parsed.searchParams.get('trader_id') || TRADERS[0].trader_id
+  const competition = getCompetitionData()
 
   if (method === 'GET' && path === '/api/traders') return TRADERS
-  if (method === 'GET' && path === '/api/competition') return COMPETITION
-  if (method === 'GET' && path === '/api/top-traders') return COMPETITION.traders.slice(0, 3)
+  if (method === 'GET' && path === '/api/competition') return competition
+  if (method === 'GET' && path === '/api/top-traders') return competition.traders.slice(0, 3)
   if (method === 'GET' && path === '/api/status') return getStatus(traderId)
   if (method === 'GET' && path === '/api/account') return getAccount(traderId)
   if (method === 'GET' && path === '/api/positions') return getPositions(traderId)

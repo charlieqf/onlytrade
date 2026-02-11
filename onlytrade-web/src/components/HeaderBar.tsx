@@ -5,7 +5,7 @@ import { Menu, X, ChevronDown } from 'lucide-react'
 import { t, type Language } from '../i18n/translations'
 import { useSystemConfig } from '../hooks/useSystemConfig'
 import { OFFICIAL_LINKS } from '../constants/branding'
-import { isStaticDemoMode } from '../demo/staticDemo'
+import { getDemoMode, isStaticDemoMode } from '../demo/staticDemo'
 
 type Page =
   | 'lobby'
@@ -56,6 +56,8 @@ export default function HeaderBar({
   const { config: systemConfig } = useSystemConfig()
   const registrationEnabled = systemConfig?.registration_enabled !== false
   const staticDemo = isStaticDemoMode()
+  const demoMode = getDemoMode()
+  const demoLabel = demoMode === 'mock-live' ? 'Mock Live' : 'Static'
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -96,7 +98,7 @@ export default function HeaderBar({
           </span>
           {staticDemo && (
             <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-semibold uppercase tracking-wide">
-              Demo
+              {demoLabel}
             </span>
           )}
         </div>

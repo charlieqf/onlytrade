@@ -1,0 +1,18 @@
+{
+  "interval": "1d",
+  "lookback_days": 90,
+  "provider": "yahoo-finance",
+  "symbols": [
+    "000858.SZ",
+    "300750.SZ",
+    "600036.SH",
+    "600519.SH",
+    "601318.SH"
+  ],
+  "frame_count": 450,
+  "trading_day_start": "2025-09-29",
+  "trading_day_end": "2026-02-11",
+  "generated_at": "2026-02-11T22:26:32.075Z",
+  "append_count": 0,
+  "source_note": "Yahoo Finance daily bars for agent context warmup and replay decisions"
+}

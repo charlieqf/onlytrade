@@ -90,6 +90,60 @@ export interface Statistics {
   total_close_positions: number
 }
 
+export type AgentRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_cycle_ms'
+
+export interface AgentRuntimeMetrics {
+  totalCycles: number
+  successfulCycles: number
+  failedCycles: number
+}
+
+export interface AgentRuntimeTraderCall {
+  trader_id: string
+  call_count: number
+}
+
+export interface AgentRuntimeState {
+  running: boolean
+  cycle_ms: number
+  in_flight: boolean
+  last_cycle_started_ms: number | null
+  last_cycle_completed_ms: number | null
+}
+
+export interface AgentRuntimeStatus extends AgentRuntimeState {
+  metrics: AgentRuntimeMetrics
+  decision_every_bars?: number
+  traders: AgentRuntimeTraderCall[]
+}
+
+export interface AgentRuntimeControlResult {
+  action: AgentRuntimeControlAction
+  state: AgentRuntimeState
+  metrics: AgentRuntimeMetrics
+}
+
+export type ReplayRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_speed' | 'set_cursor'
+
+export interface ReplayRuntimeState {
+  running: boolean
+  speed: number
+  loop: boolean
+  warmup_bars: number
+  cursor_index: number
+  timeline_length: number
+  current_ts_ms: number | null
+}
+
+export interface ReplayRuntimeStatus extends ReplayRuntimeState {
+  symbols: string[]
+}
+
+export interface ReplayRuntimeControlResult {
+  action: ReplayRuntimeControlAction
+  state: ReplayRuntimeState
+}
+
 // AI Trading相关类型
 export interface TraderInfo {
   trader_id: string

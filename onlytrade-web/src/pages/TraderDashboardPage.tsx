@@ -5,7 +5,7 @@ import { PositionHistory } from '../components/PositionHistory'
 import { PunkAvatar, getTraderAvatar } from '../components/PunkAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Flame, Info, MessageSquare, Send } from 'lucide-react'
+import { Flame, Info, MessageSquare, Pause, Play, Send, StepForward } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import type {
     SystemStatus,
@@ -13,6 +13,8 @@ import type {
     Position,
     DecisionRecord,
     TraderInfo,
+    AgentRuntimeStatus,
+    AgentRuntimeControlAction,
 } from '../types'
 
 // --- Helper Functions ---
@@ -58,6 +60,9 @@ interface TraderDashboardPageProps {
     decisions?: DecisionRecord[]
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
+    runtimeStatus?: AgentRuntimeStatus
+    runtimeControlsEnabled?: boolean
+    onRuntimeControl?: (action: AgentRuntimeControlAction, cycleMs?: number) => Promise<void>
     lastUpdate: string
     language: Language
 }
@@ -77,6 +82,9 @@ export function TraderDashboardPage({
     decisions,
     decisionsLimit,
     onDecisionsLimitChange,
+    runtimeStatus,
+    runtimeControlsEnabled,
+    onRuntimeControl,
     lastUpdate,
     language,
     traders,
@@ -90,6 +98,9 @@ export function TraderDashboardPage({
     const chartSectionRef = useRef<HTMLDivElement>(null)
     const [askInput, setAskInput] = useState('')
     const [fuelInput, setFuelInput] = useState('30')
+    const [runtimeCycleInput, setRuntimeCycleInput] = useState('15000')
+    const [runtimeActionPending, setRuntimeActionPending] = useState(false)
+    const [runtimeActionMessage, setRuntimeActionMessage] = useState<string>('')
     const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
         {
             id: 1,
@@ -122,6 +133,12 @@ export function TraderDashboardPage({
             setSelectedChartSymbol(status.grid_symbol)
         }
     }, [status?.grid_symbol])
+
+    useEffect(() => {
+        if (runtimeStatus?.cycle_ms) {
+            setRuntimeCycleInput(String(runtimeStatus.cycle_ms))
+        }
+    }, [runtimeStatus?.cycle_ms])
 
     const handleAskSubmit = () => {
         const trimmed = askInput.trim()
@@ -157,6 +174,46 @@ export function TraderDashboardPage({
         const fuels = roomEvents.filter((e) => e.type === 'fuel').length
         return { asks, fuels }
     }, [roomEvents])
+
+    const selectedRuntimeTrader = useMemo(
+        () => runtimeStatus?.traders?.find((trader) => trader.trader_id === selectedTraderId),
+        [runtimeStatus?.traders, selectedTraderId]
+    )
+
+    const triggerRuntimeAction = async (action: AgentRuntimeControlAction) => {
+        if (!onRuntimeControl || runtimeActionPending) return
+
+        setRuntimeActionPending(true)
+        setRuntimeActionMessage('')
+
+        try {
+            if (action === 'set_cycle_ms') {
+                const cycleMs = Number(runtimeCycleInput)
+                if (!Number.isFinite(cycleMs) || cycleMs <= 0) {
+                    setRuntimeActionMessage(language === 'zh' ? '请输入有效的毫秒间隔。' : 'Please enter a valid cycle interval in milliseconds.')
+                    return
+                }
+                await onRuntimeControl(action, cycleMs)
+                setRuntimeActionMessage(language === 'zh' ? `已更新决策节奏至 ${cycleMs}ms 等效` : `Decision cadence updated to ${cycleMs}ms equivalent`)
+                return
+            }
+
+            await onRuntimeControl(action)
+            const actionMap = {
+                pause: language === 'zh' ? '已暂停运行时' : 'Runtime paused',
+                resume: language === 'zh' ? '已恢复运行时' : 'Runtime resumed',
+                step: language === 'zh' ? '已执行一步循环' : 'Executed one cycle step',
+                set_cycle_ms: '',
+            }
+            setRuntimeActionMessage(actionMap[action])
+        } catch (error) {
+            const fallback = language === 'zh' ? '运行时控制失败，请稍后重试。' : 'Runtime control failed. Please retry.'
+            const message = error instanceof Error && error.message ? error.message : fallback
+            setRuntimeActionMessage(message)
+        } finally {
+            setRuntimeActionPending(false)
+        }
+    }
 
     // Handle symbol click from Decision Card
     const handleSymbolClick = (symbol: string) => {
@@ -659,6 +716,105 @@ export function TraderDashboardPage({
                                 ))}
                             </div>
                         </div>
+
+                        {runtimeControlsEnabled && (
+                            <div className="nofx-glass p-4 border border-white/10 rounded-lg">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <div>
+                                        <div className="text-sm font-semibold text-nofx-text-main">
+                                            {language === 'zh' ? 'Agent Runtime 控制台' : 'Agent Runtime Console'}
+                                        </div>
+                                        <div className="text-[11px] text-nofx-text-muted mt-1">
+                                            {language === 'zh'
+                                                ? '用于演示：暂停/恢复/单步执行，并调整决策节奏。'
+                                                : 'Demo controls: pause/resume/step and tune decision cadence.'}
+                                        </div>
+                                    </div>
+                                    <span
+                                        className={`text-[11px] px-2 py-1 rounded border ${runtimeStatus?.running
+                                            ? 'border-nofx-green/30 text-nofx-green bg-nofx-green/10'
+                                            : 'border-nofx-gold/30 text-nofx-gold bg-nofx-gold/10'
+                                            }`}
+                                    >
+                                        {runtimeStatus?.running
+                                            ? (language === 'zh' ? '运行中' : 'Running')
+                                            : (language === 'zh' ? '已暂停' : 'Paused')}
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-2">
+                                    <input
+                                        value={runtimeCycleInput}
+                                        onChange={(e) => setRuntimeCycleInput(e.target.value)}
+                                        placeholder={language === 'zh' ? '决策节奏(ms 等效)' : 'decision cadence (ms equiv)'}
+                                        className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
+                                        disabled={runtimeActionPending}
+                                    />
+                                    <button
+                                        onClick={() => triggerRuntimeAction('set_cycle_ms')}
+                                        disabled={runtimeActionPending}
+                                        className="px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {language === 'zh' ? '更新节奏' : 'Apply Cadence'}
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 mb-3">
+                                    <button
+                                        onClick={() => triggerRuntimeAction('pause')}
+                                        disabled={runtimeActionPending}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Pause className="w-3.5 h-3.5" />
+                                        {language === 'zh' ? '暂停' : 'Pause'}
+                                    </button>
+                                    <button
+                                        onClick={() => triggerRuntimeAction('resume')}
+                                        disabled={runtimeActionPending}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-green/20 border border-nofx-green/30 text-nofx-green hover:bg-nofx-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Play className="w-3.5 h-3.5" />
+                                        {language === 'zh' ? '恢复' : 'Resume'}
+                                    </button>
+                                    <button
+                                        onClick={() => triggerRuntimeAction('step')}
+                                        disabled={runtimeActionPending}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-gold/15 border border-nofx-gold/35 text-nofx-gold hover:bg-nofx-gold/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <StepForward className="w-3.5 h-3.5" />
+                                        {language === 'zh' ? '单步' : 'Step'}
+                                    </button>
+                                </div>
+
+                                <div className="text-[11px] text-nofx-text-muted space-y-1">
+                                    <div>
+                                        {language === 'zh' ? '当前周期' : 'Cycle'}:
+                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.cycle_ms ?? '--'} ms</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '决策节奏' : 'Decision cadence'}:
+                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.decision_every_bars ?? '--'} {language === 'zh' ? '根K线/次' : 'bars/decision'}</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '总循环' : 'Total cycles'}:
+                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.metrics?.totalCycles ?? '--'}</span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '成功' : 'Success'}:
+                                        <span className="text-nofx-green ml-1">{runtimeStatus?.metrics?.successfulCycles ?? '--'}</span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '失败' : 'Fail'}:
+                                        <span className="text-nofx-red ml-1">{runtimeStatus?.metrics?.failedCycles ?? '--'}</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '当前交易员调用数' : 'Selected trader calls'}:
+                                        <span className="text-nofx-text-main ml-1">{selectedRuntimeTrader?.call_count ?? '--'}</span>
+                                    </div>
+                                    {runtimeActionMessage && (
+                                        <div className="text-nofx-text-main">{runtimeActionMessage}</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="nofx-glass p-4 border border-nofx-gold/20 rounded-lg">
                             <div className="flex items-center gap-2 text-sm font-semibold text-nofx-gold mb-2">

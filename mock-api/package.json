@@ -1,0 +1,18 @@
+{
+  "name": "mock-api",
+  "version": "1.0.0",
+  "description": "OnlyTrade thin mock backend",
+  "main": "server.mjs",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

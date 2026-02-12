@@ -109,6 +109,12 @@ export function AdvancedChart({
   onSymbolChange: _onSymbolChange, // Available for future use
 }: AdvancedChartProps) {
   void _onSymbolChange // Prevent unused warning
+  const DEBUG_CHART = false
+  const dlog = (...args: any[]) => {
+    if (DEBUG_CHART) {
+      console.log(...args)
+    }
+  }
   const { language } = useLanguage()
   const quoteUnit = getQuoteUnit(exchange)
   const baseUnit = getBaseUnit(exchange, symbol)
@@ -156,24 +162,49 @@ export function AdvancedChart({
   // 从服务获取K线数据
   const fetchKlineData = async (symbol: string, interval: string) => {
     try {
-      const limit = 1500
-      const klineUrl = `/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}&exchange=${exchange}`
-      const result = await httpClient.get(klineUrl)
+      const limit = interval === '1d' ? 90 : interval === '1m' ? 600 : 320
+      // Prefer canonical frames endpoint; fallback to legacy klines endpoint.
+      const framesUrl = `/api/market/frames?symbol=${symbol}&interval=${interval}&limit=${limit}`
+      const framesResult = await httpClient.get<any>(framesUrl)
 
-      if (!result.success || !result.data) {
-        throw new Error('Failed to fetch kline data')
+      let rawData: Array<{
+        time: UTCTimestamp
+        open: number
+        high: number
+        low: number
+        close: number
+        volume: number
+        quoteVolume: number
+      }> = []
+
+      if (framesResult.success && framesResult.data?.frames && Array.isArray(framesResult.data.frames)) {
+        rawData = framesResult.data.frames.map((frame: any) => ({
+          time: Math.floor(frame.window.start_ts_ms / 1000) as UTCTimestamp,
+          open: frame.bar.open,
+          high: frame.bar.high,
+          low: frame.bar.low,
+          close: frame.bar.close,
+          volume: frame.bar.volume_shares,
+          quoteVolume: frame.bar.turnover_cny,
+        }))
+      } else {
+        const klineUrl = `/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}&exchange=${exchange}`
+        const klineResult = await httpClient.get<any[]>(klineUrl)
+
+        if (!klineResult.success || !klineResult.data) {
+          throw new Error('Failed to fetch market data')
+        }
+
+        rawData = klineResult.data.map((candle: any) => ({
+          time: Math.floor(candle.openTime / 1000) as UTCTimestamp,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+          quoteVolume: candle.quoteVolume,
+        }))
       }
-
-      // 转换数据格式
-      const rawData = result.data.map((candle: any) => ({
-        time: Math.floor(candle.openTime / 1000) as UTCTimestamp,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume,           // 数量（BTC/股数）
-        quoteVolume: candle.quoteVolume, // 成交额（USDT/USD）
-      }))
 
       // 按时间排序并去重（lightweight-charts 要求数据按时间升序且无重复）
       const sortedData = rawData.sort((a: any, b: any) => a.time - b.time)
@@ -181,7 +212,7 @@ export function AdvancedChart({
         index === 0 || item.time !== arr[index - 1].time
       )
 
-      if (rawData.length !== dedupedData.length) {
+      if (DEBUG_CHART && rawData.length !== dedupedData.length) {
         console.warn('[AdvancedChart] Removed', rawData.length - dedupedData.length, 'duplicate klines')
       }
 
@@ -195,7 +226,9 @@ export function AdvancedChart({
   // 解析时间：支持 Unix 时间戳（数字）或字符串格式
   const parseCustomTime = (time: any): number => {
     if (!time) {
-      console.warn('[AdvancedChart] Empty time value')
+      if (DEBUG_CHART) {
+        console.warn('[AdvancedChart] Empty time value')
+      }
       return 0
     }
 
@@ -204,21 +237,21 @@ export function AdvancedChart({
       // 判断是毫秒还是秒：如果大于 10^12 则认为是毫秒（2001年之后的毫秒时间戳）
       if (time > 1000000000000) {
         const seconds = Math.floor(time / 1000)
-        console.log('[AdvancedChart] ✅ Unix timestamp (ms→s):', time, '→', seconds, '(', new Date(time).toISOString(), ')')
+        dlog('[AdvancedChart] Unix timestamp (ms→s):', time, '→', seconds)
         return seconds
       }
-      console.log('[AdvancedChart] ✅ Unix timestamp (s):', time, '(', new Date(time * 1000).toISOString(), ')')
+      dlog('[AdvancedChart] Unix timestamp (s):', time)
       return time
     }
 
     const timeStr = String(time)
-    console.log('[AdvancedChart] Parsing time string:', timeStr)
+    dlog('[AdvancedChart] Parsing time string:', timeStr)
 
     // 尝试标准ISO格式
     const isoTime = new Date(timeStr).getTime()
     if (!isNaN(isoTime) && isoTime > 0) {
       const timestamp = Math.floor(isoTime / 1000)
-      console.log('[AdvancedChart] ✅ Parsed as ISO:', timeStr, '→', timestamp, '(', new Date(timestamp * 1000).toISOString(), ')')
+      dlog('[AdvancedChart] Parsed as ISO:', timeStr, '→', timestamp)
       return timestamp
     }
 
@@ -235,7 +268,7 @@ export function AdvancedChart({
         parseInt(minute)
       ))
       const timestamp = Math.floor(date.getTime() / 1000)
-      console.log('[AdvancedChart] ✅ Parsed as custom format:', timeStr, '→', timestamp, '(', new Date(timestamp * 1000).toISOString(), ')')
+      dlog('[AdvancedChart] Parsed as custom format:', timeStr, '→', timestamp)
       return timestamp
     }
 
@@ -246,23 +279,25 @@ export function AdvancedChart({
   // 获取订单数据
   const fetchOrders = async (traderID: string, symbol: string): Promise<OrderMarker[]> => {
     try {
-      console.log('[AdvancedChart] Fetching orders for trader:', traderID, 'symbol:', symbol)
+      dlog('[AdvancedChart] Fetching orders for trader:', traderID, 'symbol:', symbol)
       // 获取已成交的订单，增加到200条以显示更多历史订单
       const result = await httpClient.get(`/api/orders?trader_id=${traderID}&symbol=${symbol}&status=FILLED&limit=200`)
 
-      console.log('[AdvancedChart] Orders API response:', result)
+      dlog('[AdvancedChart] Orders API response:', result)
 
       if (!result.success || !result.data) {
-        console.warn('[AdvancedChart] No orders found, result:', result)
+        if (DEBUG_CHART) {
+          console.warn('[AdvancedChart] No orders found, result:', result)
+        }
         return []
       }
 
       const orders = result.data
-      console.log('[AdvancedChart] Raw orders data:', orders)
+      dlog('[AdvancedChart] Raw orders data:', orders)
       const markers: OrderMarker[] = []
 
       orders.forEach((order: any) => {
-        console.log('[AdvancedChart] Processing order:', order)
+        dlog('[AdvancedChart] Processing order:', order)
 
         // 处理字段名：支持PascalCase和snake_case
         const filledAt = order.filled_at || order.FilledAt || order.created_at || order.CreatedAt
@@ -273,13 +308,17 @@ export function AdvancedChart({
 
         // 跳过没有成交时间或价格的订单
         if (!filledAt || !avgPrice || avgPrice === 0) {
-          console.warn('[AdvancedChart] Skipping order - missing data:', { filledAt, avgPrice })
+          if (DEBUG_CHART) {
+            console.warn('[AdvancedChart] Skipping order - missing data:', { filledAt, avgPrice })
+          }
           return
         }
 
         const timeSeconds = parseCustomTime(filledAt)
         if (timeSeconds === 0) {
-          console.warn('[AdvancedChart] Skipping order - invalid time:', filledAt)
+          if (DEBUG_CHART) {
+            console.warn('[AdvancedChart] Skipping order - invalid time:', filledAt)
+          }
           return
         }
 
@@ -300,7 +339,7 @@ export function AdvancedChart({
           positionSide = side === 'buy' ? 'long' : 'short'
         }
 
-        console.log('[AdvancedChart] Order marker:', {
+        dlog('[AdvancedChart] Order marker:', {
           time: timeSeconds,
           price: avgPrice,
           side: positionSide,
@@ -319,7 +358,7 @@ export function AdvancedChart({
         })
       })
 
-      console.log('[AdvancedChart] Final markers:', markers)
+      dlog('[AdvancedChart] Final markers:', markers)
       return markers
     } catch (err) {
       console.error('[AdvancedChart] Error fetching orders:', err)
@@ -330,13 +369,15 @@ export function AdvancedChart({
   // 获取交易所挂单 (止盈止损订单)
   const fetchOpenOrders = async (traderID: string, symbol: string): Promise<OpenOrder[]> => {
     try {
-      console.log('[AdvancedChart] Fetching open orders for trader:', traderID, 'symbol:', symbol)
+      dlog('[AdvancedChart] Fetching open orders for trader:', traderID, 'symbol:', symbol)
       const result = await httpClient.get(`/api/open-orders?trader_id=${traderID}&symbol=${symbol}`)
 
-      console.log('[AdvancedChart] Open orders API response:', result)
+      dlog('[AdvancedChart] Open orders API response:', result)
 
       if (!result.success || !result.data) {
-        console.warn('[AdvancedChart] No open orders found')
+        if (DEBUG_CHART) {
+          console.warn('[AdvancedChart] No open orders found')
+        }
         return []
       }
 
@@ -521,7 +562,7 @@ export function AdvancedChart({
     const loadData = async (isRefresh = false) => {
       if (!candlestickSeriesRef.current) return
 
-      console.log('[AdvancedChart] Loading data for', symbol, interval, isRefresh ? '(refresh)' : '')
+      dlog('[AdvancedChart] Loading data for', symbol, interval, isRefresh ? '(refresh)' : '')
       // 只在首次加载时显示 loading，刷新时不显示避免闪烁
       if (!isRefresh) {
         setLoading(true)
@@ -531,7 +572,7 @@ export function AdvancedChart({
       try {
         // 1. 获取K线数据
         const klineData = await fetchKlineData(symbol, interval)
-        console.log('[AdvancedChart] Loaded', klineData.length, 'klines')
+        dlog('[AdvancedChart] Loaded', klineData.length, 'klines')
         candlestickSeriesRef.current.setData(klineData)
 
         // 存储 volume/quoteVolume 数据供 tooltip 使用
@@ -576,7 +617,7 @@ export function AdvancedChart({
           const volumeEnabled = indicators.find(i => i.id === 'volume')?.enabled
           if (volumeEnabled) {
             const volumeData = klineData.map((k: Kline) => ({
-              time: k.time,
+              time: k.time as UTCTimestamp,
               value: k.volume || 0,
               color: k.close >= k.open ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)',
             }))
@@ -592,18 +633,18 @@ export function AdvancedChart({
 
         // 4. 获取并显示订单标记
         if (traderID && candlestickSeriesRef.current) {
-          console.log('[AdvancedChart] Starting to fetch orders...')
+          dlog('[AdvancedChart] Starting to fetch orders...')
           const orders = await fetchOrders(traderID, symbol)
-          console.log('[AdvancedChart] Received orders:', orders)
+          dlog('[AdvancedChart] Received orders:', orders)
 
           if (orders.length > 0) {
-            console.log('[AdvancedChart] Creating markers from', orders.length, 'orders')
+            dlog('[AdvancedChart] Creating markers from', orders.length, 'orders')
 
             // 提取 K 线时间数组（已排序）
             const klineTimes = klineData.map((k: any) => k.time as number)
             const klineMinTime = klineTimes[0] || 0
             const klineMaxTime = klineTimes[klineTimes.length - 1] || 0
-            console.log('[AdvancedChart] Kline time range:', klineMinTime, '-', klineMaxTime, '(', klineTimes.length, 'candles)')
+            dlog('[AdvancedChart] Kline time range:', klineMinTime, '-', klineMaxTime, '(', klineTimes.length, 'candles)')
 
             // 二分查找：找到订单时间所属的 K 线蜡烛
             // 返回 time <= orderTime 的最大 K 线时间
@@ -635,8 +676,10 @@ export function AdvancedChart({
               const candleTime = findCandleTime(order.time)
 
               if (candleTime === null) {
-                console.warn('[AdvancedChart] ⚠️ Skipping order outside kline range:',
-                  order.time, '(', new Date(order.time * 1000).toISOString(), ')')
+                if (DEBUG_CHART) {
+                  console.warn('[AdvancedChart] Skipping order outside kline range:',
+                    order.time, '(', new Date(order.time * 1000).toISOString(), ')')
+                }
                 return
               }
 
@@ -687,10 +730,8 @@ export function AdvancedChart({
             // 按时间排序（lightweight-charts 要求标记按时间顺序）
             markers.sort((a, b) => (a.time as number) - (b.time as number))
 
-            console.log('[AdvancedChart] Valid markers:', markers.length, 'out of', orders.length)
-
-            console.log('[AdvancedChart] Setting', markers.length, 'markers on candlestick series')
-            console.log('[AdvancedChart] Markers data:', JSON.stringify(markers, null, 2))
+            dlog('[AdvancedChart] Valid markers:', markers.length, 'out of', orders.length)
+            dlog('[AdvancedChart] Setting', markers.length, 'markers on candlestick series')
 
             try {
               // 存储标记数据供后续切换使用
@@ -706,12 +747,12 @@ export function AdvancedChart({
                 // 首次创建标记
                 seriesMarkersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markersToShow)
               }
-              console.log('[AdvancedChart] ✅ Markers updated! Count:', markersToShow.length, 'Visible:', showOrderMarkers)
+              dlog('[AdvancedChart] Markers updated. Count:', markersToShow.length, 'Visible:', showOrderMarkers)
             } catch (err) {
               console.error('[AdvancedChart] ❌ Failed to set markers:', err)
             }
           } else {
-            console.log('[AdvancedChart] No orders found, clearing markers')
+            dlog('[AdvancedChart] No orders found, clearing markers')
             try {
               if (seriesMarkersRef.current) {
                 seriesMarkersRef.current.setMarkers([])
@@ -721,7 +762,7 @@ export function AdvancedChart({
             }
           }
         } else {
-          console.log('[AdvancedChart] Skipping markers:', {
+          dlog('[AdvancedChart] Skipping markers:', {
             hasTraderID: !!traderID,
             hasSeries: !!candlestickSeriesRef.current
           })
@@ -742,8 +783,9 @@ export function AdvancedChart({
 
     loadData(false) // 首次加载
 
-    // 实时自动刷新 (5秒更新一次)
-    const refreshInterval = setInterval(() => loadData(true), 5000)
+    // Real-time auto-refresh. Keep interval moderate to reduce UI jank.
+    const refreshMs = interval === '1d' ? 300000 : interval === '1m' ? 1000 : 15000
+    const refreshInterval = setInterval(() => loadData(true), refreshMs)
     return () => clearInterval(refreshInterval)
   }, [symbol, interval, traderID, exchange])
 
@@ -765,7 +807,7 @@ export function AdvancedChart({
         priceLinesRef.current = []
 
         const openOrders = await fetchOpenOrders(traderID, symbol)
-        console.log('[AdvancedChart] Open orders for price lines:', openOrders)
+        dlog('[AdvancedChart] Open orders for price lines:', openOrders)
 
         if (openOrders.length > 0 && candlestickSeriesRef.current) {
           openOrders.forEach(order => {
@@ -809,7 +851,7 @@ export function AdvancedChart({
               priceLinesRef.current.push(priceLine)
             }
           })
-          console.log('[AdvancedChart] ✅ Created', priceLinesRef.current.length, 'price lines for pending orders')
+          dlog('[AdvancedChart] Created', priceLinesRef.current.length, 'price lines for pending orders')
         }
       } catch (err) {
         console.error('[AdvancedChart] Error loading open orders:', err)
@@ -835,7 +877,7 @@ export function AdvancedChart({
     try {
       const markersToShow = showOrderMarkers ? currentMarkersDataRef.current : []
       seriesMarkersRef.current.setMarkers(markersToShow)
-      console.log('[AdvancedChart] 🔄 Toggled markers visibility:', showOrderMarkers, 'Count:', markersToShow.length)
+      dlog('[AdvancedChart] Toggled markers visibility:', showOrderMarkers, 'Count:', markersToShow.length)
     } catch (err) {
       console.error('[AdvancedChart] ❌ Failed to toggle markers:', err)
     }

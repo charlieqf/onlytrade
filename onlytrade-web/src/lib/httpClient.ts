@@ -209,11 +209,27 @@ export class HttpClient {
         headers: options.headers,
       })
 
+      const payload = response.data as any
+
+      // Support both raw payloads and backend-wrapped payloads: { success, data, message }
+      if (
+        payload &&
+        typeof payload === 'object' &&
+        typeof payload.success === 'boolean' &&
+        ('data' in payload || 'message' in payload)
+      ) {
+        return {
+          success: payload.success,
+          data: payload.data,
+          message: payload.message,
+        }
+      }
+
       // Success
       return {
         success: true,
         data: response.data,
-        message: (response.data as any)?.message,
+        message: payload?.message,
       }
     } catch (error) {
       // If we get here, it's a business logic error (4xx except 401/403/404)

@@ -11,6 +11,15 @@ This file is the living progress tracker. Update it as work lands.
 - Milestone 2 started: mock-live demo mode scaffolded via `VITE_DEMO_MODE=mock-live`
 - Core frontend pass complete: app shell now centered on `/lobby`, `/room`, `/leaderboard` with Ask/Fuel + simulation-rule UI
 - UI-complete assessment added: `docs/UI_COMPLETE_CHECKLIST.md`
+- Realtime data proxy scaffolded in `mock-api/` with adapter mode switch (`MARKET_PROVIDER`), canonical frame normalization, and SSE endpoint (`/api/market/stream`)
+- Added 90-day daily (`1d`) history updater for agent context warmup (`scripts/update-cn-daily-history.mjs`)
+- Added agent context endpoint + feature snapshots (`/api/agent/market-context`) backed by intraday + 90-day daily bars
+- Added mock in-memory agent decision loop feeding `/api/decisions/latest` on a configurable cycle
+- Added runtime control/status APIs for demo operations (`/api/agent/runtime/status`, `/api/agent/runtime/control`)
+- Added room-side runtime control UI (pause/resume/step/cycle-ms) wired to runtime control APIs
+- Added replay clock engine for `1m` bars (default `60x`) with replay runtime status/control APIs
+- Symbol API now returns Chinese A-share names for key demo symbols (e.g. 贵州茅台/宁德时代)
+- Switched agent triggering to replay-event driven cadence (decision every N replay bars) for production-style pattern
 
 ## Demo Milestones
 
@@ -45,13 +54,17 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Define unified market-data schema for mock + real (`market.bar.v1`)
 - [x] Document A-share realtime retrieval architecture (`docs/A_SHARE_REALTIME_RETRIEVAL.md`)
 - [x] Prepare replay pack tooling for yesterday CN-A bars (`scripts/fetch-cn-replay.mjs`)
-- [ ] Minimal API service returning fixtures
+- [x] Prepare rolling 90-day `1d` CN-A history and daily append workflow (`scripts/update-cn-daily-history.mjs`)
+- [x] Minimal API service returning fixtures/replay (`mock-api/`)
+- [x] Realtime stock data proxy scaffold (upstream adapter + fallback + canonical normalization + SSE)
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)
 - [ ] Agent runtime (1-3 personas) emitting actions + thought summaries
+- [x] Agent-ready market context payload contract and mock endpoint (`docs/AGENT_MARKET_CONTEXT.md`, `mock-api`)
 
 ### Testing
 - [x] Unit tests (Vitest) in `onlytrade-web/src/**/*.test.*`
+- [x] Unit tests for market proxy normalization/dedupe/fallback in `mock-api/test/marketProxy.test.mjs`
 - [x] Add integration/E2E structure (Playwright recommended)
 - [ ] Add one smoke test: lobby renders and navigation works
 

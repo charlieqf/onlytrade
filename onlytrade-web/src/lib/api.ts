@@ -30,6 +30,12 @@ import type {
   DebateVote,
   DebatePersonalityInfo,
   PositionHistoryResponse,
+  AgentRuntimeStatus,
+  AgentRuntimeControlAction,
+  AgentRuntimeControlResult,
+  ReplayRuntimeStatus,
+  ReplayRuntimeControlAction,
+  ReplayRuntimeControlResult,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -348,7 +354,6 @@ export const api = {
       : `${API_BASE}/account`
     const result = await httpClient.get<AccountInfo>(url)
     if (!result.success) throw new Error('获取账户信息失败')
-    console.log('Account data fetched:', result.data)
     return result.data!
   },
 
@@ -388,6 +393,59 @@ export const api = {
     )
     if (!result.success) throw new Error('获取最新决策失败')
     return result.data!
+  },
+
+  async getAgentRuntimeStatus(): Promise<AgentRuntimeStatus> {
+    const result = await httpClient.get<AgentRuntimeStatus>(`${API_BASE}/agent/runtime/status`)
+    if (!result.success || !result.data) throw new Error('获取运行时状态失败')
+    return result.data
+  },
+
+  async controlAgentRuntime(
+    action: AgentRuntimeControlAction,
+    cycleMs?: number
+  ): Promise<AgentRuntimeControlResult> {
+    const payload: Record<string, unknown> = { action }
+    if (action === 'set_cycle_ms') {
+      payload.cycle_ms = cycleMs
+    }
+
+    const result = await httpClient.post<AgentRuntimeControlResult>(
+      `${API_BASE}/agent/runtime/control`,
+      payload
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '运行时控制失败')
+    }
+    return result.data
+  },
+
+  async getReplayRuntimeStatus(): Promise<ReplayRuntimeStatus> {
+    const result = await httpClient.get<ReplayRuntimeStatus>(`${API_BASE}/replay/runtime/status`)
+    if (!result.success || !result.data) throw new Error('获取回放运行时状态失败')
+    return result.data
+  },
+
+  async controlReplayRuntime(
+    action: ReplayRuntimeControlAction,
+    value?: number
+  ): Promise<ReplayRuntimeControlResult> {
+    const payload: Record<string, unknown> = { action }
+    if (action === 'set_speed') {
+      payload.speed = value
+    }
+    if (action === 'set_cursor') {
+      payload.cursor_index = value
+    }
+
+    const result = await httpClient.post<ReplayRuntimeControlResult>(
+      `${API_BASE}/replay/runtime/control`,
+      payload
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '回放运行时控制失败')
+    }
+    return result.data
   },
 
   // 获取统计信息（支持trader_id）

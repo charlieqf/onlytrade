@@ -126,6 +126,53 @@ Wrapped list of `DecisionRecord`.
 
 Fixture: `onlytrade-web/tests/fixtures/api_decisions_latest.json`
 
+### GET /api/agent/runtime/status
+
+Wrapped runtime status payload used by room runtime controls.
+
+- Includes `running`, `cycle_ms`, in-flight timestamps, aggregate metrics, and per-trader call counts.
+
+### POST /api/agent/runtime/control
+
+Runtime control endpoint for demo operations.
+
+Request body:
+
+```json
+{ "action": "pause" }
+```
+
+Supported `action` values:
+
+- `pause`
+- `resume`
+- `step`
+- `set_cycle_ms` (requires `cycle_ms`; maps to `decision_every_bars` under current replay speed)
+
+### GET /api/replay/runtime/status
+
+Wrapped replay runtime status payload.
+
+- Includes `running`, `speed`, `cursor_index`, timeline size, and current replay timestamp.
+
+### POST /api/replay/runtime/control
+
+Replay runtime control endpoint for market playback.
+
+Request body:
+
+```json
+{ "action": "set_speed", "speed": 60 }
+```
+
+Supported `action` values:
+
+- `pause`
+- `resume`
+- `step` (optional `bars`, default `1`)
+- `set_speed` (requires `speed`)
+- `set_cursor` (requires `cursor_index`)
+
 ### GET /api/equity-history?trader_id=&hours=
 
 Wrapped list of equity points used by room equity curve.
@@ -140,18 +187,17 @@ Wrapped `PositionHistoryResponse` payload.
 
 ### GET /api/symbols?exchange=sim-cn
 
-Wrapped symbol list used in room chart selector.
+Raw symbol list used in room chart selector (historical compatibility path).
+
+This endpoint currently does **not** use the `{ success, data }` wrapper.
 
 Example:
 
 ```json
 {
-  "success": true,
-  "data": {
-    "symbols": [
-      { "symbol": "600519.SH", "name": "Kweichow Moutai", "category": "stock" }
-    ]
-  }
+  "symbols": [
+    { "symbol": "600519.SH", "name": "Kweichow Moutai", "category": "stock" }
+  ]
 }
 ```
 
@@ -219,6 +265,37 @@ Example:
   }
 }
 ```
+
+### GET /api/market/stream?symbols=&interval=&limit=
+
+Server-Sent Events endpoint for near-realtime frame updates.
+
+- Query params:
+  - `symbols`: comma-separated symbols (`600519.SH,300750.SZ`)
+  - `interval`: bar interval (`1m`, `5m`, ...)
+  - `limit`: optional lookback for upstream fetch before selecting latest frame
+
+Event types:
+
+- `ready`: connection metadata
+- `frames`: payload is `market.frames.v1` envelope containing latest frame updates
+- `error`: transient stream-side fetch/emit errors
+
+Notes:
+
+- Stream payload uses the same canonical frame schema as `/api/market/frames`.
+- In `MARKET_PROVIDER=real`, stream reads from upstream proxy and falls back to replay/mock on upstream failure.
+
+### GET /api/agent/market-context?symbol=&intraday_interval=&intraday_limit=&daily_limit=&trader_id=
+
+Compact context payload for agent decision loops.
+
+- Returns intraday bars + daily bars in canonical `market.bar.v1` shape.
+- Includes precomputed feature snapshots (returns, ATR, SMA, RSI, volume ratio, range).
+- `trader_id` is optional; used to include position/account-derived state.
+- Intended cadence: ingest every bar, decision every 3-5 bars.
+
+Reference: `docs/AGENT_MARKET_CONTEXT.md`
 
 ### GET /api/klines?symbol=&interval=&limit=&exchange=
 

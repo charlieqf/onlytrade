@@ -36,7 +36,7 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
   const { language } = useLanguage()
   const [activeTab, setActiveTab] = useState<ChartTab>('equity')
   const [chartSymbol, setChartSymbol] = useState<string>('600519.SH')
-  const [interval, setInterval] = useState<Interval>('5m')
+  const [interval, setInterval] = useState<Interval>('1m')
   const [symbolInput, setSymbolInput] = useState('')
   const [availableSymbols, setAvailableSymbols] = useState<SymbolInfo[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
@@ -57,16 +57,16 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
           return
         }
         setAvailableSymbols([
-          { symbol: '600519.SH', name: 'Kweichow Moutai', category: 'stock' },
-          { symbol: '601318.SH', name: 'Ping An', category: 'stock' },
-          { symbol: '300750.SZ', name: 'CATL', category: 'stock' },
+          { symbol: '600519.SH', name: '贵州茅台', category: 'stock' },
+          { symbol: '601318.SH', name: '中国平安', category: 'stock' },
+          { symbol: '300750.SZ', name: '宁德时代', category: 'stock' },
         ])
       })
       .catch(() => {
         setAvailableSymbols([
-          { symbol: '600519.SH', name: 'Kweichow Moutai', category: 'stock' },
-          { symbol: '601318.SH', name: 'Ping An', category: 'stock' },
-          { symbol: '300750.SZ', name: 'CATL', category: 'stock' },
+          { symbol: '600519.SH', name: '贵州茅台', category: 'stock' },
+          { symbol: '601318.SH', name: '中国平安', category: 'stock' },
+          { symbol: '300750.SZ', name: '宁德时代', category: 'stock' },
         ])
       })
   }, [])
@@ -84,13 +84,15 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
 
   // 过滤后的币种列表
   const filteredSymbols = availableSymbols.filter(s =>
-    s.symbol.toLowerCase().includes(searchFilter.toLowerCase())
+    s.symbol.toLowerCase().includes(searchFilter.toLowerCase()) ||
+    s.name.toLowerCase().includes(searchFilter.toLowerCase())
   )
+
+  const selectedSymbolInfo = availableSymbols.find((item) => item.symbol === chartSymbol)
 
   // 当从外部选择币种时，自动切换到K线图
   useEffect(() => {
     if (selectedSymbol) {
-      console.log('[ChartTabs] 收到币种选择:', selectedSymbol, 'updateKey:', updateKey)
       setChartSymbol(selectedSymbol)
       setActiveTab('kline')
     }
@@ -105,8 +107,6 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
       setSymbolInput('')
     }
   }
-
-  console.log('[ChartTabs] rendering, activeTab:', activeTab)
 
   return (
     <div className={`nofx-glass rounded-lg border border-white/5 relative z-10 w-full flex flex-col transition-all duration-300 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'h-[500px]' : 'h-[600px]'
@@ -166,6 +166,9 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                   className="flex items-center gap-1.5 px-2.5 py-1 bg-black/40 border border-white/10 rounded text-[11px] font-bold text-nofx-text-main hover:border-nofx-gold/30 hover:text-nofx-gold transition-all"
                 >
                   <span>{chartSymbol}</span>
+                  {selectedSymbolInfo?.name && (
+                    <span className="text-[9px] opacity-55 hidden md:inline">{selectedSymbolInfo.name}</span>
+                  )}
                   <ChevronDown className={`w-3 h-3 text-nofx-text-muted transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
                 </button>
                 {showDropdown && (
@@ -191,7 +194,7 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                           className={`w-full px-3 py-2 text-left text-[11px] font-mono hover:bg-white/5 transition-all flex items-center justify-between ${chartSymbol === s.symbol ? 'bg-nofx-gold/10 text-nofx-gold' : 'text-nofx-text-muted'}`}
                         >
                           <span>{s.symbol}</span>
-                          <span className="text-[9px] opacity-40">{s.name}</span>
+                          <span className="text-[10px] opacity-75">{s.name}</span>
                         </button>
                       ))}
                     </div>

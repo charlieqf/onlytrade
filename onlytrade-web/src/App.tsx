@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR from 'swr'
 import { api } from './lib/api'
@@ -15,6 +15,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ConfirmDialogProvider } from './components/ConfirmDialog'
 import { t } from './i18n/translations'
 import { useSystemConfig } from './hooks/useSystemConfig'
+import { isStaticDemoMode } from './demo/staticDemo'
 
 import { OFFICIAL_LINKS } from './constants/branding'
 import type {
@@ -23,6 +24,9 @@ import type {
   Position,
   DecisionRecord,
   TraderInfo,
+  AgentRuntimeStatus,
+  AgentRuntimeControlAction,
+  ReplayRuntimeStatus,
 } from './types'
 
 type Page =
@@ -106,6 +110,7 @@ function App() {
   }
   const [lastUpdate, setLastUpdate] = useState<string>('--:--:--')
   const [decisionsLimit, setDecisionsLimit] = useState<number>(5)
+  const runtimeControlsEnabled = !isStaticDemoMode()
 
   // Keep page state in sync with URL.
   useEffect(() => {
@@ -143,34 +148,36 @@ function App() {
     }
   )
 
-  // 当获取到traders后，根据 URL 中的 trader slug 设置选中的 trader，或默认选中第一个
+  // Keep selected trader in sync with URL slug and available list.
   useEffect(() => {
-    if (traders && traders.length > 0 && !selectedTraderId) {
-      if (selectedTraderSlug) {
-        // 通过 slug 找到对应的 trader
-        const trader = findTraderBySlug(selectedTraderSlug, traders)
-        if (trader) {
-          setSelectedTraderId(trader.trader_id)
-        } else {
-          // 如果找不到，选中第一个
-          setSelectedTraderId(traders[0].trader_id)
+    if (!traders || traders.length === 0) return
+
+    if (selectedTraderSlug) {
+      const traderFromSlug = findTraderBySlug(selectedTraderSlug, traders)
+      if (traderFromSlug) {
+        if (selectedTraderId !== traderFromSlug.trader_id) {
+          setSelectedTraderId(traderFromSlug.trader_id)
         }
-      } else {
-        setSelectedTraderId(traders[0].trader_id)
+        return
       }
+    }
+
+    const selectedStillExists = !!selectedTraderId && traders.some((t) => t.trader_id === selectedTraderId)
+    if (!selectedStillExists) {
+      setSelectedTraderId(traders[0].trader_id)
     }
   }, [traders, selectedTraderId, selectedTraderSlug])
 
   // 如果在trader页面，获取该trader的数据
-  const { data: status } = useSWR<SystemStatus>(
+  const { data: status, mutate: mutateStatus } = useSWR<SystemStatus>(
     currentPage === 'room' && selectedTraderId
       ? `status-${selectedTraderId}`
       : null,
     () => api.getStatus(selectedTraderId),
     {
-      refreshInterval: 15000, // 15秒刷新（配合后端15秒缓存）
+      refreshInterval: 5000,
       revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 10000, // 10秒去重，防止短时间内重复请求
+      dedupingInterval: 2000,
     }
   )
 
@@ -180,9 +187,9 @@ function App() {
       : null,
     () => api.getAccount(selectedTraderId),
     {
-      refreshInterval: 15000, // 15秒刷新（配合后端15秒缓存）
+      refreshInterval: 10000,
       revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 10000, // 10秒去重，防止短时间内重复请求
+      dedupingInterval: 3000,
     }
   )
 
@@ -192,22 +199,73 @@ function App() {
       : null,
     () => api.getPositions(selectedTraderId),
     {
-      refreshInterval: 15000, // 15秒刷新（配合后端15秒缓存）
+      refreshInterval: 10000,
       revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 10000, // 10秒去重，防止短时间内重复请求
+      dedupingInterval: 3000,
     }
   )
 
-  const { data: decisions } = useSWR<DecisionRecord[]>(
+  const { data: decisions, mutate: mutateDecisions } = useSWR<DecisionRecord[]>(
     currentPage === 'room' && selectedTraderId
       ? `decisions/latest-${selectedTraderId}-${decisionsLimit}`
       : null,
     () => api.getLatestDecisions(selectedTraderId, decisionsLimit),
     {
-      refreshInterval: 30000, // 30秒刷新（决策更新频率较低）
+      refreshInterval: 5000,
       revalidateOnFocus: false,
-      dedupingInterval: 20000,
+      dedupingInterval: 2000,
     }
+  )
+
+  const { data: runtimeStatus, mutate: mutateRuntimeStatus } = useSWR<AgentRuntimeStatus>(
+    runtimeControlsEnabled && currentPage === 'room'
+      ? 'agent-runtime-status'
+      : null,
+    api.getAgentRuntimeStatus,
+    {
+      refreshInterval: 5000,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }
+  )
+
+  const { mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
+    runtimeControlsEnabled && currentPage === 'room'
+      ? 'replay-runtime-status'
+      : null,
+    api.getReplayRuntimeStatus,
+    {
+      refreshInterval: 5000,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }
+  )
+
+  const handleRuntimeControl = useCallback(
+    async (action: AgentRuntimeControlAction, cycleMs?: number) => {
+      if (!runtimeControlsEnabled) return
+
+      const tasks: Array<Promise<unknown>> = []
+
+      if (action === 'step') {
+        tasks.push(api.controlReplayRuntime('step'))
+      } else {
+        tasks.push(api.controlAgentRuntime(action, cycleMs))
+        if (action === 'pause' || action === 'resume') {
+          const replayAction = action === 'pause' ? 'pause' : 'resume'
+          tasks.push(api.controlReplayRuntime(replayAction))
+        }
+      }
+
+      await Promise.all(tasks)
+      await Promise.all([
+        mutateRuntimeStatus(),
+        mutateReplayRuntimeStatus(),
+        mutateStatus(),
+        mutateDecisions(),
+      ])
+    },
+    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStatus, mutateDecisions]
   )
 
   useEffect(() => {
@@ -299,6 +357,9 @@ function App() {
                   decisions={decisions}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
+                  runtimeStatus={runtimeStatus}
+                  runtimeControlsEnabled={runtimeControlsEnabled}
+                  onRuntimeControl={handleRuntimeControl}
                   lastUpdate={lastUpdate}
                   language={language}
                   traders={traders}
@@ -308,8 +369,10 @@ function App() {
                     setSelectedTraderId(traderId)
                     const trader = traders?.find(t => t.trader_id === traderId)
                     if (trader) {
+                      const traderSlug = getTraderSlug(trader)
+                      setSelectedTraderSlug(traderSlug)
                       const url = new URL(window.location.href)
-                      url.searchParams.set('trader', getTraderSlug(trader))
+                      url.searchParams.set('trader', traderSlug)
                       window.history.replaceState({}, '', url.toString())
                     }
                   }}

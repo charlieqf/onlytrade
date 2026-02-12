@@ -32,7 +32,7 @@ Optional env vars:
 
 Notes:
   - Auto-detect repo path on VM from:
-      /root/onlytrade, /opt/onlytrade, /home/ubuntu/onlytrade, /opt/wecom-callback
+      /root/onlytrade, /opt/onlytrade, /home/ubuntu/onlytrade
   - If your path differs, set ONLYTRADE_VM_REPO explicitly.
 EOF
 }
@@ -64,7 +64,7 @@ detect_repo() {
     return 0
   fi
 
-  for candidate in /root/onlytrade /opt/onlytrade /home/ubuntu/onlytrade /opt/wecom-callback; do
+  for candidate in /root/onlytrade /opt/onlytrade /home/ubuntu/onlytrade; do
     if [ -f "$candidate/scripts/onlytrade-ops.sh" ]; then
       echo "$candidate"
       return 0

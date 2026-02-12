@@ -28,6 +28,14 @@ VITE_DEMO_MODE=mock-live npm run dev
 
 Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 
+Login gating is optional. Current default is no-login mode for operator workflows:
+
+```bash
+VITE_REQUIRE_LOGIN=false
+```
+
+Set `VITE_REQUIRE_LOGIN=true` only if you explicitly want auth-gated runtime controls/UI.
+
 ### Build Multi-Day Replay Pack (A-share)
 
 ```bash
@@ -149,6 +157,12 @@ bash scripts/onlytrade-ops.sh kill-off "manual_resume"
 # clean rerun from day-1 first bar and start 3-day replay
 bash scripts/onlytrade-ops.sh start-3day --speed 60 --cadence 10
 
+# run a single 3-day competition and stop automatically at the end
+bash scripts/onlytrade-ops.sh start-3day --single-run --speed 60 --cadence 10
+
+# toggle replay loop mode explicitly
+bash scripts/onlytrade-ops.sh set-loop off
+
 # factory reset only
 bash scripts/onlytrade-ops.sh factory-reset --cursor 0
 ```
@@ -167,7 +181,10 @@ From local terminal, you can run the same ops via SSH (`ssh -i` under the hood):
 bash scripts/onlytrade-ssh-ops.sh status
 bash scripts/onlytrade-ssh-ops.sh kill-on "manual_emergency_stop"
 bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
+bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
 ```
+
+Note: `onlytrade-ssh-ops.sh` targets VM API base `http://127.0.0.1:18080` by default.
 
 If repo path on VM is custom:
 

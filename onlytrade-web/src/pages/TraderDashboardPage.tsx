@@ -5,7 +5,7 @@ import { PositionHistory } from '../components/PositionHistory'
 import { TraderAvatar } from '../components/TraderAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Flame, Info, MessageSquare, Pause, Play, RotateCcw, Send, StepForward } from 'lucide-react'
+import { Flame, Info, MessageSquare, Pause, Play, RotateCcw, Send, StepForward, X } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import type {
     SystemStatus,
@@ -111,6 +111,7 @@ export function TraderDashboardPage({
     const [runtimeCadenceBarsInput, setRuntimeCadenceBarsInput] = useState('1')
     const [runtimeActionPending, setRuntimeActionPending] = useState(false)
     const [runtimeActionMessage, setRuntimeActionMessage] = useState<string>('')
+    const [showRuntimeConsole, setShowRuntimeConsole] = useState(false)
     const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
         {
             id: 1,
@@ -149,6 +150,12 @@ export function TraderDashboardPage({
             setRuntimeCadenceBarsInput(String(runtimeStatus.decision_every_bars))
         }
     }, [runtimeStatus?.decision_every_bars])
+
+    useEffect(() => {
+        if (!runtimeControlsEnabled) {
+            setShowRuntimeConsole(false)
+        }
+    }, [runtimeControlsEnabled])
 
     const handleAskSubmit = () => {
         const trimmed = askInput.trim()
@@ -807,6 +814,49 @@ export function TraderDashboardPage({
 
                         {runtimeControlsEnabled && (
                             <div className="nofx-glass p-4 border border-white/10 rounded-lg">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-semibold text-nofx-text-main">
+                                            {language === 'zh' ? '系统运行配置' : 'System Runtime Config'}
+                                        </div>
+                                        <div className="text-[11px] text-nofx-text-muted mt-1">
+                                            {language === 'zh'
+                                                ? '运行时控制已移入弹窗，避免占用房间主视图。'
+                                                : 'Runtime controls are in a popup to keep room layout compact.'}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowRuntimeConsole(true)}
+                                        className="px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors"
+                                    >
+                                        {language === 'zh' ? '打开控制台' : 'Open Console'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {runtimeControlsEnabled && showRuntimeConsole && (
+                            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+                                <button
+                                    type="button"
+                                    aria-label={language === 'zh' ? '关闭运行时控制台' : 'Close runtime console'}
+                                    className="absolute inset-0 bg-black/65"
+                                    onClick={() => setShowRuntimeConsole(false)}
+                                />
+                                <div className="relative w-[min(980px,96vw)] max-h-[90vh] overflow-y-auto nofx-glass p-4 border border-white/15 rounded-lg">
+                                    <div className="flex items-center justify-between gap-2 mb-3">
+                                        <div className="text-sm font-semibold text-nofx-text-main">
+                                            {language === 'zh' ? 'Agent Runtime 控制台' : 'Agent Runtime Console'}
+                                        </div>
+                                        <button
+                                            onClick={() => setShowRuntimeConsole(false)}
+                                            className="inline-flex items-center justify-center w-8 h-8 rounded border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+
+                                    <div className="nofx-glass p-4 border border-white/10 rounded-lg">
                                 <div className="flex items-center justify-between gap-3 mb-3">
                                     <div>
                                         <div className="text-sm font-semibold text-nofx-text-main">
@@ -1012,6 +1062,8 @@ export function TraderDashboardPage({
                                     {runtimeActionMessage && (
                                         <div className="text-nofx-text-main">{runtimeActionMessage}</div>
                                     )}
+                                </div>
+                            </div>
                                 </div>
                             </div>
                         )}

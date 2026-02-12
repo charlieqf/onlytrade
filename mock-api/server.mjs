@@ -520,8 +520,7 @@ function getAccount(traderId) {
 
 function getPositions(traderId) {
   const snapshot = memoryStore?.getSnapshot?.(traderId)
-  const hasLiveHistory = Number(snapshot?.stats?.decisions || 0) > 0
-  if (Array.isArray(snapshot?.holdings) && snapshot.holdings.length > 0) {
+  if (snapshot && Array.isArray(snapshot.holdings)) {
     const holdings = snapshot.holdings
       .filter((holding) => Number(holding?.shares) > 0)
       .map((holding) => {
@@ -548,13 +547,7 @@ function getPositions(traderId) {
       })
       .filter((position) => position.symbol)
 
-    if (holdings.length) {
-      return holdings
-    }
-  }
-
-  if (hasLiveHistory) {
-    return []
+    return holdings
   }
 
   const t = getReplaySimulationState().step

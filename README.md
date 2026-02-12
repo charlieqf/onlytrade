@@ -100,6 +100,47 @@ Agent data context endpoint (mock-api):
 curl "http://localhost:8080/api/agent/market-context?symbol=600519.SH&intraday_interval=1m&intraday_limit=180&daily_limit=90"
 ```
 
+### AKShare Live-File Workflow (File-based, no DB)
+
+Pipeline:
+
+1. `scripts/akshare/collector.py` writes raw files:
+   - `data/live/akshare/raw_minute.jsonl`
+   - `data/live/akshare/raw_quotes.json`
+2. `scripts/akshare/converter.py` converts to canonical frames:
+   - `data/live/onlytrade/frames.1m.json`
+3. `mock-api` in `RUNTIME_DATA_MODE=live_file` reads canonical file via hot-refresh provider.
+
+Run one cycle:
+
+```bash
+python scripts/akshare/run_cycle.py
+```
+
+Ops wrapper helpers:
+
+```bash
+# run collect+convert once
+bash scripts/onlytrade-ops.sh akshare-run-once --symbols 600519,300750,601318,000001,688981
+
+# inspect canonical file status
+bash scripts/onlytrade-ops.sh akshare-status
+```
+
+Enable backend live-file mode (before starting `mock-api`):
+
+```bash
+RUNTIME_DATA_MODE=live_file
+LIVE_FRAMES_PATH=data/live/onlytrade/frames.1m.json
+LIVE_FILE_REFRESH_MS=2000
+```
+
+Default mode remains replay mode:
+
+```bash
+RUNTIME_DATA_MODE=replay
+```
+
 ## VM Deployment (Git Push -> VM Pull)
 
 Recommended flow:

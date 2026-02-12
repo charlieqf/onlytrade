@@ -59,6 +59,8 @@ Commands:
   stop-all [reason]               Alias of kill-on
   start-3day [--speed N] [--cadence N] [--warmup] [--single-run]
                                    Clean start for 3-day run
+  akshare-run-once [--symbols CSV] Execute AKShare collect+convert one cycle
+  akshare-status                  Show canonical AKShare file status
   decisions [trader_id] [limit]   Fetch latest decisions
   memory [trader_id]              Fetch agent memory snapshot(s)
   watch [seconds]                 Poll status repeatedly (default 3s)
@@ -68,6 +70,7 @@ Env vars:
   ONLYTRADE_CONTROL_TOKEN         Control token for protected ops
   ONLYTRADE_REPLAY_SPEED          Default replay speed for start-3day (default: 60)
   ONLYTRADE_DECISION_EVERY_BARS   Default cadence for start-3day (default: 10)
+  ONLYTRADE_AKSHARE_CANONICAL     Canonical output path (default: data/live/onlytrade/frames.1m.json)
 
 Token behavior:
   - If ONLYTRADE_CONTROL_TOKEN is not set, script attempts to read CONTROL_API_TOKEN
@@ -198,6 +201,83 @@ watch_status() {
     show_status
     sleep "$interval"
   done
+}
+
+akshare_run_once() {
+  local symbols_csv="${1:-600519,300750,601318,000001,688981}"
+  local canonical_path="${ONLYTRADE_AKSHARE_CANONICAL:-data/live/onlytrade/frames.1m.json}"
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_cycle.py" --symbols "$symbols_csv" --canonical-path "$canonical_path"
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    python "$REPO_ROOT/scripts/akshare/run_cycle.py" --symbols "$symbols_csv" --canonical-path "$canonical_path"
+    return
+  fi
+
+  echo "[ops] ERROR: python/python3 not found for akshare-run-once" >&2
+  exit 1
+}
+
+akshare_status() {
+  local canonical_path="${ONLYTRADE_AKSHARE_CANONICAL:-$REPO_ROOT/data/live/onlytrade/frames.1m.json}"
+  if [ ! -f "$canonical_path" ]; then
+    echo "[ops] canonical file missing: $canonical_path"
+    return
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$canonical_path" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+st = os.stat(path)
+with open(path, 'r', encoding='utf-8') as f:
+    payload = json.load(f)
+frames = payload.get('frames', [])
+print(json.dumps({
+    'path': path,
+    'size_bytes': st.st_size,
+    'mtime_epoch': st.st_mtime,
+    'provider': payload.get('provider'),
+    'mode': payload.get('mode'),
+    'frame_count': len(frames),
+    'latest_ts_ms': frames[-1]['event_ts_ms'] if frames else None,
+}, ensure_ascii=False))
+PY
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    python - "$canonical_path" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+st = os.stat(path)
+with open(path, 'r', encoding='utf-8') as f:
+    payload = json.load(f)
+frames = payload.get('frames', [])
+print(json.dumps({
+    'path': path,
+    'size_bytes': st.st_size,
+    'mtime_epoch': st.st_mtime,
+    'provider': payload.get('provider'),
+    'mode': payload.get('mode'),
+    'frame_count': len(frames),
+    'latest_ts_ms': frames[-1]['event_ts_ms'] if frames else None,
+}, ensure_ascii=False))
+PY
+    return
+  fi
+
+  echo "[ops] ERROR: python/python3 not found for akshare-status" >&2
+  exit 1
 }
 
 start_three_day_run() {
@@ -348,6 +428,25 @@ main() {
         esac
       done
       start_three_day_run "$speed" "$bars" "$mode" "$loop_mode"
+      ;;
+    akshare-run-once)
+      local symbols_csv="600519,300750,601318,000001,688981"
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --symbols)
+            symbols_csv="$2"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown akshare-run-once option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      akshare_run_once "$symbols_csv"
+      ;;
+    akshare-status)
+      akshare_status
       ;;
     decisions)
       local trader="${1:-}"

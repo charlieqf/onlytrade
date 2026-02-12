@@ -339,13 +339,20 @@ export function createMarketDataService({
 
     if (!forceMock && interval === '1m') {
       if (typeof replayFrameProvider === 'function') {
-        const liveReplayFrames = replayFrameProvider({ symbol, interval, limit: maxItems })
+        const liveReplayFrames = await Promise.resolve(
+          replayFrameProvider({ symbol, interval, limit: maxItems })
+        )
         if (Array.isArray(liveReplayFrames) && liveReplayFrames.length) {
+          const mode = liveReplayFrames.some((frame) => frame?.mode === 'real') ? 'real' : 'mock'
+          const providerSet = new Set(liveReplayFrames.map((frame) => frame?.provider).filter(Boolean))
+          const provider = providerSet.size === 1
+            ? liveReplayFrames[0].provider
+            : (replayBatch?.provider || 'replay-stream')
           return {
             schema_version: 'market.frames.v1',
             market: 'CN-A',
-            mode: 'mock',
-            provider: replayBatch?.provider || 'replay-stream',
+            mode,
+            provider,
             frames: dedupeAndSortFrames(liveReplayFrames).slice(-maxItems),
           }
         }

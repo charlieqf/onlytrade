@@ -33,6 +33,9 @@ Optional env vars:
 - `MARKET_DAILY_HISTORY_DAYS`: daily history file lookback suffix (default `90`, reads `frames.1d.<days>.json`).
 - `AGENT_RUNTIME_CYCLE_MS`: mock agent decision cycle cadence in milliseconds (default `15000`).
 - `AGENT_DECISION_EVERY_BARS`: trigger agent decision every N replay bars (default `10`, i.e. every 10 minutes of market data in `1m` replay).
+- `RUNTIME_DATA_MODE`: `replay` (default) or `live_file`.
+- `LIVE_FRAMES_PATH`: canonical live file path for `live_file` mode (default `data/live/onlytrade/frames.1m.json`).
+- `LIVE_FILE_REFRESH_MS`: live-file reload check interval in milliseconds (default `2000`).
 - `AGENT_COMMISSION_RATE`: commission applied per buy/sell turnover (default `0.0003` = 3 bps).
 - `REPLAY_SPEED`: replay speed multiplier for `1m` bars (default `60`).
 - `REPLAY_WARMUP_BARS`: initial visible bars before replay starts advancing (default `120`).
@@ -96,11 +99,13 @@ Factory reset options:
 
 - Serves contract-shaped endpoints used by `/lobby`, `/room`, `/leaderboard`.
 - Loads replay data from `onlytrade-web/public/replay/cn-a/latest/frames.1m.json` when available.
+- In `live_file` mode, reads canonical `1m` frames from `LIVE_FRAMES_PATH` with hot refresh (no replay reset required).
 - Loads daily history from `onlytrade-web/public/replay/cn-a/history/frames.1d.90.json` (or lookback from env) when available.
 - Falls back to generated mock bars if replay is missing.
 - Normalizes upstream payloads into canonical `market.bar.v1` frames.
 - Runs an in-memory mock agent runtime that emits decision records consumed by room UI.
-- Agent decisions are event-time driven by replay bar advancement and default to every 10 replay bars (10m market-time cadence).
+- Agent decisions in `replay` mode are event-time driven by replay bar advancement and default to every 10 replay bars (10m market-time cadence).
+- Agent decisions in `live_file` mode are timer-driven using `AGENT_RUNTIME_CYCLE_MS`.
 - Persists per-trader long-term memory snapshots to `data/agent-memory/<trader_id>.json` with stable schema (`agent.memory.v2`).
 - Applies commission on each buy/sell decision and tracks fees in memory stats (`total_fees_paid`).
 - LLM output uses strict JSON Schema (`decisions` array with exactly one decision item) and falls back to heuristic logic on format/API failures.

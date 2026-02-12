@@ -1,0 +1,5 @@
+CRON_TZ=Asia/Shanghai
+
+# Minute bars during continuous auction sessions
+* 9-11 * * 1-5 /usr/bin/python3 /opt/onlytrade/scripts/akshare/run_cycle.py >> /var/log/onlytrade/akshare.log 2>&1
+* 13-15 * * 1-5 /usr/bin/python3 /opt/onlytrade/scripts/akshare/run_cycle.py >> /var/log/onlytrade/akshare.log 2>&1

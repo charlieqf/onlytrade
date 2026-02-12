@@ -10,6 +10,8 @@ import { createInMemoryAgentRuntime } from './src/agentDecisionRuntime.mjs'
 import { createReplayEngine } from './src/replayEngine.mjs'
 import { createAgentMemoryStore } from './src/agentMemoryStore.mjs'
 import { createOpenAIAgentDecider } from './src/agentLlmDecision.mjs'
+import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
+import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -66,6 +68,8 @@ const REPLAY_SPEED = Math.max(0.1, Number(process.env.REPLAY_SPEED || 60))
 const REPLAY_WARMUP_BARS = Math.max(1, Number(process.env.REPLAY_WARMUP_BARS || 120))
 const REPLAY_TICK_MS = Math.max(100, Number(process.env.REPLAY_TICK_MS || 250))
 const REPLAY_LOOP = String(process.env.REPLAY_LOOP || 'true').toLowerCase() !== 'false'
+const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE || 'replay')
+const LIVE_FILE_REFRESH_MS = Math.max(250, Number(process.env.LIVE_FILE_REFRESH_MS || 2000))
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -90,6 +94,11 @@ const REPLAY_PATH = path.join(
   'cn-a',
   'latest',
   'frames.1m.json'
+)
+
+const LIVE_FRAMES_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.LIVE_FRAMES_PATH || path.join('data', 'live', 'onlytrade', 'frames.1m.json')
 )
 
 const DAILY_HISTORY_PATH = path.join(
@@ -344,6 +353,9 @@ function getTraderById(traderId) {
 }
 
 function derivedDecisionCycleMs() {
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    return agentRuntime?.getState?.().cycle_ms || AGENT_RUNTIME_CYCLE_MS
+  }
   const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
   return Math.max(1000, Math.round((60_000 * agentDecisionEveryBars) / Math.max(0.1, replaySpeed)))
 }
@@ -874,6 +886,7 @@ let dailyHistoryBatch = null
 let agentRuntime = null
 let replayEngine = null
 let replayEngineTimer = null
+let liveFileFrameProvider = null
 const memoryStore = createAgentMemoryStore({
   rootDir: ROOT_DIR,
   traders: TRADERS,
@@ -907,21 +920,40 @@ let marketDataService = createMarketDataService({
   upstreamApiKey: MARKET_UPSTREAM_API_KEY,
   replayBatch,
   dailyHistoryBatch,
-  replayFrameProvider: ({ symbol, interval, limit }) => {
-    if (interval !== '1m' || !replayEngine) return []
+  replayFrameProvider: async ({ symbol, interval, limit }) => {
+    if (interval !== '1m') return []
+
+    if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
+      return liveFileFrameProvider.getFrames({ symbol, interval, limit })
+    }
+
+    if (!replayEngine) return []
     return replayEngine.getVisibleFrames(symbol, limit)
   },
 })
 
 function syncMarketDataService() {
+  if (RUNTIME_DATA_MODE === 'live_file' && !liveFileFrameProvider) {
+    liveFileFrameProvider = createLiveFileFrameProvider({
+      filePath: LIVE_FRAMES_PATH,
+      refreshMs: LIVE_FILE_REFRESH_MS,
+    })
+  }
+
   marketDataService = createMarketDataService({
     provider: MARKET_PROVIDER,
     upstreamBaseUrl: MARKET_UPSTREAM_URL,
     upstreamApiKey: MARKET_UPSTREAM_API_KEY,
     replayBatch,
     dailyHistoryBatch,
-    replayFrameProvider: ({ symbol, interval, limit }) => {
-      if (interval !== '1m' || !replayEngine) return []
+    replayFrameProvider: async ({ symbol, interval, limit }) => {
+      if (interval !== '1m') return []
+
+      if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
+        return liveFileFrameProvider.getFrames({ symbol, interval, limit })
+      }
+
+      if (!replayEngine) return []
       return replayEngine.getVisibleFrames(symbol, limit)
     },
   })
@@ -933,6 +965,11 @@ function resetReplayEngine() {
     replayEngineTimer = null
   }
   replayEngine = null
+
+  if (RUNTIME_DATA_MODE !== 'replay') {
+    syncMarketDataService()
+    return
+  }
 
   if (!replayBatch?.frames?.length) {
     syncMarketDataService()
@@ -1058,6 +1095,17 @@ async function loadDailyHistoryBatch() {
 }
 
 function symbolList() {
+  if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
+    const symbols = liveFileFrameProvider.getSymbols('1m')
+    if (symbols.length) {
+      return symbols.map((symbol) => ({
+        symbol,
+        name: CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol,
+        category: 'stock',
+      }))
+    }
+  }
+
   const sourceFrames = replayBatch?.frames?.length
     ? replayBatch.frames
     : (dailyHistoryBatch?.frames?.length ? dailyHistoryBatch.frames : null)
@@ -1276,9 +1324,13 @@ app.post('/api/agent/runtime/control', async (req, res) => {
       res.status(400).json({ success: false, error: 'invalid_cycle_ms' })
       return
     }
-    const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
-    const bars = Math.max(1, Math.round((cycleMs * Math.max(0.1, replaySpeed)) / 60_000))
-    agentDecisionEveryBars = bars
+    if (RUNTIME_DATA_MODE === 'live_file') {
+      agentRuntime.setCycleMs(cycleMs)
+    } else {
+      const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
+      const bars = Math.max(1, Math.round((cycleMs * Math.max(0.1, replaySpeed)) / 60_000))
+      agentDecisionEveryBars = bars
+    }
   } else if (action === 'set_decision_every_bars') {
     const bars = Number(req.body?.decision_every_bars)
     if (!Number.isFinite(bars)) {
@@ -1332,7 +1384,11 @@ app.post('/api/agent/runtime/kill-switch', async (req, res) => {
   }))
 })
 
-app.get('/api/replay/runtime/status', (_req, res) => {
+app.get('/api/replay/runtime/status', async (_req, res) => {
+  if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
+    await liveFileFrameProvider.refresh(false)
+  }
+
   const replayState = replayEngine?.getStatus?.() || {
     running: false,
     speed: REPLAY_SPEED,
@@ -1344,8 +1400,14 @@ app.get('/api/replay/runtime/status', (_req, res) => {
     current_ts_ms: null,
   }
 
+  const liveFileStatus = RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider
+    ? liveFileFrameProvider.getStatus()
+    : null
+
   res.json(ok({
     ...replayState,
+    data_mode: RUNTIME_DATA_MODE,
+    live_file: liveFileStatus,
     symbols: symbolList().map((item) => item.symbol),
   }))
 })
@@ -1669,7 +1731,7 @@ agentRuntime = createInMemoryAgentRuntime({
   evaluateTrader: evaluateTraderContext,
   cycleMs: AGENT_RUNTIME_CYCLE_MS,
   maxHistory: 120,
-  autoTimer: false,
+  autoTimer: RUNTIME_DATA_MODE === 'live_file',
   onDecision: async ({ trader, decision }) => {
     const fallbackAccount = getAccount(trader.trader_id)
     const account = {
@@ -1725,16 +1787,20 @@ app.listen(PORT, () => {
   const providerInfo = MARKET_PROVIDER === 'real'
     ? `provider=real upstream=${MARKET_UPSTREAM_URL || 'not-configured'}`
     : 'provider=mock'
-  const runtimeInfo = `agent_runtime mode=event-driven decision_every_bars=${agentDecisionEveryBars}`
+  const runtimeInfo = RUNTIME_DATA_MODE === 'live_file'
+    ? `agent_runtime mode=timer cycle_ms=${AGENT_RUNTIME_CYCLE_MS}`
+    : `agent_runtime mode=event-driven decision_every_bars=${agentDecisionEveryBars}`
   const controlInfo = `control_api_token=${CONTROL_API_TOKEN ? 'configured' : 'not-configured'}`
   const killSwitchInfo = `kill_switch=${killSwitchState.active ? 'ACTIVE' : 'inactive'}`
   const resetInfo = `memory_reset_on_boot=${RESET_AGENT_MEMORY_ON_BOOT}`
   const llmInfo = llmDecider
     ? `llm=openai model=${OPENAI_MODEL} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
-  const replayRuntimeInfo = replayEngine?.getStatus?.()
-    ? `replay_runtime speed=${replayEngine.getStatus().speed}x tick_ms=${REPLAY_TICK_MS}`
-    : 'replay_runtime unavailable'
+  const replayRuntimeInfo = RUNTIME_DATA_MODE === 'live_file'
+    ? `data_mode=live_file live_frames_path=${LIVE_FRAMES_PATH} refresh_ms=${LIVE_FILE_REFRESH_MS}`
+    : (replayEngine?.getStatus?.()
+      ? `replay_runtime speed=${replayEngine.getStatus().speed}x tick_ms=${REPLAY_TICK_MS}`
+      : 'replay_runtime unavailable')
   console.log(`[mock-api] listening on http://localhost:${PORT}`)
   console.log(`[mock-api] ${replayInfo}`)
   console.log(`[mock-api] ${dailyHistoryInfo}`)

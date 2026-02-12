@@ -281,6 +281,47 @@ export interface FactoryResetResult {
   }
 }
 
+export type ChatVisibility = 'public' | 'private'
+
+export type ChatMessageType =
+  | 'public_plain'
+  | 'public_mention_agent'
+  | 'private_agent_dm'
+
+export interface ChatMessage {
+  id: string
+  room_id: string
+  user_session_id: string
+  sender_type: 'user' | 'agent'
+  visibility: ChatVisibility
+  message_type: ChatMessageType
+  text: string
+  created_ts_ms: number
+}
+
+export interface ChatSessionBootstrapResult {
+  user_session_id: string
+}
+
+export interface ChatPostPayload {
+  user_session_id: string
+  visibility: ChatVisibility
+  message_type: ChatMessageType
+  text: string
+}
+
+export interface ChatPostResult {
+  message: ChatMessage
+  agent_reply: ChatMessage | null
+}
+
+export interface ChatHistoryResult {
+  room_id: string
+  visibility: ChatVisibility
+  user_session_id?: string
+  messages: ChatMessage[]
+}
+
 // AI Trading相关类型
 export interface TraderInfo {
   trader_id: string

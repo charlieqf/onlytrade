@@ -61,6 +61,11 @@ Commands:
                                    Clean start for 3-day run
   akshare-run-once [--symbols CSV] Execute AKShare collect+convert one cycle
   akshare-status                  Show canonical AKShare file status
+  chat-status <room_id> [user_session_id]
+                                 Show chat file status for room/private
+  chat-tail-public <room_id>     Tail room public chat JSONL
+  chat-tail-private <room_id> <user_session_id>
+                                 Tail room private chat JSONL
   decisions [trader_id] [limit]   Fetch latest decisions
   memory [trader_id]              Fetch agent memory snapshot(s)
   watch [seconds]                 Poll status repeatedly (default 3s)
@@ -280,6 +285,85 @@ PY
   exit 1
 }
 
+chat_public_file() {
+  local room_id="$1"
+  echo "$REPO_ROOT/data/chat/rooms/$room_id/public.jsonl"
+}
+
+chat_private_file() {
+  local room_id="$1"
+  local user_session_id="$2"
+  echo "$REPO_ROOT/data/chat/rooms/$room_id/dm/$user_session_id.jsonl"
+}
+
+print_chat_file_status() {
+  local label="$1"
+  local file_path="$2"
+
+  if [ ! -f "$file_path" ]; then
+    echo "[ops] $label: missing ($file_path)"
+    return
+  fi
+
+  local lines
+  local bytes
+  local mtime
+  local latest
+
+  lines="$(wc -l < "$file_path" | tr -d ' ')"
+  bytes="$(wc -c < "$file_path" | tr -d ' ')"
+  mtime="$(stat -c %y "$file_path" 2>/dev/null || echo unknown)"
+  latest="$(tail -n 1 "$file_path" || true)"
+
+  echo "[ops] $label: file=$file_path lines=$lines bytes=$bytes mtime=$mtime"
+  if [ -n "$latest" ]; then
+    echo "[ops] $label latest:"
+    printf '%s\n' "$latest" | json_pretty
+  fi
+}
+
+chat_status() {
+  local room_id="$1"
+  local user_session_id="${2:-}"
+
+  local public_file
+  public_file="$(chat_public_file "$room_id")"
+  print_chat_file_status "public" "$public_file"
+
+  if [ -n "$user_session_id" ]; then
+    local private_file
+    private_file="$(chat_private_file "$room_id" "$user_session_id")"
+    print_chat_file_status "private" "$private_file"
+  fi
+}
+
+chat_tail_public() {
+  local room_id="$1"
+  local file_path
+  file_path="$(chat_public_file "$room_id")"
+
+  if [ ! -f "$file_path" ]; then
+    echo "[ops] ERROR: public chat file missing: $file_path" >&2
+    exit 1
+  fi
+
+  tail -n 40 -f "$file_path"
+}
+
+chat_tail_private() {
+  local room_id="$1"
+  local user_session_id="$2"
+  local file_path
+  file_path="$(chat_private_file "$room_id" "$user_session_id")"
+
+  if [ ! -f "$file_path" ]; then
+    echo "[ops] ERROR: private chat file missing: $file_path" >&2
+    exit 1
+  fi
+
+  tail -n 40 -f "$file_path"
+}
+
 start_three_day_run() {
   local speed="$1"
   local bars="$2"
@@ -447,6 +531,32 @@ main() {
       ;;
     akshare-status)
       akshare_status
+      ;;
+    chat-status)
+      local room_id="${1:-}"
+      local user_session_id="${2:-}"
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: chat-status requires <room_id>" >&2
+        exit 1
+      fi
+      chat_status "$room_id" "$user_session_id"
+      ;;
+    chat-tail-public)
+      local room_id="${1:-}"
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: chat-tail-public requires <room_id>" >&2
+        exit 1
+      fi
+      chat_tail_public "$room_id"
+      ;;
+    chat-tail-private)
+      local room_id="${1:-}"
+      local user_session_id="${2:-}"
+      if [ -z "$room_id" ] || [ -z "$user_session_id" ]; then
+        echo "[ops] ERROR: chat-tail-private requires <room_id> <user_session_id>" >&2
+        exit 1
+      fi
+      chat_tail_private "$room_id" "$user_session_id"
       ;;
     decisions)
       local trader="${1:-}"

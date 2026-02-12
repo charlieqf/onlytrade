@@ -1,7 +1,7 @@
 import express from 'express'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createMarketDataService } from './src/marketProxy.mjs'
@@ -12,6 +12,8 @@ import { createAgentMemoryStore } from './src/agentMemoryStore.mjs'
 import { createOpenAIAgentDecider } from './src/agentLlmDecision.mjs'
 import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
+import { createChatFileStore } from './src/chat/chatFileStore.mjs'
+import { createChatService } from './src/chat/chatService.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -84,6 +86,13 @@ const MARKET_DAILY_HISTORY_DAYS = (() => {
   const parsed = Number(process.env.MARKET_DAILY_HISTORY_DAYS || 90)
   if (!Number.isFinite(parsed)) return 90
   return Math.max(20, Math.min(Math.floor(parsed), 365))
+})()
+const CHAT_MAX_TEXT_LEN = Math.max(10, Number(process.env.CHAT_MAX_TEXT_LEN || 600))
+const CHAT_RATE_LIMIT_PER_MIN = Math.max(1, Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 20))
+const CHAT_PUBLIC_PLAIN_REPLY_RATE = (() => {
+  const parsed = Number(process.env.CHAT_PUBLIC_PLAIN_REPLY_RATE || 0.05)
+  if (!Number.isFinite(parsed)) return 0.05
+  return Math.max(0, Math.min(parsed, 1))
 })()
 
 const REPLAY_PATH = path.join(
@@ -350,6 +359,52 @@ function getCompetitionData() {
 
 function getTraderById(traderId) {
   return TRADERS.find((t) => t.trader_id === traderId) || TRADERS[0]
+}
+
+function normalizeAgentHandle(traderName) {
+  const normalized = String(traderName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return normalized || 'agent'
+}
+
+function resolveRoomAgentForChat(roomId) {
+  const trader = TRADERS.find((item) => item.trader_id === roomId)
+  if (!trader) return null
+
+  return {
+    roomId: trader.trader_id,
+    agentId: trader.trader_id,
+    agentHandle: normalizeAgentHandle(trader.trader_name),
+    agentName: trader.trader_name,
+  }
+}
+
+function createUserSessionId() {
+  const token = randomUUID().replace(/-/g, '').slice(0, 16)
+  return `usr_sess_${token}`
+}
+
+function parseChatLimit(limitRaw, fallback = 20) {
+  const parsed = Number(limitRaw)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(1, Math.min(Math.floor(parsed), 200))
+}
+
+function parseBeforeTs(beforeRaw) {
+  if (beforeRaw == null || beforeRaw === '') return null
+  const parsed = Number(beforeRaw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function chatErrorStatus(error) {
+  if (Number.isFinite(Number(error?.status))) {
+    return Number(error.status)
+  }
+  if (error?.code === 'room_not_found') return 404
+  if (error?.code === 'rate_limited') return 429
+  return 400
 }
 
 function derivedDecisionCycleMs() {
@@ -892,6 +947,20 @@ const memoryStore = createAgentMemoryStore({
   traders: TRADERS,
   commissionRate: AGENT_COMMISSION_RATE,
 })
+const chatStore = createChatFileStore({
+  baseDir: path.join(ROOT_DIR, 'data', 'chat'),
+})
+const chatService = createChatService({
+  store: chatStore,
+  resolveRoomAgent: resolveRoomAgentForChat,
+  resolveLatestDecision: (roomId) => {
+    const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
+    return latest[0] || null
+  },
+  maxTextLen: CHAT_MAX_TEXT_LEN,
+  rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
+  publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
+})
 let agentDecisionEveryBars = AGENT_DECISION_EVERY_BARS
 let replayBarsSinceAgentDecision = 0
 let queuedAgentDecisionSteps = 0
@@ -1220,6 +1289,68 @@ app.get('/api/top-traders', (_req, res) => {
     .sort((a, b) => b.total_pnl_pct - a.total_pnl_pct)
     .slice(0, 3)
   res.json(ok(top))
+})
+
+app.post('/api/chat/session/bootstrap', (_req, res) => {
+  res.json(ok({
+    user_session_id: createUserSessionId(),
+  }))
+})
+
+app.get('/api/chat/rooms/:roomId/public', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim()
+    const limit = parseChatLimit(req.query.limit, 20)
+    const beforeTsMs = parseBeforeTs(req.query.before_ts_ms)
+    const messages = await chatService.getPublicMessages(roomId, { limit, beforeTsMs })
+    res.json(ok({
+      room_id: roomId,
+      visibility: 'public',
+      messages,
+    }))
+  } catch (error) {
+    res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_public_read_failed' })
+  }
+})
+
+app.get('/api/chat/rooms/:roomId/private', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim()
+    const userSessionId = String(req.query.user_session_id || '').trim()
+    const limit = parseChatLimit(req.query.limit, 20)
+    const beforeTsMs = parseBeforeTs(req.query.before_ts_ms)
+    const messages = await chatService.getPrivateMessages(roomId, userSessionId, { limit, beforeTsMs })
+    res.json(ok({
+      room_id: roomId,
+      user_session_id: userSessionId,
+      visibility: 'private',
+      messages,
+    }))
+  } catch (error) {
+    res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_private_read_failed' })
+  }
+})
+
+app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim()
+    const userSessionId = String(req.body?.user_session_id || '').trim()
+    const visibility = String(req.body?.visibility || '').trim()
+    const messageType = String(req.body?.message_type || '').trim()
+    const text = String(req.body?.text || '')
+
+    const result = await chatService.postMessage({
+      roomId,
+      userSessionId,
+      visibility,
+      messageType,
+      text,
+    })
+
+    res.json(ok(result))
+  } catch (error) {
+    res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_post_failed' })
+  }
 })
 
 app.get('/api/status', (req, res) => {

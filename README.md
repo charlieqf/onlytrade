@@ -100,6 +100,43 @@ Agent data context endpoint (mock-api):
 curl "http://localhost:8080/api/agent/market-context?symbol=600519.SH&intraday_interval=1m&intraday_limit=180&daily_limit=90"
 ```
 
+### Room Chat (File Storage)
+
+Room chat now uses append-only JSONL storage and supports anonymous sessions.
+
+Contract docs:
+
+- `docs/architecture/room-chat-file-contract.md`
+- `docs/runbooks/room-chat-live-ops.md`
+
+Quick API checks:
+
+```bash
+API_BASE="http://127.0.0.1:8080"
+
+# 1) bootstrap anonymous chat session
+curl -fsS -X POST "$API_BASE/api/chat/session/bootstrap"
+
+# 2) read public timeline
+curl -fsS "$API_BASE/api/chat/rooms/t_001/public?limit=20"
+
+# 3) read private timeline (replace <id>)
+curl -fsS "$API_BASE/api/chat/rooms/t_001/private?user_session_id=<id>&limit=20"
+
+# 4) post public mention to agent (replace <id>)
+curl -fsS -X POST "$API_BASE/api/chat/rooms/t_001/messages" \
+  -H "Content-Type: application/json" \
+  -d '{"user_session_id":"<id>","visibility":"public","message_type":"public_mention_agent","text":"@agent why trim today?"}'
+```
+
+Ops helpers for chat files:
+
+```bash
+bash scripts/onlytrade-ops.sh chat-status t_001 <user_session_id>
+bash scripts/onlytrade-ops.sh chat-tail-public t_001
+bash scripts/onlytrade-ops.sh chat-tail-private t_001 <user_session_id>
+```
+
 ### AKShare Live-File Workflow (File-based, no DB)
 
 Pipeline:

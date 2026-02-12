@@ -39,6 +39,11 @@ import type {
   ReplayRuntimeStatus,
   ReplayRuntimeControlAction,
   ReplayRuntimeControlResult,
+  ChatMessage,
+  ChatPostPayload,
+  ChatPostResult,
+  ChatHistoryResult,
+  ChatSessionBootstrapResult,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -92,6 +97,59 @@ export const api = {
     const result = await httpClient.get<TraderInfo[]>(`${API_BASE}/traders`)
     if (!result.success) throw new Error('获取公开trader列表失败')
     return Array.isArray(result.data) ? result.data : []
+  },
+
+  async bootstrapChatSession(): Promise<ChatSessionBootstrapResult> {
+    const result = await httpClient.post<ChatSessionBootstrapResult>(`${API_BASE}/chat/session/bootstrap`)
+    if (!result.success || !result.data) throw new Error('初始化聊天会话失败')
+    return result.data
+  },
+
+  async getRoomPublicMessages(
+    roomId: string,
+    limit: number = 20,
+    beforeTsMs?: number
+  ): Promise<ChatMessage[]> {
+    const params = new URLSearchParams()
+    params.set('limit', String(limit))
+    if (beforeTsMs != null) {
+      params.set('before_ts_ms', String(beforeTsMs))
+    }
+
+    const result = await httpClient.get<ChatHistoryResult>(
+      `${API_BASE}/chat/rooms/${encodeURIComponent(roomId)}/public?${params.toString()}`
+    )
+    if (!result.success) throw new Error(result.message || '获取公开聊天失败')
+    return Array.isArray(result.data?.messages) ? result.data.messages : []
+  },
+
+  async getRoomPrivateMessages(
+    roomId: string,
+    userSessionId: string,
+    limit: number = 20,
+    beforeTsMs?: number
+  ): Promise<ChatMessage[]> {
+    const params = new URLSearchParams()
+    params.set('user_session_id', userSessionId)
+    params.set('limit', String(limit))
+    if (beforeTsMs != null) {
+      params.set('before_ts_ms', String(beforeTsMs))
+    }
+
+    const result = await httpClient.get<ChatHistoryResult>(
+      `${API_BASE}/chat/rooms/${encodeURIComponent(roomId)}/private?${params.toString()}`
+    )
+    if (!result.success) throw new Error(result.message || '获取私聊消息失败')
+    return Array.isArray(result.data?.messages) ? result.data.messages : []
+  },
+
+  async postRoomMessage(roomId: string, payload: ChatPostPayload): Promise<ChatPostResult> {
+    const result = await httpClient.post<ChatPostResult>(
+      `${API_BASE}/chat/rooms/${encodeURIComponent(roomId)}/messages`,
+      payload
+    )
+    if (!result.success || !result.data) throw new Error(result.message || '发送消息失败')
+    return result.data
   },
 
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {

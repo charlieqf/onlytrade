@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { ChartTabs } from '../components/ChartTabs'
 import { DecisionCard } from '../components/DecisionCard'
 import { PositionHistory } from '../components/PositionHistory'
 import { TraderAvatar } from '../components/TraderAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Flame, Info, MessageSquare, Send } from 'lucide-react'
+import { Info, MessageSquare } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
+import { RoomPublicChatPanel } from '../components/chat/RoomPublicChatPanel'
+import { RoomPrivateChatPanel } from '../components/chat/RoomPrivateChatPanel'
+import { useUserSessionId } from '../hooks/useUserSessionId'
 import type {
     SystemStatus,
     AccountInfo,
@@ -62,13 +65,6 @@ interface TraderDashboardPageProps {
     language: Language
 }
 
-type RoomEvent = {
-    id: number
-    text: string
-    type: 'ask' | 'fuel' | 'system'
-    ts: string
-}
-
 export function TraderDashboardPage({
     selectedTrader,
     status,
@@ -88,16 +84,8 @@ export function TraderDashboardPage({
     const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | undefined>(undefined)
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
-    const [askInput, setAskInput] = useState('')
-    const [fuelInput, setFuelInput] = useState('30')
-    const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
-        {
-            id: 1,
-            type: 'system',
-            text: language === 'zh' ? '房间已连接到模拟会话。' : 'Room connected to simulated session.',
-            ts: new Date().toLocaleTimeString(),
-        },
-    ])
+    const [chatTab, setChatTab] = useState<'public' | 'private'>('public')
+    const { userSessionId, isLoading: chatSessionLoading, error: chatSessionError } = useUserSessionId()
 
     // Current positions pagination
     const [positionsPageSize, setPositionsPageSize] = useState<number>(20)
@@ -124,40 +112,9 @@ export function TraderDashboardPage({
     }, [status?.grid_symbol])
 
 
-    const handleAskSubmit = () => {
-        const trimmed = askInput.trim()
-        if (!trimmed) return
-        setRoomEvents((prev) => [
-            {
-                id: Date.now(),
-                type: 'ask' as const,
-                text: trimmed,
-                ts: new Date().toLocaleTimeString(),
-            },
-            ...prev,
-        ].slice(0, 8))
-        setAskInput('')
-    }
-
-    const handleFuel = () => {
-        const amount = Number(fuelInput)
-        if (!Number.isFinite(amount) || amount <= 0) return
-        setRoomEvents((prev) => [
-            {
-                id: Date.now(),
-                type: 'fuel' as const,
-                text: language === 'zh' ? `为该房间增加 ${amount} 点燃料` : `Added ${amount} fuel points to this room`,
-                ts: new Date().toLocaleTimeString(),
-            },
-            ...prev,
-        ].slice(0, 8))
-    }
-
-    const roomEventSummary = useMemo(() => {
-        const asks = roomEvents.filter((e) => e.type === 'ask').length
-        const fuels = roomEvents.filter((e) => e.type === 'fuel').length
-        return { asks, fuels }
-    }, [roomEvents])
+    useEffect(() => {
+        setChatTab('public')
+    }, [selectedTrader?.trader_id])
 
 
     // Handle symbol click from Decision Card
@@ -604,61 +561,54 @@ export function TraderDashboardPage({
                                 <div>
                                     <h2 className="text-lg font-bold text-nofx-text-main flex items-center gap-2">
                                         <MessageSquare className="w-4 h-4 text-nofx-gold" />
-                                        {language === 'zh' ? '房间互动' : 'Room Interactions'}
+                                        {language === 'zh' ? '房间聊天' : 'Room Chat'}
                                     </h2>
                                     <p className="text-xs text-nofx-text-muted mt-1">
                                         {language === 'zh'
-                                            ? '前端演示版：提交问题和燃料操作会记录在本地事件流。'
-                                            : 'Frontend demo mode: ask/fuel actions are written to a local room event stream.'}
+                                            ? '真实 Public / Private 双通道，匿名会话可持久化。'
+                                            : 'Persistent Public + Private channels with anonymous session identity.'}
                                     </p>
                                 </div>
                                 <div className="text-[11px] text-nofx-text-muted text-right">
-                                    <div>{language === 'zh' ? '提问' : 'Asks'}: <span className="text-white font-semibold">{roomEventSummary.asks}</span></div>
-                                    <div>{language === 'zh' ? '燃料' : 'Fuel'}: <span className="text-white font-semibold">{roomEventSummary.fuels}</span></div>
+                                    <div>{selectedTrader.trader_id}</div>
+                                    {userSessionId && <div>{userSessionId.slice(0, 16)}...</div>}
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-3">
-                                <input
-                                    value={askInput}
-                                    onChange={(e) => setAskInput(e.target.value)}
-                                    placeholder={language === 'zh' ? '例如：为什么今天减仓 600519.SH？' : 'e.g. Why reduce 600519.SH today?'}
-                                    className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
-                                />
+                            <div className="inline-flex rounded border border-white/10 bg-black/30 p-1 mb-3">
                                 <button
-                                    onClick={handleAskSubmit}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-gold text-black hover:opacity-90 transition-opacity"
+                                    type="button"
+                                    onClick={() => setChatTab('public')}
+                                    className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${chatTab === 'public' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
                                 >
-                                    <Send className="w-3.5 h-3.5" />
-                                    {language === 'zh' ? '提问' : 'Ask'}
+                                    Public
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setChatTab('private')}
+                                    className={`px-3 py-1.5 rounded text-xs font-semibold transition-colors ${chatTab === 'private' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+                                >
+                                    Private
                                 </button>
                             </div>
 
-                            <div className="grid grid-cols-[1fr_auto] gap-2 mb-4">
-                                <input
-                                    value={fuelInput}
-                                    onChange={(e) => setFuelInput(e.target.value)}
-                                    className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
-                                />
-                                <button
-                                    onClick={handleFuel}
-                                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-nofx-gold/30 text-nofx-gold bg-nofx-gold/10 hover:bg-nofx-gold/20 transition-colors"
-                                >
-                                    <Flame className="w-3.5 h-3.5" />
-                                    {language === 'zh' ? '加燃料' : 'Fuel'}
-                                </button>
-                            </div>
+                            {chatSessionLoading && (
+                                <div className="text-xs text-nofx-text-muted">Initializing chat session...</div>
+                            )}
 
-                            <div className="rounded border border-white/10 bg-black/30 p-3 space-y-2">
-                                {roomEvents.map((event) => (
-                                    <div key={event.id} className="flex items-center justify-between gap-3 text-xs">
-                                        <span className="text-nofx-text-main">
-                                            {event.type === 'ask' ? 'Q' : event.type === 'fuel' ? 'F' : 'I'} - {event.text}
-                                        </span>
-                                        <span className="text-nofx-text-muted whitespace-nowrap">{event.ts}</span>
-                                    </div>
-                                ))}
-                            </div>
+                            {!chatSessionLoading && chatSessionError && (
+                                <div className="text-xs text-nofx-red">Failed to bootstrap chat session.</div>
+                            )}
+
+                            {!chatSessionLoading && !chatSessionError && userSessionId && (
+                                <>
+                                    {chatTab === 'public' ? (
+                                        <RoomPublicChatPanel roomId={selectedTrader.trader_id} userSessionId={userSessionId} />
+                                    ) : (
+                                        <RoomPrivateChatPanel roomId={selectedTrader.trader_id} userSessionId={userSessionId} />
+                                    )}
+                                </>
+                            )}
                         </div>
 
                         <div className="nofx-glass p-4 border border-nofx-gold/20 rounded-lg">

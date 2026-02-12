@@ -9,6 +9,7 @@ import { RegisterPage } from './components/RegisterPage'
 import { ResetPasswordPage } from './components/ResetPasswordPage'
 import { CompetitionPage } from './components/CompetitionPage'
 import { LoginRequiredOverlay } from './components/LoginRequiredOverlay'
+import SystemRuntimeModal from './components/SystemRuntimeModal'
 import HeaderBar from './components/HeaderBar'
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -26,7 +27,6 @@ import type {
   TraderInfo,
   AgentRuntimeStatus,
   AgentRuntimeControlAction,
-  AgentMemorySnapshot,
   ReplayRuntimeStatus,
 } from './types'
 
@@ -112,6 +112,7 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState<string>('--:--:--')
   const [decisionsLimit, setDecisionsLimit] = useState<number>(5)
   const runtimeControlsEnabled = !isStaticDemoMode()
+  const [systemRuntimeModalOpen, setSystemRuntimeModalOpen] = useState(false)
 
   // Keep page state in sync with URL.
   useEffect(() => {
@@ -219,7 +220,7 @@ function App() {
   )
 
   const { data: runtimeStatus, mutate: mutateRuntimeStatus } = useSWR<AgentRuntimeStatus>(
-    runtimeControlsEnabled && currentPage === 'room'
+    runtimeControlsEnabled && !!user
       ? 'agent-runtime-status'
       : null,
     api.getAgentRuntimeStatus,
@@ -231,22 +232,10 @@ function App() {
   )
 
   const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
-    runtimeControlsEnabled && currentPage === 'room'
+    runtimeControlsEnabled && !!user
       ? 'replay-runtime-status'
       : null,
     api.getReplayRuntimeStatus,
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: false,
-      dedupingInterval: 2000,
-    }
-  )
-
-  const { data: agentMemory, mutate: mutateAgentMemory } = useSWR<AgentMemorySnapshot>(
-    runtimeControlsEnabled && currentPage === 'room' && selectedTraderId
-      ? `agent-memory-${selectedTraderId}`
-      : null,
-    () => api.getAgentMemory(selectedTraderId),
     {
       refreshInterval: 5000,
       revalidateOnFocus: false,
@@ -274,12 +263,11 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateAgentMemory(),
         mutateStatus(),
         mutateDecisions(),
       ])
     },
-    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateAgentMemory, mutateStatus, mutateDecisions]
+    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStatus, mutateDecisions]
   )
 
   const handleFactoryReset = useCallback(
@@ -290,7 +278,6 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateAgentMemory(),
         mutateStatus(),
         mutateAccount(),
         mutatePositions(),
@@ -301,7 +288,6 @@ function App() {
       runtimeControlsEnabled,
       mutateRuntimeStatus,
       mutateReplayRuntimeStatus,
-      mutateAgentMemory,
       mutateStatus,
       mutateAccount,
       mutatePositions,
@@ -317,7 +303,6 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateAgentMemory(),
         mutateStatus(),
         mutateDecisions(),
       ])
@@ -326,7 +311,6 @@ function App() {
       runtimeControlsEnabled,
       mutateRuntimeStatus,
       mutateReplayRuntimeStatus,
-      mutateAgentMemory,
       mutateStatus,
       mutateDecisions,
     ]
@@ -421,13 +405,6 @@ function App() {
                   decisions={decisions}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
-                  runtimeStatus={runtimeStatus}
-                  replayRuntimeStatus={replayRuntimeStatus}
-                  agentMemory={agentMemory}
-                  runtimeControlsEnabled={runtimeControlsEnabled}
-                  onRuntimeControl={handleRuntimeControl}
-                  onFactoryReset={handleFactoryReset}
-                  onKillSwitch={handleKillSwitch}
                   lastUpdate={lastUpdate}
                   language={language}
                   traders={traders}
@@ -463,6 +440,28 @@ function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {runtimeControlsEnabled && user && (
+        <button
+          onClick={() => setSystemRuntimeModalOpen(true)}
+          className="fixed right-4 bottom-6 z-[110] px-4 py-2 rounded-lg border border-white/20 bg-black/70 text-sm font-semibold text-nofx-text-main hover:bg-black/85 transition-colors"
+        >
+          {language === 'zh' ? '系统控制台' : 'System Console'}
+        </button>
+      )}
+
+      {runtimeControlsEnabled && user && (
+        <SystemRuntimeModal
+          open={systemRuntimeModalOpen}
+          onClose={() => setSystemRuntimeModalOpen(false)}
+          language={language}
+          runtimeStatus={runtimeStatus}
+          replayRuntimeStatus={replayRuntimeStatus}
+          onRuntimeControl={handleRuntimeControl}
+          onFactoryReset={handleFactoryReset}
+          onKillSwitch={handleKillSwitch}
+        />
+      )}
 
       <footer
         className="mt-16"

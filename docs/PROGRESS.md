@@ -34,6 +34,7 @@ This file is the living progress tracker. Update it as work lands.
 - Hardened LLM decision parsing with strict JSON shape validation + fallback
 - Upgraded LLM response contract to strict `decisions[0]` JSON schema and added dev token-saver prompt/context mode
 - Added persistent kill-switch for emergency stop of all agent decisions (blocks LLM calls until deactivated)
+- Persistence strategy confirmed: JSON-first for near-term ops; DB deferred unless scaling requires it
 
 ## Demo Milestones
 

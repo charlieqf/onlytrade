@@ -5,7 +5,7 @@ import { PositionHistory } from '../components/PositionHistory'
 import { TraderAvatar } from '../components/TraderAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Flame, Info, MessageSquare, Pause, Play, RotateCcw, Send, StepForward, X } from 'lucide-react'
+import { Flame, Info, MessageSquare, Send } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import type {
     SystemStatus,
@@ -13,10 +13,6 @@ import type {
     Position,
     DecisionRecord,
     TraderInfo,
-    AgentRuntimeStatus,
-    AgentRuntimeControlAction,
-    ReplayRuntimeStatus,
-    AgentMemorySnapshot,
 } from '../types'
 
 // --- Helper Functions ---
@@ -62,13 +58,6 @@ interface TraderDashboardPageProps {
     decisions?: DecisionRecord[]
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
-    runtimeStatus?: AgentRuntimeStatus
-    replayRuntimeStatus?: ReplayRuntimeStatus
-    agentMemory?: AgentMemorySnapshot
-    runtimeControlsEnabled?: boolean
-    onRuntimeControl?: (action: AgentRuntimeControlAction, value?: number) => Promise<void>
-    onFactoryReset?: (useWarmup?: boolean) => Promise<void>
-    onKillSwitch?: (action: 'activate' | 'deactivate', reason?: string) => Promise<void>
     lastUpdate: string
     language: Language
 }
@@ -88,13 +77,6 @@ export function TraderDashboardPage({
     decisions,
     decisionsLimit,
     onDecisionsLimitChange,
-    runtimeStatus,
-    replayRuntimeStatus,
-    agentMemory,
-    runtimeControlsEnabled,
-    onRuntimeControl,
-    onFactoryReset,
-    onKillSwitch,
     lastUpdate,
     language,
     traders,
@@ -108,10 +90,6 @@ export function TraderDashboardPage({
     const chartSectionRef = useRef<HTMLDivElement>(null)
     const [askInput, setAskInput] = useState('')
     const [fuelInput, setFuelInput] = useState('30')
-    const [runtimeCadenceBarsInput, setRuntimeCadenceBarsInput] = useState('1')
-    const [runtimeActionPending, setRuntimeActionPending] = useState(false)
-    const [runtimeActionMessage, setRuntimeActionMessage] = useState<string>('')
-    const [showRuntimeConsole, setShowRuntimeConsole] = useState(false)
     const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
         {
             id: 1,
@@ -145,17 +123,6 @@ export function TraderDashboardPage({
         }
     }, [status?.grid_symbol])
 
-    useEffect(() => {
-        if (runtimeStatus?.decision_every_bars) {
-            setRuntimeCadenceBarsInput(String(runtimeStatus.decision_every_bars))
-        }
-    }, [runtimeStatus?.decision_every_bars])
-
-    useEffect(() => {
-        if (!runtimeControlsEnabled) {
-            setShowRuntimeConsole(false)
-        }
-    }, [runtimeControlsEnabled])
 
     const handleAskSubmit = () => {
         const trimmed = askInput.trim()
@@ -192,124 +159,6 @@ export function TraderDashboardPage({
         return { asks, fuels }
     }, [roomEvents])
 
-    const selectedRuntimeTrader = useMemo(
-        () => runtimeStatus?.traders?.find((trader) => trader.trader_id === selectedTraderId),
-        [runtimeStatus?.traders, selectedTraderId]
-    )
-
-    const replayDayProgressPct = useMemo(() => {
-        const index = replayRuntimeStatus?.day_bar_index ?? 0
-        const count = replayRuntimeStatus?.day_bar_count ?? 0
-        if (!count) return null
-        return Math.max(0, Math.min(100, Number(((index / count) * 100).toFixed(1))))
-    }, [replayRuntimeStatus?.day_bar_index, replayRuntimeStatus?.day_bar_count])
-
-    const latestMemoryAction = agentMemory?.recent_actions?.[0]
-
-    const triggerRuntimeAction = async (action: AgentRuntimeControlAction) => {
-        if (!onRuntimeControl || runtimeActionPending) return
-
-        if (runtimeStatus?.kill_switch?.active && (action === 'resume' || action === 'step')) {
-            setRuntimeActionMessage(
-                language === 'zh'
-                    ? 'Kill Switch 已激活，需先解除后才能恢复/单步。'
-                    : 'Kill switch is active. Deactivate it before resume/step.'
-            )
-            return
-        }
-
-        setRuntimeActionPending(true)
-        setRuntimeActionMessage('')
-
-        try {
-            if (action === 'set_decision_every_bars') {
-                const bars = Number(runtimeCadenceBarsInput)
-                if (!Number.isFinite(bars) || bars <= 0) {
-                    setRuntimeActionMessage(language === 'zh' ? '请输入有效的决策 K 线数量。' : 'Please enter a valid bars-per-decision value.')
-                    return
-                }
-                await onRuntimeControl(action, bars)
-                setRuntimeActionMessage(language === 'zh' ? `已更新决策节奏为每 ${bars} 根 K 线一次` : `Decision cadence updated to every ${bars} bars`)
-                return
-            }
-
-            await onRuntimeControl(action)
-            const actionMap = {
-                pause: language === 'zh' ? '已暂停运行时' : 'Runtime paused',
-                resume: language === 'zh' ? '已恢复运行时' : 'Runtime resumed',
-                step: language === 'zh' ? '已执行一步循环' : 'Executed one cycle step',
-                set_cycle_ms: '',
-                set_decision_every_bars: '',
-            }
-            setRuntimeActionMessage(actionMap[action])
-        } catch (error) {
-            const fallback = language === 'zh' ? '运行时控制失败，请稍后重试。' : 'Runtime control failed. Please retry.'
-            const message = error instanceof Error && error.message ? error.message : fallback
-            setRuntimeActionMessage(message)
-        } finally {
-            setRuntimeActionPending(false)
-        }
-    }
-
-    const triggerKillSwitch = async (action: 'activate' | 'deactivate') => {
-        if (!onKillSwitch || runtimeActionPending) return
-
-        const isActivate = action === 'activate'
-        const confirmMessage = isActivate
-            ? (language === 'zh'
-                ? '紧急停止将暂停所有 Agent 决策并阻断 LLM 调用。确认执行？'
-                : 'Emergency stop will pause all agent decisions and block LLM calls. Continue?')
-            : (language === 'zh'
-                ? '确认解除 Kill Switch 并允许 Agent 恢复运行？'
-                : 'Deactivate kill switch and allow agents to run again?')
-
-        if (!window.confirm(confirmMessage)) return
-
-        setRuntimeActionPending(true)
-        setRuntimeActionMessage('')
-        try {
-            const reason = isActivate ? 'manual_emergency_stop_from_ui' : 'manual_reactivate_from_ui'
-            await onKillSwitch(action, reason)
-            setRuntimeActionMessage(
-                isActivate
-                    ? (language === 'zh' ? '已触发紧急停止（Kill Switch 激活）' : 'Emergency stop engaged (kill switch active)')
-                    : (language === 'zh' ? '已解除 Kill Switch，可恢复运行' : 'Kill switch deactivated, runtime can resume')
-            )
-        } catch (error) {
-            const fallback = language === 'zh' ? 'Kill Switch 操作失败，请重试。' : 'Kill switch operation failed. Please retry.'
-            const message = error instanceof Error && error.message ? error.message : fallback
-            setRuntimeActionMessage(message)
-        } finally {
-            setRuntimeActionPending(false)
-        }
-    }
-
-    const triggerFactoryReset = async (useWarmup = false) => {
-        if (!onFactoryReset || runtimeActionPending) return
-
-        const confirmMessage = language === 'zh'
-            ? '这会重置回放光标、清空运行时计数与 Agent 记忆。确认继续？'
-            : 'This resets replay cursor, runtime counters, and agent memory. Continue?'
-        if (!window.confirm(confirmMessage)) return
-
-        setRuntimeActionPending(true)
-        setRuntimeActionMessage('')
-
-        try {
-            await onFactoryReset(useWarmup)
-            setRuntimeActionMessage(
-                useWarmup
-                    ? (language === 'zh' ? '已完成重置（回放定位到 warmup 光标）' : 'Factory reset complete (cursor set to warmup)')
-                    : (language === 'zh' ? '已完成重置（回放定位到第 1 根 K 线）' : 'Factory reset complete (cursor set to first bar)')
-            )
-        } catch (error) {
-            const fallback = language === 'zh' ? '重置失败，请稍后重试。' : 'Factory reset failed. Please retry.'
-            const message = error instanceof Error && error.message ? error.message : fallback
-            setRuntimeActionMessage(message)
-        } finally {
-            setRuntimeActionPending(false)
-        }
-    }
 
     // Handle symbol click from Decision Card
     const handleSymbolClick = (symbol: string) => {
@@ -811,262 +660,6 @@ export function TraderDashboardPage({
                                 ))}
                             </div>
                         </div>
-
-                        {runtimeControlsEnabled && (
-                            <div className="nofx-glass p-4 border border-white/10 rounded-lg">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="text-sm font-semibold text-nofx-text-main">
-                                            {language === 'zh' ? '系统运行配置' : 'System Runtime Config'}
-                                        </div>
-                                        <div className="text-[11px] text-nofx-text-muted mt-1">
-                                            {language === 'zh'
-                                                ? '运行时控制已移入弹窗，避免占用房间主视图。'
-                                                : 'Runtime controls are in a popup to keep room layout compact.'}
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => setShowRuntimeConsole(true)}
-                                        className="px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors"
-                                    >
-                                        {language === 'zh' ? '打开控制台' : 'Open Console'}
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {runtimeControlsEnabled && showRuntimeConsole && (
-                            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-                                <button
-                                    type="button"
-                                    aria-label={language === 'zh' ? '关闭运行时控制台' : 'Close runtime console'}
-                                    className="absolute inset-0 bg-black/65"
-                                    onClick={() => setShowRuntimeConsole(false)}
-                                />
-                                <div className="relative w-[min(980px,96vw)] max-h-[90vh] overflow-y-auto nofx-glass p-4 border border-white/15 rounded-lg">
-                                    <div className="flex items-center justify-between gap-2 mb-3">
-                                        <div className="text-sm font-semibold text-nofx-text-main">
-                                            {language === 'zh' ? 'Agent Runtime 控制台' : 'Agent Runtime Console'}
-                                        </div>
-                                        <button
-                                            onClick={() => setShowRuntimeConsole(false)}
-                                            className="inline-flex items-center justify-center w-8 h-8 rounded border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors"
-                                        >
-                                            <X className="w-4 h-4" />
-                                        </button>
-                                    </div>
-
-                                    <div className="nofx-glass p-4 border border-white/10 rounded-lg">
-                                <div className="flex items-center justify-between gap-3 mb-3">
-                                    <div>
-                                        <div className="text-sm font-semibold text-nofx-text-main">
-                                            {language === 'zh' ? 'Agent Runtime 控制台' : 'Agent Runtime Console'}
-                                        </div>
-                                        <div className="text-[11px] text-nofx-text-muted mt-1">
-                                            {language === 'zh'
-                                                ? '用于演示：暂停/恢复/单步执行，并调整决策节奏。'
-                                                : 'Demo controls: pause/resume/step and tune decision cadence.'}
-                                        </div>
-                                    </div>
-                                    <span
-                                        className={`text-[11px] px-2 py-1 rounded border ${runtimeStatus?.running
-                                            ? 'border-nofx-green/30 text-nofx-green bg-nofx-green/10'
-                                            : 'border-nofx-gold/30 text-nofx-gold bg-nofx-gold/10'
-                                            }`}
-                                    >
-                                        {runtimeStatus?.running
-                                            ? (language === 'zh' ? '运行中' : 'Running')
-                                            : (language === 'zh' ? '已暂停' : 'Paused')}
-                                    </span>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-2">
-                                    <input
-                                        value={runtimeCadenceBarsInput}
-                                        onChange={(e) => setRuntimeCadenceBarsInput(e.target.value)}
-                                        placeholder={language === 'zh' ? '每次决策间隔 K 线数' : 'bars per decision'}
-                                        className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
-                                        disabled={runtimeActionPending}
-                                    />
-                                    <button
-                                        onClick={() => triggerRuntimeAction('set_decision_every_bars')}
-                                        disabled={runtimeActionPending}
-                                        className="px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        {language === 'zh' ? '更新节奏' : 'Apply Cadence'}
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-2 mb-3">
-                                    <button
-                                        onClick={() => triggerRuntimeAction('pause')}
-                                        disabled={runtimeActionPending}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <Pause className="w-3.5 h-3.5" />
-                                        {language === 'zh' ? '暂停' : 'Pause'}
-                                    </button>
-                                    <button
-                                        onClick={() => triggerRuntimeAction('resume')}
-                                        disabled={runtimeActionPending}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-green/20 border border-nofx-green/30 text-nofx-green hover:bg-nofx-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <Play className="w-3.5 h-3.5" />
-                                        {language === 'zh' ? '恢复' : 'Resume'}
-                                    </button>
-                                    <button
-                                        onClick={() => triggerRuntimeAction('step')}
-                                        disabled={runtimeActionPending}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold bg-nofx-gold/15 border border-nofx-gold/35 text-nofx-gold hover:bg-nofx-gold/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <StepForward className="w-3.5 h-3.5" />
-                                        {language === 'zh' ? '单步' : 'Step'}
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-                                    <button
-                                        onClick={() => triggerFactoryReset(false)}
-                                        disabled={runtimeActionPending}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/35 text-red-300 bg-red-500/10 hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <RotateCcw className="w-3.5 h-3.5" />
-                                        {language === 'zh' ? '重置（首根K线）' : 'Reset (First Bar)'}
-                                    </button>
-                                    <button
-                                        onClick={() => triggerFactoryReset(true)}
-                                        disabled={runtimeActionPending}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/30 text-red-200 bg-red-500/5 hover:bg-red-500/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <RotateCcw className="w-3.5 h-3.5" />
-                                        {language === 'zh' ? '重置（Warmup）' : 'Reset (Warmup)'}
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-                                    <button
-                                        onClick={() => triggerKillSwitch('activate')}
-                                        disabled={runtimeActionPending || !!runtimeStatus?.kill_switch?.active}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/50 text-red-200 bg-red-500/15 hover:bg-red-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        {language === 'zh' ? '紧急停止全部 Agent' : 'Emergency Stop All Agents'}
-                                    </button>
-                                    <button
-                                        onClick={() => triggerKillSwitch('deactivate')}
-                                        disabled={runtimeActionPending || !runtimeStatus?.kill_switch?.active}
-                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        {language === 'zh' ? '解除紧急停止' : 'Deactivate Kill Switch'}
-                                    </button>
-                                </div>
-
-                                <div className="text-[11px] text-nofx-text-muted space-y-1">
-                                    <div>
-                                        {language === 'zh' ? '估算间隔' : 'Estimated interval'}:
-                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.cycle_ms ?? '--'} ms</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '决策节奏' : 'Decision cadence'}:
-                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.decision_every_bars ?? '--'} {language === 'zh' ? '根K线/次' : 'bars/decision'}</span>
-                                    </div>
-                                    <div>
-                                        LLM:
-                                        <span className="text-nofx-text-main ml-1">
-                                            {runtimeStatus?.llm?.enabled
-                                                ? (runtimeStatus?.llm?.model || 'enabled')
-                                                : (language === 'zh' ? '未启用' : 'disabled')}
-                                        </span>
-                                        {runtimeStatus?.llm?.enabled && (
-                                            <>
-                                                <span className="mx-2">|</span>
-                                                {language === 'zh' ? '生效' : 'Effective'}:
-                                                <span className={`ml-1 ${runtimeStatus?.llm?.effective_enabled ? 'text-nofx-green' : 'text-red-300'}`}>
-                                                    {runtimeStatus?.llm?.effective_enabled ? 'on' : 'off'}
-                                                </span>
-                                            </>
-                                        )}
-                                        {runtimeStatus?.llm?.enabled && (
-                                            <>
-                                                <span className="mx-2">|</span>
-                                                {language === 'zh' ? '省Token模式' : 'Token saver'}:
-                                                <span className="text-nofx-text-main ml-1">{runtimeStatus?.llm?.token_saver ? 'on' : 'off'}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                    <div>
-                                        Kill Switch:
-                                        <span className={`ml-1 ${runtimeStatus?.kill_switch?.active ? 'text-red-300' : 'text-nofx-green'}`}>
-                                            {runtimeStatus?.kill_switch?.active ? 'ACTIVE' : 'inactive'}
-                                        </span>
-                                        {runtimeStatus?.kill_switch?.reason && (
-                                            <>
-                                                <span className="mx-2">|</span>
-                                                <span className="text-nofx-text-main">{runtimeStatus?.kill_switch?.reason}</span>
-                                            </>
-                                        )}
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '回放交易日' : 'Replay trading day'}:
-                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.trading_day ?? '--'}</span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '第' : 'Day'}
-                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.day_index ?? '--'}</span>
-                                        <span className="ml-1">/ {replayRuntimeStatus?.day_count ?? '--'}</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '日内进度' : 'In-day progress'}:
-                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.day_bar_index ?? '--'} / {replayRuntimeStatus?.day_bar_count ?? '--'}</span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '完成' : 'Done'}:
-                                        <span className="text-nofx-text-main ml-1">{replayDayProgressPct != null ? `${replayDayProgressPct}%` : '--'}</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '总循环' : 'Total cycles'}:
-                                        <span className="text-nofx-text-main ml-1">{runtimeStatus?.metrics?.totalCycles ?? '--'}</span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '成功' : 'Success'}:
-                                        <span className="text-nofx-green ml-1">{runtimeStatus?.metrics?.successfulCycles ?? '--'}</span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '失败' : 'Fail'}:
-                                        <span className="text-nofx-red ml-1">{runtimeStatus?.metrics?.failedCycles ?? '--'}</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '当前交易员调用数' : 'Selected trader calls'}:
-                                        <span className="text-nofx-text-main ml-1">{selectedRuntimeTrader?.call_count ?? '--'}</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '长期记忆收益' : 'Memory return'}:
-                                        <span className={`ml-1 ${(agentMemory?.stats?.return_rate_pct ?? 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
-                                            {agentMemory?.stats?.return_rate_pct != null
-                                                ? `${agentMemory.stats.return_rate_pct >= 0 ? '+' : ''}${agentMemory.stats.return_rate_pct.toFixed(2)}%`
-                                                : '--'}
-                                        </span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '记忆更新' : 'Memory updated'}:
-                                        <span className="text-nofx-text-main ml-1">{agentMemory?.updated_at ? new Date(agentMemory.updated_at).toLocaleTimeString() : '--'}</span>
-                                    </div>
-                                    <div>
-                                        {language === 'zh' ? '最近动作' : 'Last memory action'}:
-                                        <span className="text-nofx-text-main ml-1">{latestMemoryAction?.action ?? '--'}</span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '累计手续费' : 'Fees paid'}:
-                                        <span className="text-nofx-text-main ml-1">
-                                            {agentMemory?.stats?.total_fees_paid != null
-                                                ? `CNY ${agentMemory.stats.total_fees_paid.toFixed(2)}`
-                                                : '--'}
-                                        </span>
-                                        <span className="mx-2">|</span>
-                                        {language === 'zh' ? '持仓数' : 'Holdings'}:
-                                        <span className="text-nofx-text-main ml-1">{agentMemory?.holdings?.length ?? '--'}</span>
-                                    </div>
-                                    {runtimeActionMessage && (
-                                        <div className="text-nofx-text-main">{runtimeActionMessage}</div>
-                                    )}
-                                </div>
-                            </div>
-                                </div>
-                            </div>
-                        )}
 
                         <div className="nofx-glass p-4 border border-nofx-gold/20 rounded-lg">
                             <div className="flex items-center gap-2 text-sm font-semibold text-nofx-gold mb-2">

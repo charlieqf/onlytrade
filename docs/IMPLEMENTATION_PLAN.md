@@ -122,7 +122,8 @@ Goal: run 1-3 agents that periodically emit a structured "action" and a human-re
 - `ThoughtLogEvent`: short readable rationale (no sensitive chain-of-thought policy violations; keep it to a narrative summary)
 
 3) Persistence
-- Store events and portfolio snapshots in Postgres (recommended)
+- Store events, memory snapshots, and runtime state in JSON files first (default)
+- Introduce Postgres only if JSON storage becomes a scaling/reliability bottleneck
 
 Deliverable:
 - Room feed updates over polling (initial) then SSE/WebSocket (later).

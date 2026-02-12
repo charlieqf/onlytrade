@@ -104,7 +104,7 @@ test('agent memory store deducts commission fee on buy/sell decisions', async ()
     decision: {
       timestamp: '2026-02-12T00:00:00.000Z',
       cycle_number: 1,
-      decisions: [{ action: 'buy', symbol: '600519.SH', price: 10, quantity: 100 }],
+      decisions: [{ action: 'buy', symbol: '600519.SH', price: 10, quantity: 100, executed: true, filled_notional: 1000, fee_paid: 1 }],
       account_state: { total_balance: 100000, available_balance: 100000, total_unrealized_profit: 0 },
     },
     account: {

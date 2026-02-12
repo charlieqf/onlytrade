@@ -10,7 +10,6 @@ import type {
 } from '../types'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t, type Language } from '../i18n/translations'
-import { useAuth } from '../contexts/AuthContext'
 import { getExchangeIcon } from './ExchangeIcons'
 import { getModelIcon } from './ModelIcons'
 import { TraderConfigModal } from './TraderConfigModal'
@@ -142,7 +141,6 @@ function truncateAddress(address: string, startLen = 6, endLen = 4): string {
 
 export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const { language } = useLanguage()
-  const { user, token } = useAuth()
   const navigate = useNavigate()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -196,25 +194,20 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   }
 
   const { data: traders, mutate: mutateTraders, isLoading: isTradersLoading } = useSWR<TraderInfo[]>(
-    user && token ? 'traders' : null,
-    api.getTraders,
+    'traders',
+    async () => {
+      try {
+        return await api.getTraders()
+      } catch {
+        return await api.getPublicTraders()
+      }
+    },
     { refreshInterval: 5000 }
   )
 
   // 加载AI模型和交易所配置
   useEffect(() => {
     const loadConfigs = async () => {
-      if (!user || !token) {
-        // 未登录时只加载公开的支持模型
-        try {
-          const supportedModels = await api.getSupportedModels()
-          setSupportedModels(supportedModels)
-        } catch (err) {
-          console.error('Failed to load supported configs:', err)
-        }
-        return
-      }
-
       try {
         const [
           modelConfigs,
@@ -229,11 +222,17 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         setAllExchanges(exchangeConfigs)
         setSupportedModels(supportedModels)
       } catch (error) {
-        console.error('Failed to load configs:', error)
+        try {
+          const supportedModels = await api.getSupportedModels()
+          setSupportedModels(supportedModels)
+        } catch (fallbackError) {
+          console.error('Failed to load configs:', error)
+          console.error('Failed to load supported configs:', fallbackError)
+        }
       }
     }
     loadConfigs()
-  }, [user, token])
+  }, [])
 
   // 只显示已配置的模型和交易所
   // 注意：后端返回的数据不包含敏感信息（apiKey等），所以通过其他字段判断是否已配置

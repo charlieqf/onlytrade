@@ -12,11 +12,25 @@ function round(value, digits = 4) {
 }
 
 function commissionFeeFromDecision(decision, commissionRate) {
-  const action = String(decision?.decisions?.[0]?.action || '').toLowerCase()
+  const actionPayload = decision?.decisions?.[0] || {}
+  const action = String(actionPayload?.action || '').toLowerCase()
   if (action !== 'buy' && action !== 'sell') return 0
 
-  const quantity = Math.max(0, toNumber(decision?.decisions?.[0]?.quantity, 0))
-  const price = Math.max(0, toNumber(decision?.decisions?.[0]?.price, 0))
+  const executed = actionPayload?.executed === true || actionPayload?.success === true
+  if (!executed) return 0
+
+  const explicitFee = toNumber(actionPayload?.fee_paid, NaN)
+  if (Number.isFinite(explicitFee) && explicitFee >= 0) {
+    return round(explicitFee, 2)
+  }
+
+  const filledNotional = toNumber(actionPayload?.filled_notional, NaN)
+  if (Number.isFinite(filledNotional) && filledNotional > 0) {
+    return round(filledNotional * commissionRate, 2)
+  }
+
+  const quantity = Math.max(0, toNumber(actionPayload?.filled_quantity ?? actionPayload?.quantity, 0))
+  const price = Math.max(0, toNumber(actionPayload?.price, 0))
   if (!quantity || !price || !commissionRate) return 0
 
   return round(quantity * price * commissionRate, 2)

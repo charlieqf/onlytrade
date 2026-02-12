@@ -466,7 +466,7 @@ export const api = {
 
   async controlReplayRuntime(
     action: ReplayRuntimeControlAction,
-    value?: number
+    value?: number | boolean
   ): Promise<ReplayRuntimeControlResult> {
     const payload: Record<string, unknown> = { action }
     if (action === 'set_speed') {
@@ -474,6 +474,9 @@ export const api = {
     }
     if (action === 'set_cursor') {
       payload.cursor_index = value
+    }
+    if (action === 'set_loop') {
+      payload.loop = value
     }
 
     const result = await httpClient.post<ReplayRuntimeControlResult>(

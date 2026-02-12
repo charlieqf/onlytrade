@@ -105,6 +105,7 @@ export function createReplayEngine({
 
   let running = !!initialRunning && timelineLength > 0
   let speed = clamp(safeNumber(initialSpeed, 60), 0.1, 1000)
+  let loopEnabled = !!loop
   let accumulatorBars = 0
   let cursorIndex = timelineLength ? clamp(Math.floor(warmupBars) - 1, 0, timelineLength - 1) : -1
 
@@ -116,7 +117,7 @@ export function createReplayEngine({
       return state.timeline[cursorIndex]
     }
 
-    if (loop) {
+    if (loopEnabled) {
       cursorIndex = 0
       return state.timeline[cursorIndex]
     }
@@ -201,7 +202,8 @@ export function createReplayEngine({
     return {
       running,
       speed,
-      loop,
+      loop: loopEnabled,
+      completed: !running && !loopEnabled && timelineLength > 0 && cursorIndex >= timelineLength - 1,
       warmup_bars: warmupBars,
       cursor_index: cursorIndex,
       timeline_length: timelineLength,
@@ -240,6 +242,11 @@ export function createReplayEngine({
     return getStatus()
   }
 
+  function setLoop(enabled) {
+    loopEnabled = !!enabled
+    return getStatus()
+  }
+
   return {
     tick,
     step,
@@ -247,6 +254,7 @@ export function createReplayEngine({
     resume,
     setSpeed,
     setCursor,
+    setLoop,
     getStatus,
     getVisibleFrames,
     getFramesAtTimestamps,

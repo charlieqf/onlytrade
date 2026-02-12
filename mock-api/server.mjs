@@ -299,41 +299,30 @@ function fail(error, status = 500) {
 
 function getCompetitionData() {
   const simulation = getReplaySimulationState()
-  const step = simulation.step
-  const daySignal = simulation.day_bar_index > 0 ? simulation.day_bar_index : step
-  const longDriftScale = simulation.normalized > 0
-    ? simulation.normalized
-    : Math.min(1.5, step / 320)
   const initial = 100000
 
-  const traders = BASE_COMPETITION.traders.map((trader, idx) => {
-    const phase = idx * 2.1
-    const wave = Math.sin((daySignal + phase) / 8) * 0.45
-    const drift = (
-      idx === 0 ? 2.8
-        : idx === 1 ? 1.15
-          : idx === 2 ? -0.75
-            : 0.55
-    ) * longDriftScale
-    const dayBias = Math.max(0, simulation.day_index - 1) * (
-      idx === 0 ? 0.22
-        : idx === 1 ? 0.16
-          : idx === 2 ? -0.05
-            : 0.08
-    )
-    const grossPct = Number((trader.total_pnl_pct + wave + drift + dayBias).toFixed(4))
-    const grossPnl = Number(((initial * grossPct) / 100).toFixed(2))
-    const feeDrag = Number(memoryStore?.getSnapshot?.(trader.trader_id)?.stats?.total_fees_paid || 0)
-    const pnl = Number((grossPnl - feeDrag).toFixed(2))
-    const equity = Number((initial + pnl).toFixed(2))
+  const traders = BASE_COMPETITION.traders.map((trader) => {
+    const snapshot = memoryStore?.getSnapshot?.(trader.trader_id)
+    const stats = snapshot?.stats || {}
+    const latestTotalBalance = Number(stats?.latest_total_balance)
+
+    if (!Number.isFinite(latestTotalBalance) || latestTotalBalance <= 0) {
+      return trader
+    }
+
+    const equity = Number(latestTotalBalance.toFixed(2))
+    const pnl = Number((equity - initial).toFixed(2))
     const pct = Number((((equity - initial) / initial) * 100).toFixed(2))
+    const positionCount = Array.isArray(snapshot?.holdings)
+      ? snapshot.holdings.filter((holding) => Number(holding?.shares) > 0).length
+      : trader.position_count
 
     return {
       ...trader,
       total_pnl_pct: pct,
       total_pnl: pnl,
       total_equity: equity,
-      position_count: 1 + ((step + idx) % 3),
+      position_count: positionCount,
     }
   })
 
@@ -478,6 +467,38 @@ function getStatus(traderId) {
 }
 
 function getAccount(traderId) {
+  const snapshot = memoryStore?.getSnapshot?.(traderId)
+  const stats = snapshot?.stats || {}
+  const initialBalance = Number(stats?.initial_balance || 100000)
+  const latestTotalBalance = Number(stats?.latest_total_balance)
+  const latestAvailableBalance = Number(stats?.latest_available_balance)
+  const latestUnrealizedProfit = Number(stats?.latest_unrealized_profit)
+
+  if (Number.isFinite(latestTotalBalance) && latestTotalBalance > 0) {
+    const totalEquity = Number(latestTotalBalance.toFixed(2))
+    const availableBalance = Number((Number.isFinite(latestAvailableBalance) ? latestAvailableBalance : totalEquity).toFixed(2))
+    const unrealizedProfit = Number((Number.isFinite(latestUnrealizedProfit) ? latestUnrealizedProfit : 0).toFixed(2))
+    const totalPnl = Number((totalEquity - initialBalance).toFixed(2))
+    const totalPnlPct = Number((((totalEquity - initialBalance) / Math.max(1, initialBalance)) * 100).toFixed(2))
+    const positionCount = Array.isArray(snapshot?.holdings)
+      ? snapshot.holdings.filter((holding) => Number(holding?.shares) > 0).length
+      : 0
+
+    return {
+      total_equity: totalEquity,
+      wallet_balance: availableBalance,
+      unrealized_profit: unrealizedProfit,
+      available_balance: availableBalance,
+      total_pnl: totalPnl,
+      total_pnl_pct: totalPnlPct,
+      initial_balance: initialBalance,
+      daily_pnl: Number((totalPnl * 0.28).toFixed(2)),
+      position_count: positionCount,
+      margin_used: 0,
+      margin_used_pct: 0,
+    }
+  }
+
   const competition = getCompetitionData()
   const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0]
   const floating = Number((Math.sin(getReplaySimulationState().step / 3) * 800).toFixed(2))
@@ -498,6 +519,44 @@ function getAccount(traderId) {
 }
 
 function getPositions(traderId) {
+  const snapshot = memoryStore?.getSnapshot?.(traderId)
+  const hasLiveHistory = Number(snapshot?.stats?.decisions || 0) > 0
+  if (Array.isArray(snapshot?.holdings) && snapshot.holdings.length > 0) {
+    const holdings = snapshot.holdings
+      .filter((holding) => Number(holding?.shares) > 0)
+      .map((holding) => {
+        const quantity = Math.max(0, Math.floor(Number(holding.shares) || 0))
+        const entryPrice = Number(holding.avg_cost || 0)
+        const markPrice = Number(holding.mark_price || entryPrice || 0)
+        const unrealizedPnl = Number(((markPrice - entryPrice) * quantity).toFixed(2))
+        const unrealizedPnlPct = entryPrice > 0
+          ? Number((((markPrice - entryPrice) / entryPrice) * 100).toFixed(4))
+          : 0
+
+        return {
+          symbol: String(holding.symbol || ''),
+          side: 'LONG',
+          entry_price: Number(entryPrice.toFixed(4)),
+          mark_price: Number(markPrice.toFixed(4)),
+          quantity,
+          leverage: 1,
+          unrealized_pnl: unrealizedPnl,
+          unrealized_pnl_pct: unrealizedPnlPct,
+          liquidation_price: 0,
+          margin_used: 0,
+        }
+      })
+      .filter((position) => position.symbol)
+
+    if (holdings.length) {
+      return holdings
+    }
+  }
+
+  if (hasLiveHistory) {
+    return []
+  }
+
   const t = getReplaySimulationState().step
   const drift = Math.sin((t + 1) / 2)
   const base = [
@@ -1061,6 +1120,9 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     dailyBatch,
     positionState,
   })
+  context.runtime_config = {
+    commission_rate: AGENT_COMMISSION_RATE,
+  }
 
   const memorySnapshot = memoryStore.getSnapshot(trader.trader_id)
   if (memorySnapshot) {
@@ -1282,6 +1344,7 @@ app.get('/api/replay/runtime/status', (_req, res) => {
     running: false,
     speed: REPLAY_SPEED,
     loop: REPLAY_LOOP,
+    completed: false,
     warmup_bars: REPLAY_WARMUP_BARS,
     cursor_index: -1,
     timeline_length: 0,
@@ -1323,6 +1386,13 @@ app.post('/api/replay/runtime/control', (req, res) => {
       return
     }
     replayEngine.setCursor(cursor)
+  } else if (action === 'set_loop') {
+    const loop = req.body?.loop
+    if (typeof loop !== 'boolean') {
+      res.status(400).json({ success: false, error: 'invalid_loop' })
+      return
+    }
+    replayEngine.setLoop(loop)
   } else {
     res.status(400).json({ success: false, error: 'invalid_action' })
     return
@@ -1608,8 +1678,15 @@ agentRuntime = createInMemoryAgentRuntime({
   maxHistory: 120,
   autoTimer: false,
   onDecision: async ({ trader, decision }) => {
-    const account = getAccount(trader.trader_id)
-    const positions = getPositions(trader.trader_id)
+    const fallbackAccount = getAccount(trader.trader_id)
+    const account = {
+      total_equity: Number(decision?.account_state?.total_balance ?? fallbackAccount.total_equity),
+      available_balance: Number(decision?.account_state?.available_balance ?? fallbackAccount.available_balance),
+      unrealized_profit: Number(decision?.account_state?.total_unrealized_profit ?? fallbackAccount.unrealized_profit),
+    }
+    const positions = Array.isArray(decision?.positions)
+      ? decision.positions
+      : getPositions(trader.trader_id)
     const replayStatus = replayEngine?.getStatus?.() || null
     decision.runtime_meta = {
       decision_every_bars: agentDecisionEveryBars,

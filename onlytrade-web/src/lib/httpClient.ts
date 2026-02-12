@@ -28,8 +28,10 @@ export interface ApiResponse<T = any> {
 export class HttpClient {
   private axiosInstance: AxiosInstance
   private static isHandling401 = false
+  private loginRequired: boolean
 
   constructor() {
+    this.loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
     // Create axios instance
     this.axiosInstance = axios.create({
       baseURL: '/',
@@ -101,6 +103,11 @@ export class HttpClient {
 
     // Handle 401 Unauthorized
     if (status === 401) {
+      if (!this.loginRequired) {
+        const reason = (error.response.data as any)?.error || (error.response.data as any)?.message || 'Unauthorized'
+        throw new Error(reason)
+      }
+
       if (HttpClient.isHandling401) {
         throw new Error('Session expired')
       }

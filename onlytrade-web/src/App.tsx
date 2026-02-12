@@ -43,6 +43,8 @@ function App() {
   const { language, setLanguage } = useLanguage()
   const { user, logout, isLoading } = useAuth()
   const { loading: configLoading } = useSystemConfig()
+  const loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
+  const hasRuntimeAccess = !loginRequired || !!user
   const [route, setRoute] = useState(window.location.pathname)
 
   // Resolve page from current path.
@@ -220,7 +222,7 @@ function App() {
   )
 
   const { data: runtimeStatus, mutate: mutateRuntimeStatus } = useSWR<AgentRuntimeStatus>(
-    runtimeControlsEnabled && !!user
+    runtimeControlsEnabled && hasRuntimeAccess
       ? 'agent-runtime-status'
       : null,
     api.getAgentRuntimeStatus,
@@ -232,7 +234,7 @@ function App() {
   )
 
   const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
-    runtimeControlsEnabled && !!user
+    runtimeControlsEnabled && hasRuntimeAccess
       ? 'replay-runtime-status'
       : null,
     api.getReplayRuntimeStatus,
@@ -441,7 +443,7 @@ function App() {
         </AnimatePresence>
       </main>
 
-      {runtimeControlsEnabled && user && (
+      {runtimeControlsEnabled && hasRuntimeAccess && (
         <button
           onClick={() => setSystemRuntimeModalOpen(true)}
           className="fixed right-4 bottom-6 z-[110] px-4 py-2 rounded-lg border border-white/20 bg-black/70 text-sm font-semibold text-nofx-text-main hover:bg-black/85 transition-colors"
@@ -450,7 +452,7 @@ function App() {
         </button>
       )}
 
-      {runtimeControlsEnabled && user && (
+      {runtimeControlsEnabled && hasRuntimeAccess && (
         <SystemRuntimeModal
           open={systemRuntimeModalOpen}
           onClose={() => setSystemRuntimeModalOpen(false)}

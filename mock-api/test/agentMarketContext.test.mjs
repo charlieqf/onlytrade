@@ -66,6 +66,8 @@ test('buildPositionState maps account and symbol position', () => {
     avg_cost: 1501.1,
     unrealized_pnl: 300,
     cash_cny: 91_000,
+    total_balance_cny: 0,
+    total_unrealized_pnl_cny: 0,
     max_gross_exposure_pct: 1,
   })
 })

@@ -67,6 +67,7 @@ MARKET_PROVIDER=real MARKET_UPSTREAM_URL=https://your-proxy.example/api/market/f
 - `GET /api/agent/memory?trader_id=t_001`
 - `GET /api/replay/runtime/status`
 - `POST /api/replay/runtime/control` (`pause` | `resume` | `step` | `set_speed` | `set_cursor`)
+  - Supports `set_loop` with body `{ "action": "set_loop", "loop": false }` for single-run replay mode.
 - `POST /api/dev/factory-reset` (dev-only: pause runtimes, reset replay cursor, clear runtime metrics/history, reset memory JSON)
 
 Runtime control examples:

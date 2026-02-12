@@ -19,7 +19,9 @@ Examples:
   bash scripts/onlytrade-ssh-ops.sh status
   bash scripts/onlytrade-ssh-ops.sh kill-on "manual_emergency_stop"
   bash scripts/onlytrade-ssh-ops.sh kill-off "manual_resume"
+  bash scripts/onlytrade-ssh-ops.sh set-loop off
   bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
+  bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
   bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0
 
 Optional env vars:

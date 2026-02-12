@@ -50,14 +50,15 @@ Commands:
   resume                          Resume agents + replay
   step [bars]                     Advance replay by bars (default 1)
   set-speed <speed>               Set replay speed multiplier
+  set-loop <on|off>               Set replay loop mode
   set-cadence <bars>              Set agent decision cadence in bars
   factory-reset [--warmup|--cursor N]
                                   Reset runtime/memory/replay cursor
   kill-on [reason]                Activate emergency kill switch
   kill-off [reason]               Deactivate emergency kill switch
   stop-all [reason]               Alias of kill-on
-  start-3day [--speed N] [--cadence N] [--warmup]
-                                  Clean start for 3-day run
+  start-3day [--speed N] [--cadence N] [--warmup] [--single-run]
+                                   Clean start for 3-day run
   decisions [trader_id] [limit]   Fetch latest decisions
   memory [trader_id]              Fetch agent memory snapshot(s)
   watch [seconds]                 Poll status repeatedly (default 3s)
@@ -127,6 +128,24 @@ set_replay_speed() {
   curl_post "/api/replay/runtime/control" "{\"action\":\"set_speed\",\"speed\":$speed}"
 }
 
+set_replay_loop() {
+  local mode="$1"
+  local loop_json
+  case "$mode" in
+    on|true|1)
+      loop_json="true"
+      ;;
+    off|false|0)
+      loop_json="false"
+      ;;
+    *)
+      echo "[ops] ERROR: set-loop requires on|off" >&2
+      exit 1
+      ;;
+  esac
+  curl_post "/api/replay/runtime/control" "{\"action\":\"set_loop\",\"loop\":$loop_json}"
+}
+
 set_decision_bars() {
   local bars="$1"
   curl_post "/api/agent/runtime/control" "{\"action\":\"set_decision_every_bars\",\"decision_every_bars\":$bars}"
@@ -185,6 +204,7 @@ start_three_day_run() {
   local speed="$1"
   local bars="$2"
   local reset_mode="$3"
+  local loop_mode="$4"
 
   echo "[ops] start-3day: activating clean baseline"
   if [ "$reset_mode" = "warmup" ]; then
@@ -198,6 +218,9 @@ start_three_day_run() {
 
   echo "[ops] setting replay speed=$speed"
   set_replay_speed "$speed" >/dev/null
+
+  echo "[ops] setting replay loop mode=$loop_mode"
+  set_replay_loop "$loop_mode" >/dev/null
 
   echo "[ops] setting decision cadence bars=$bars"
   set_decision_bars "$bars" >/dev/null
@@ -246,6 +269,14 @@ main() {
       fi
       set_replay_speed "$speed" | json_pretty
       ;;
+    set-loop)
+      local mode="${1:-}"
+      if [ -z "$mode" ]; then
+        echo "[ops] ERROR: set-loop requires on|off" >&2
+        exit 1
+      fi
+      set_replay_loop "$mode" | json_pretty
+      ;;
     set-cadence)
       local bars="${1:-}"
       if [ -z "$bars" ]; then
@@ -287,6 +318,7 @@ main() {
       local speed="$DEFAULT_REPLAY_SPEED"
       local bars="$DEFAULT_DECISION_BARS"
       local mode="cursor"
+      local loop_mode="on"
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --speed)
@@ -301,13 +333,21 @@ main() {
             mode="warmup"
             shift
             ;;
+          --single-run)
+            loop_mode="off"
+            shift
+            ;;
+          --loop)
+            loop_mode="on"
+            shift
+            ;;
           *)
             echo "[ops] ERROR: unknown start-3day option $1" >&2
             exit 1
             ;;
         esac
       done
-      start_three_day_run "$speed" "$bars" "$mode"
+      start_three_day_run "$speed" "$bars" "$mode" "$loop_mode"
       ;;
     decisions)
       local trader="${1:-}"

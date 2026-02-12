@@ -118,6 +118,8 @@ export function buildPositionState({ symbol, account, positions }) {
     avg_cost: Number(matched?.entry_price || 0),
     unrealized_pnl: Number(matched?.unrealized_pnl || 0),
     cash_cny: Number(account?.available_balance || 0),
+    total_balance_cny: Number(account?.total_equity || 0),
+    total_unrealized_pnl_cny: Number(account?.unrealized_profit || 0),
     max_gross_exposure_pct: 1.0,
   }
 }

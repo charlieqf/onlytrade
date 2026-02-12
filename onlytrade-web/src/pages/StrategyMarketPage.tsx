@@ -18,7 +18,6 @@ import {
   Database
 } from 'lucide-react'
 import { useLanguage } from '../contexts/LanguageContext'
-import { useAuth } from '../contexts/AuthContext'
 import { toast } from 'sonner'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 
@@ -101,7 +100,6 @@ function getStrategyStyle(name: string) {
 
 export function StrategyMarketPage() {
   const { language } = useLanguage()
-  const { token, user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -483,7 +481,7 @@ export function StrategyMarketPage() {
           )}
 
           {/* CTA - Share Strategy */}
-          {user && token && (
+          {(
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}

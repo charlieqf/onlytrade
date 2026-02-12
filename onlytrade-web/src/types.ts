@@ -46,6 +46,11 @@ export interface DecisionAction {
   action: string
   symbol: string
   quantity: number
+  requested_quantity?: number
+  executed?: boolean
+  filled_quantity?: number
+  filled_notional?: number
+  fee_paid?: number
   leverage: number
   price: number
   stop_loss?: number      // Stop loss price
@@ -153,12 +158,13 @@ export interface AgentRuntimeControlResult {
   decision_every_bars?: number
 }
 
-export type ReplayRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_speed' | 'set_cursor'
+export type ReplayRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_speed' | 'set_cursor' | 'set_loop'
 
 export interface ReplayRuntimeState {
   running: boolean
   speed: number
   loop: boolean
+  completed?: boolean
   warmup_bars: number
   cursor_index: number
   timeline_length: number

@@ -186,6 +186,15 @@ export default function SystemRuntimeModal({
             <span className="mx-2">|</span>
             {language === 'zh' ? '第' : 'Day'} <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.day_index ?? '--'}</span>/{replayRuntimeStatus?.day_count ?? '--'}
           </div>
+          <div>
+            {language === 'zh' ? '回放模式' : 'Replay mode'}:{' '}
+            <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.loop ? (language === 'zh' ? '循环' : 'Loop') : (language === 'zh' ? '单次' : 'Single-run')}</span>
+            <span className="mx-2">|</span>
+            {language === 'zh' ? '完成状态' : 'Completion'}:{' '}
+            <span className={`ml-1 ${replayRuntimeStatus?.completed ? 'text-nofx-green' : 'text-nofx-text-main'}`}>
+              {replayRuntimeStatus?.completed ? (language === 'zh' ? '已完成' : 'Completed') : (language === 'zh' ? '进行中' : 'In progress')}
+            </span>
+          </div>
           {message && <div className="text-nofx-text-main">{message}</div>}
         </div>
       </div>

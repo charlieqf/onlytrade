@@ -170,3 +170,36 @@ test('replay engine status includes trading-day boundary fields', () => {
   assert.equal(status3.day_index, 2)
   assert.equal(status3.is_day_start, true)
 })
+
+test('replay engine supports single-run completion and runtime loop toggle', () => {
+  const base = 1_700_000_000_000
+  const batch = {
+    schema_version: 'market.frames.v1',
+    frames: [
+      makeFrame({ symbol: '600519.SH', startTsMs: base, seq: 1 }),
+      makeFrame({ symbol: '600519.SH', startTsMs: base + 60_000, seq: 2 }),
+    ],
+  }
+
+  const engine = createReplayEngine({
+    replayBatch: batch,
+    initialSpeed: 60,
+    initialRunning: true,
+    warmupBars: 1,
+    loop: false,
+  })
+
+  // Advance to the end in single-run mode.
+  engine.tick(1000)
+  engine.tick(1000)
+  const done = engine.getStatus()
+  assert.equal(done.running, false)
+  assert.equal(done.loop, false)
+  assert.equal(done.completed, true)
+
+  // Toggle loop back on and verify status reflects it.
+  engine.setLoop(true)
+  const loopOn = engine.getStatus()
+  assert.equal(loopOn.loop, true)
+  assert.equal(loopOn.completed, false)
+})

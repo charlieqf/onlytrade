@@ -4,6 +4,7 @@ set -euo pipefail
 VM_HOST="${ONLYTRADE_VM_HOST:-root@104.238.213.119}"
 VM_KEY="${ONLYTRADE_VM_KEY:-$HOME/.ssh/kamatera}"
 VM_REPO="${ONLYTRADE_VM_REPO:-}"
+VM_API_BASE="${ONLYTRADE_VM_API_BASE:-http://127.0.0.1:18080}"
 
 print_help() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Optional env vars:
   ONLYTRADE_VM_HOST   VM SSH target (default: root@104.238.213.119)
   ONLYTRADE_VM_KEY    SSH private key path (default: ~/.ssh/kamatera)
   ONLYTRADE_VM_REPO   Repo path on VM (auto-detected if omitted)
+  ONLYTRADE_VM_API_BASE Backend API base on VM (default: http://127.0.0.1:18080)
 
 Notes:
   - Auto-detect repo path on VM from:
@@ -49,8 +51,9 @@ for arg in "$@"; do
 done
 args_joined="${quoted_args[*]}"
 repo_quoted="$(printf '%q' "$VM_REPO")"
+api_base_quoted="$(printf '%q' "$VM_API_BASE")"
 
-ssh -i "$VM_KEY" "$VM_HOST" "ONLYTRADE_VM_REPO=$repo_quoted bash -s -- $args_joined" <<'REMOTE_SCRIPT'
+ssh -i "$VM_KEY" "$VM_HOST" "ONLYTRADE_VM_REPO=$repo_quoted ONLYTRADE_API_BASE=$api_base_quoted bash -s -- $args_joined" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 detect_repo() {

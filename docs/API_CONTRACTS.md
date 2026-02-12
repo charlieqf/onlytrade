@@ -87,6 +87,8 @@ Wrapped:
 
 Fixture: `onlytrade-web/tests/fixtures/api_competition.json`
 
+Runtime extension: payload may include `replay` metadata (`trading_day`, `day_index`, `day_count`, `day_bar_index`, `day_bar_count`) so leaderboard context can align with replay progress.
+
 ### GET /api/traders
 
 Public trader list (wrapped):
@@ -130,7 +132,7 @@ Fixture: `onlytrade-web/tests/fixtures/api_decisions_latest.json`
 
 Wrapped runtime status payload used by room runtime controls.
 
-- Includes `running`, `cycle_ms`, in-flight timestamps, aggregate metrics, and per-trader call counts.
+- Includes `running`, in-flight timestamps, aggregate metrics, per-trader call counts, `decision_every_bars` cadence, `kill_switch` state, and `llm` runtime descriptor (`enabled`, `effective_enabled`, token-saver flags).
 
 ### POST /api/agent/runtime/control
 
@@ -148,12 +150,42 @@ Supported `action` values:
 - `resume`
 - `step`
 - `set_cycle_ms` (requires `cycle_ms`; maps to `decision_every_bars` under current replay speed)
+- `set_decision_every_bars` (requires `decision_every_bars`)
+
+### POST /api/agent/runtime/kill-switch
+
+Emergency control endpoint to stop all agent decisions and block LLM calls.
+
+Request body:
+
+```json
+{ "action": "activate", "reason": "manual_emergency_stop" }
+```
+
+Supported `action` values:
+
+- `activate`
+- `deactivate`
+
+Notes:
+
+- Activation pauses runtime + replay and clears queued decision steps.
+- If `CONTROL_API_TOKEN` is configured, request must include valid `x-control-token` header (or bearer token).
+
+### GET /api/agent/memory?trader_id=
+
+Persistent agent long-term memory snapshot.
+
+- Backed by JSON files at `data/agent-memory/<trader_id>.json`.
+- Includes replay day state, equity/return stats, holdings snapshot, and recent actions.
+- Current schema version: `agent.memory.v2` (adds `meta`, `config`, `daily_journal`).
+- Stats may include fee/trade counters: `buy_trades`, `sell_trades`, `total_fees_paid`.
 
 ### GET /api/replay/runtime/status
 
 Wrapped replay runtime status payload.
 
-- Includes `running`, `speed`, `cursor_index`, timeline size, and current replay timestamp.
+- Includes `running`, `speed`, `cursor_index`, timeline size, current replay timestamp, and trading-day boundary fields (`trading_day`, `day_index`, `day_count`, `is_day_start`, `is_day_end`).
 
 ### POST /api/replay/runtime/control
 
@@ -172,6 +204,15 @@ Supported `action` values:
 - `step` (optional `bars`, default `1`)
 - `set_speed` (requires `speed`)
 - `set_cursor` (requires `cursor_index`)
+
+### POST /api/dev/factory-reset
+
+Dev-only hard reset endpoint for repeated replay test runs.
+
+- Pauses replay and agent runtime
+- Resets replay cursor (default `0`, optional `use_warmup=true`)
+- Clears in-memory agent decision counters/history
+- Reinitializes `data/agent-memory/*.json` to defaults
 
 ### GET /api/equity-history?trader_id=&hours=
 

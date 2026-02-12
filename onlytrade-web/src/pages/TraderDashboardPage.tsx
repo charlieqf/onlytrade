@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import { ChartTabs } from '../components/ChartTabs'
 import { DecisionCard } from '../components/DecisionCard'
 import { PositionHistory } from '../components/PositionHistory'
-import { PunkAvatar, getTraderAvatar } from '../components/PunkAvatar'
+import { TraderAvatar } from '../components/TraderAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Flame, Info, MessageSquare, Pause, Play, Send, StepForward } from 'lucide-react'
+import { Flame, Info, MessageSquare, Pause, Play, RotateCcw, Send, StepForward } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import type {
     SystemStatus,
@@ -15,6 +15,8 @@ import type {
     TraderInfo,
     AgentRuntimeStatus,
     AgentRuntimeControlAction,
+    ReplayRuntimeStatus,
+    AgentMemorySnapshot,
 } from '../types'
 
 // --- Helper Functions ---
@@ -61,8 +63,12 @@ interface TraderDashboardPageProps {
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
     runtimeStatus?: AgentRuntimeStatus
+    replayRuntimeStatus?: ReplayRuntimeStatus
+    agentMemory?: AgentMemorySnapshot
     runtimeControlsEnabled?: boolean
-    onRuntimeControl?: (action: AgentRuntimeControlAction, cycleMs?: number) => Promise<void>
+    onRuntimeControl?: (action: AgentRuntimeControlAction, value?: number) => Promise<void>
+    onFactoryReset?: (useWarmup?: boolean) => Promise<void>
+    onKillSwitch?: (action: 'activate' | 'deactivate', reason?: string) => Promise<void>
     lastUpdate: string
     language: Language
 }
@@ -83,8 +89,12 @@ export function TraderDashboardPage({
     decisionsLimit,
     onDecisionsLimitChange,
     runtimeStatus,
+    replayRuntimeStatus,
+    agentMemory,
     runtimeControlsEnabled,
     onRuntimeControl,
+    onFactoryReset,
+    onKillSwitch,
     lastUpdate,
     language,
     traders,
@@ -98,7 +108,7 @@ export function TraderDashboardPage({
     const chartSectionRef = useRef<HTMLDivElement>(null)
     const [askInput, setAskInput] = useState('')
     const [fuelInput, setFuelInput] = useState('30')
-    const [runtimeCycleInput, setRuntimeCycleInput] = useState('15000')
+    const [runtimeCadenceBarsInput, setRuntimeCadenceBarsInput] = useState('1')
     const [runtimeActionPending, setRuntimeActionPending] = useState(false)
     const [runtimeActionMessage, setRuntimeActionMessage] = useState<string>('')
     const [roomEvents, setRoomEvents] = useState<RoomEvent[]>([
@@ -135,10 +145,10 @@ export function TraderDashboardPage({
     }, [status?.grid_symbol])
 
     useEffect(() => {
-        if (runtimeStatus?.cycle_ms) {
-            setRuntimeCycleInput(String(runtimeStatus.cycle_ms))
+        if (runtimeStatus?.decision_every_bars) {
+            setRuntimeCadenceBarsInput(String(runtimeStatus.decision_every_bars))
         }
-    }, [runtimeStatus?.cycle_ms])
+    }, [runtimeStatus?.decision_every_bars])
 
     const handleAskSubmit = () => {
         const trimmed = askInput.trim()
@@ -180,21 +190,39 @@ export function TraderDashboardPage({
         [runtimeStatus?.traders, selectedTraderId]
     )
 
+    const replayDayProgressPct = useMemo(() => {
+        const index = replayRuntimeStatus?.day_bar_index ?? 0
+        const count = replayRuntimeStatus?.day_bar_count ?? 0
+        if (!count) return null
+        return Math.max(0, Math.min(100, Number(((index / count) * 100).toFixed(1))))
+    }, [replayRuntimeStatus?.day_bar_index, replayRuntimeStatus?.day_bar_count])
+
+    const latestMemoryAction = agentMemory?.recent_actions?.[0]
+
     const triggerRuntimeAction = async (action: AgentRuntimeControlAction) => {
         if (!onRuntimeControl || runtimeActionPending) return
+
+        if (runtimeStatus?.kill_switch?.active && (action === 'resume' || action === 'step')) {
+            setRuntimeActionMessage(
+                language === 'zh'
+                    ? 'Kill Switch 已激活，需先解除后才能恢复/单步。'
+                    : 'Kill switch is active. Deactivate it before resume/step.'
+            )
+            return
+        }
 
         setRuntimeActionPending(true)
         setRuntimeActionMessage('')
 
         try {
-            if (action === 'set_cycle_ms') {
-                const cycleMs = Number(runtimeCycleInput)
-                if (!Number.isFinite(cycleMs) || cycleMs <= 0) {
-                    setRuntimeActionMessage(language === 'zh' ? '请输入有效的毫秒间隔。' : 'Please enter a valid cycle interval in milliseconds.')
+            if (action === 'set_decision_every_bars') {
+                const bars = Number(runtimeCadenceBarsInput)
+                if (!Number.isFinite(bars) || bars <= 0) {
+                    setRuntimeActionMessage(language === 'zh' ? '请输入有效的决策 K 线数量。' : 'Please enter a valid bars-per-decision value.')
                     return
                 }
-                await onRuntimeControl(action, cycleMs)
-                setRuntimeActionMessage(language === 'zh' ? `已更新决策节奏至 ${cycleMs}ms 等效` : `Decision cadence updated to ${cycleMs}ms equivalent`)
+                await onRuntimeControl(action, bars)
+                setRuntimeActionMessage(language === 'zh' ? `已更新决策节奏为每 ${bars} 根 K 线一次` : `Decision cadence updated to every ${bars} bars`)
                 return
             }
 
@@ -204,10 +232,71 @@ export function TraderDashboardPage({
                 resume: language === 'zh' ? '已恢复运行时' : 'Runtime resumed',
                 step: language === 'zh' ? '已执行一步循环' : 'Executed one cycle step',
                 set_cycle_ms: '',
+                set_decision_every_bars: '',
             }
             setRuntimeActionMessage(actionMap[action])
         } catch (error) {
             const fallback = language === 'zh' ? '运行时控制失败，请稍后重试。' : 'Runtime control failed. Please retry.'
+            const message = error instanceof Error && error.message ? error.message : fallback
+            setRuntimeActionMessage(message)
+        } finally {
+            setRuntimeActionPending(false)
+        }
+    }
+
+    const triggerKillSwitch = async (action: 'activate' | 'deactivate') => {
+        if (!onKillSwitch || runtimeActionPending) return
+
+        const isActivate = action === 'activate'
+        const confirmMessage = isActivate
+            ? (language === 'zh'
+                ? '紧急停止将暂停所有 Agent 决策并阻断 LLM 调用。确认执行？'
+                : 'Emergency stop will pause all agent decisions and block LLM calls. Continue?')
+            : (language === 'zh'
+                ? '确认解除 Kill Switch 并允许 Agent 恢复运行？'
+                : 'Deactivate kill switch and allow agents to run again?')
+
+        if (!window.confirm(confirmMessage)) return
+
+        setRuntimeActionPending(true)
+        setRuntimeActionMessage('')
+        try {
+            const reason = isActivate ? 'manual_emergency_stop_from_ui' : 'manual_reactivate_from_ui'
+            await onKillSwitch(action, reason)
+            setRuntimeActionMessage(
+                isActivate
+                    ? (language === 'zh' ? '已触发紧急停止（Kill Switch 激活）' : 'Emergency stop engaged (kill switch active)')
+                    : (language === 'zh' ? '已解除 Kill Switch，可恢复运行' : 'Kill switch deactivated, runtime can resume')
+            )
+        } catch (error) {
+            const fallback = language === 'zh' ? 'Kill Switch 操作失败，请重试。' : 'Kill switch operation failed. Please retry.'
+            const message = error instanceof Error && error.message ? error.message : fallback
+            setRuntimeActionMessage(message)
+        } finally {
+            setRuntimeActionPending(false)
+        }
+    }
+
+    const triggerFactoryReset = async (useWarmup = false) => {
+        if (!onFactoryReset || runtimeActionPending) return
+
+        const confirmMessage = language === 'zh'
+            ? '这会重置回放光标、清空运行时计数与 Agent 记忆。确认继续？'
+            : 'This resets replay cursor, runtime counters, and agent memory. Continue?'
+        if (!window.confirm(confirmMessage)) return
+
+        setRuntimeActionPending(true)
+        setRuntimeActionMessage('')
+
+        try {
+            await onFactoryReset(useWarmup)
+            setRuntimeActionMessage(
+                useWarmup
+                    ? (language === 'zh' ? '已完成重置（回放定位到 warmup 光标）' : 'Factory reset complete (cursor set to warmup)')
+                    : (language === 'zh' ? '已完成重置（回放定位到第 1 根 K 线）' : 'Factory reset complete (cursor set to first bar)')
+            )
+        } catch (error) {
+            const fallback = language === 'zh' ? '重置失败，请稍后重试。' : 'Factory reset failed. Please retry.'
             const message = error instanceof Error && error.message ? error.message : fallback
             setRuntimeActionMessage(message)
         } finally {
@@ -354,12 +443,11 @@ export function TraderDashboardPage({
                     <div className="flex items-start justify-between mb-4">
                         <h2 className="text-2xl font-bold flex items-center gap-4 text-nofx-text-main">
                             <div className="relative">
-                                <PunkAvatar
-                                    seed={getTraderAvatar(
-                                        selectedTrader.trader_id,
-                                        selectedTrader.trader_name
-                                    )}
+                                <TraderAvatar
+                                    traderId={selectedTrader.trader_id}
+                                    traderName={selectedTrader.trader_name}
                                     size={56}
+                                    enableHdPreview
                                     className="rounded-xl border-2 border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]"
                                 />
                                 <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-nofx-green rounded-full border-2 border-[#0B0E11] shadow-[0_0_8px_rgba(14,203,129,0.8)] animate-pulse" />
@@ -744,14 +832,14 @@ export function TraderDashboardPage({
 
                                 <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 mb-2">
                                     <input
-                                        value={runtimeCycleInput}
-                                        onChange={(e) => setRuntimeCycleInput(e.target.value)}
-                                        placeholder={language === 'zh' ? '决策节奏(ms 等效)' : 'decision cadence (ms equiv)'}
+                                        value={runtimeCadenceBarsInput}
+                                        onChange={(e) => setRuntimeCadenceBarsInput(e.target.value)}
+                                        placeholder={language === 'zh' ? '每次决策间隔 K 线数' : 'bars per decision'}
                                         className="px-3 py-2 rounded bg-black/40 border border-white/10 text-sm text-nofx-text-main focus:outline-none focus:border-nofx-gold/50"
                                         disabled={runtimeActionPending}
                                     />
                                     <button
-                                        onClick={() => triggerRuntimeAction('set_cycle_ms')}
+                                        onClick={() => triggerRuntimeAction('set_decision_every_bars')}
                                         disabled={runtimeActionPending}
                                         className="px-3 py-2 rounded text-sm font-semibold border border-white/15 text-nofx-text-main hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
@@ -786,14 +874,101 @@ export function TraderDashboardPage({
                                     </button>
                                 </div>
 
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                                    <button
+                                        onClick={() => triggerFactoryReset(false)}
+                                        disabled={runtimeActionPending}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/35 text-red-300 bg-red-500/10 hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" />
+                                        {language === 'zh' ? '重置（首根K线）' : 'Reset (First Bar)'}
+                                    </button>
+                                    <button
+                                        onClick={() => triggerFactoryReset(true)}
+                                        disabled={runtimeActionPending}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/30 text-red-200 bg-red-500/5 hover:bg-red-500/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" />
+                                        {language === 'zh' ? '重置（Warmup）' : 'Reset (Warmup)'}
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                                    <button
+                                        onClick={() => triggerKillSwitch('activate')}
+                                        disabled={runtimeActionPending || !!runtimeStatus?.kill_switch?.active}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-red-500/50 text-red-200 bg-red-500/15 hover:bg-red-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {language === 'zh' ? '紧急停止全部 Agent' : 'Emergency Stop All Agents'}
+                                    </button>
+                                    <button
+                                        onClick={() => triggerKillSwitch('deactivate')}
+                                        disabled={runtimeActionPending || !runtimeStatus?.kill_switch?.active}
+                                        className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-semibold border border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {language === 'zh' ? '解除紧急停止' : 'Deactivate Kill Switch'}
+                                    </button>
+                                </div>
+
                                 <div className="text-[11px] text-nofx-text-muted space-y-1">
                                     <div>
-                                        {language === 'zh' ? '当前周期' : 'Cycle'}:
+                                        {language === 'zh' ? '估算间隔' : 'Estimated interval'}:
                                         <span className="text-nofx-text-main ml-1">{runtimeStatus?.cycle_ms ?? '--'} ms</span>
                                     </div>
                                     <div>
                                         {language === 'zh' ? '决策节奏' : 'Decision cadence'}:
                                         <span className="text-nofx-text-main ml-1">{runtimeStatus?.decision_every_bars ?? '--'} {language === 'zh' ? '根K线/次' : 'bars/decision'}</span>
+                                    </div>
+                                    <div>
+                                        LLM:
+                                        <span className="text-nofx-text-main ml-1">
+                                            {runtimeStatus?.llm?.enabled
+                                                ? (runtimeStatus?.llm?.model || 'enabled')
+                                                : (language === 'zh' ? '未启用' : 'disabled')}
+                                        </span>
+                                        {runtimeStatus?.llm?.enabled && (
+                                            <>
+                                                <span className="mx-2">|</span>
+                                                {language === 'zh' ? '生效' : 'Effective'}:
+                                                <span className={`ml-1 ${runtimeStatus?.llm?.effective_enabled ? 'text-nofx-green' : 'text-red-300'}`}>
+                                                    {runtimeStatus?.llm?.effective_enabled ? 'on' : 'off'}
+                                                </span>
+                                            </>
+                                        )}
+                                        {runtimeStatus?.llm?.enabled && (
+                                            <>
+                                                <span className="mx-2">|</span>
+                                                {language === 'zh' ? '省Token模式' : 'Token saver'}:
+                                                <span className="text-nofx-text-main ml-1">{runtimeStatus?.llm?.token_saver ? 'on' : 'off'}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div>
+                                        Kill Switch:
+                                        <span className={`ml-1 ${runtimeStatus?.kill_switch?.active ? 'text-red-300' : 'text-nofx-green'}`}>
+                                            {runtimeStatus?.kill_switch?.active ? 'ACTIVE' : 'inactive'}
+                                        </span>
+                                        {runtimeStatus?.kill_switch?.reason && (
+                                            <>
+                                                <span className="mx-2">|</span>
+                                                <span className="text-nofx-text-main">{runtimeStatus?.kill_switch?.reason}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '回放交易日' : 'Replay trading day'}:
+                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.trading_day ?? '--'}</span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '第' : 'Day'}
+                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.day_index ?? '--'}</span>
+                                        <span className="ml-1">/ {replayRuntimeStatus?.day_count ?? '--'}</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '日内进度' : 'In-day progress'}:
+                                        <span className="text-nofx-text-main ml-1">{replayRuntimeStatus?.day_bar_index ?? '--'} / {replayRuntimeStatus?.day_bar_count ?? '--'}</span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '完成' : 'Done'}:
+                                        <span className="text-nofx-text-main ml-1">{replayDayProgressPct != null ? `${replayDayProgressPct}%` : '--'}</span>
                                     </div>
                                     <div>
                                         {language === 'zh' ? '总循环' : 'Total cycles'}:
@@ -808,6 +983,31 @@ export function TraderDashboardPage({
                                     <div>
                                         {language === 'zh' ? '当前交易员调用数' : 'Selected trader calls'}:
                                         <span className="text-nofx-text-main ml-1">{selectedRuntimeTrader?.call_count ?? '--'}</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '长期记忆收益' : 'Memory return'}:
+                                        <span className={`ml-1 ${(agentMemory?.stats?.return_rate_pct ?? 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
+                                            {agentMemory?.stats?.return_rate_pct != null
+                                                ? `${agentMemory.stats.return_rate_pct >= 0 ? '+' : ''}${agentMemory.stats.return_rate_pct.toFixed(2)}%`
+                                                : '--'}
+                                        </span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '记忆更新' : 'Memory updated'}:
+                                        <span className="text-nofx-text-main ml-1">{agentMemory?.updated_at ? new Date(agentMemory.updated_at).toLocaleTimeString() : '--'}</span>
+                                    </div>
+                                    <div>
+                                        {language === 'zh' ? '最近动作' : 'Last memory action'}:
+                                        <span className="text-nofx-text-main ml-1">{latestMemoryAction?.action ?? '--'}</span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '累计手续费' : 'Fees paid'}:
+                                        <span className="text-nofx-text-main ml-1">
+                                            {agentMemory?.stats?.total_fees_paid != null
+                                                ? `CNY ${agentMemory.stats.total_fees_paid.toFixed(2)}`
+                                                : '--'}
+                                        </span>
+                                        <span className="mx-2">|</span>
+                                        {language === 'zh' ? '持仓数' : 'Holdings'}:
+                                        <span className="text-nofx-text-main ml-1">{agentMemory?.holdings?.length ?? '--'}</span>
                                     </div>
                                     {runtimeActionMessage && (
                                         <div className="text-nofx-text-main">{runtimeActionMessage}</div>
@@ -870,7 +1070,23 @@ export function TraderDashboardPage({
                             >
                                 {decisions && decisions.length > 0 ? (
                                     decisions.map((decision, i) => (
-                                        <DecisionCard key={i} decision={decision} language={language} onSymbolClick={handleSymbolClick} />
+                                        <div key={`${decision.timestamp}-${i}`} className="flex items-start gap-3">
+                                            <div className="pt-1 shrink-0">
+                                                <TraderAvatar
+                                                    traderId={selectedTrader.trader_id}
+                                                    traderName={selectedTrader.trader_name}
+                                                    size={34}
+                                                    className="rounded-lg border border-white/10"
+                                                />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <DecisionCard
+                                                    decision={decision}
+                                                    language={language}
+                                                    onSymbolClick={handleSymbolClick}
+                                                />
+                                            </div>
+                                        </div>
                                     ))
                                 ) : (
                                     <div className="py-16 text-center text-nofx-text-muted opacity-60">

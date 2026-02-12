@@ -20,6 +20,20 @@ This file is the living progress tracker. Update it as work lands.
 - Added replay clock engine for `1m` bars (default `60x`) with replay runtime status/control APIs
 - Symbol API now returns Chinese A-share names for key demo symbols (e.g. 贵州茅台/宁德时代)
 - Switched agent triggering to replay-event driven cadence (decision every N replay bars) for production-style pattern
+- Replay pack tooling now builds 3-trading-day `1m` bundles by default for multi-day competitions
+- Replay runtime now exposes day-boundary awareness (`day_index`, `is_day_start`, `is_day_end`) for day lifecycle handling
+- Added persistent per-trader long-term memory snapshots in JSON (`data/agent-memory/*.json`)
+- Dashboard runtime panel now shows replay day progress + per-trader memory stats (`/api/replay/runtime/status`, `/api/agent/memory`)
+- Competition/account drift now follows replay cursor progression (freezes when replay pauses, advances across replay days)
+- Agent trigger cadence default updated to 10 replay bars (10-minute market-time reasoning cadence at `1m` bars)
+- Added optional OpenAI `gpt-4o-mini` decision path with automatic fallback to heuristic rules
+- Agent memory JSON upgraded to `agent.memory.v2` with meta/config/daily journal sections
+- Mock API now auto-loads env from `mock-api/.env.local` (or `.env`) for local secret management
+- Added dev `factory-reset` endpoint + runtime reset hooks for repeatable full replay test reruns
+- Added per-trade commission deduction (buy/sell) with fee tracking in agent memory stats
+- Hardened LLM decision parsing with strict JSON shape validation + fallback
+- Upgraded LLM response contract to strict `decisions[0]` JSON schema and added dev token-saver prompt/context mode
+- Added persistent kill-switch for emergency stop of all agent decisions (blocks LLM calls until deactivated)
 
 ## Demo Milestones
 

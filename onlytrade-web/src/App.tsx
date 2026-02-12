@@ -26,6 +26,7 @@ import type {
   TraderInfo,
   AgentRuntimeStatus,
   AgentRuntimeControlAction,
+  AgentMemorySnapshot,
   ReplayRuntimeStatus,
 } from './types'
 
@@ -181,7 +182,7 @@ function App() {
     }
   )
 
-  const { data: account } = useSWR<AccountInfo>(
+  const { data: account, mutate: mutateAccount } = useSWR<AccountInfo>(
     currentPage === 'room' && selectedTraderId
       ? `account-${selectedTraderId}`
       : null,
@@ -193,7 +194,7 @@ function App() {
     }
   )
 
-  const { data: positions } = useSWR<Position[]>(
+  const { data: positions, mutate: mutatePositions } = useSWR<Position[]>(
     currentPage === 'room' && selectedTraderId
       ? `positions-${selectedTraderId}`
       : null,
@@ -229,7 +230,7 @@ function App() {
     }
   )
 
-  const { mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
+  const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
     runtimeControlsEnabled && currentPage === 'room'
       ? 'replay-runtime-status'
       : null,
@@ -241,8 +242,20 @@ function App() {
     }
   )
 
+  const { data: agentMemory, mutate: mutateAgentMemory } = useSWR<AgentMemorySnapshot>(
+    runtimeControlsEnabled && currentPage === 'room' && selectedTraderId
+      ? `agent-memory-${selectedTraderId}`
+      : null,
+    () => api.getAgentMemory(selectedTraderId),
+    {
+      refreshInterval: 5000,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }
+  )
+
   const handleRuntimeControl = useCallback(
-    async (action: AgentRuntimeControlAction, cycleMs?: number) => {
+    async (action: AgentRuntimeControlAction, value?: number) => {
       if (!runtimeControlsEnabled) return
 
       const tasks: Array<Promise<unknown>> = []
@@ -250,7 +263,7 @@ function App() {
       if (action === 'step') {
         tasks.push(api.controlReplayRuntime('step'))
       } else {
-        tasks.push(api.controlAgentRuntime(action, cycleMs))
+        tasks.push(api.controlAgentRuntime(action, value))
         if (action === 'pause' || action === 'resume') {
           const replayAction = action === 'pause' ? 'pause' : 'resume'
           tasks.push(api.controlReplayRuntime(replayAction))
@@ -261,11 +274,62 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
+        mutateAgentMemory(),
         mutateStatus(),
         mutateDecisions(),
       ])
     },
-    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStatus, mutateDecisions]
+    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateAgentMemory, mutateStatus, mutateDecisions]
+  )
+
+  const handleFactoryReset = useCallback(
+    async (useWarmup = false) => {
+      if (!runtimeControlsEnabled) return
+
+      await api.factoryResetRuntime({ useWarmup })
+      await Promise.all([
+        mutateRuntimeStatus(),
+        mutateReplayRuntimeStatus(),
+        mutateAgentMemory(),
+        mutateStatus(),
+        mutateAccount(),
+        mutatePositions(),
+        mutateDecisions(),
+      ])
+    },
+    [
+      runtimeControlsEnabled,
+      mutateRuntimeStatus,
+      mutateReplayRuntimeStatus,
+      mutateAgentMemory,
+      mutateStatus,
+      mutateAccount,
+      mutatePositions,
+      mutateDecisions,
+    ]
+  )
+
+  const handleKillSwitch = useCallback(
+    async (action: 'activate' | 'deactivate', reason?: string) => {
+      if (!runtimeControlsEnabled) return
+
+      await api.setAgentKillSwitch(action, reason)
+      await Promise.all([
+        mutateRuntimeStatus(),
+        mutateReplayRuntimeStatus(),
+        mutateAgentMemory(),
+        mutateStatus(),
+        mutateDecisions(),
+      ])
+    },
+    [
+      runtimeControlsEnabled,
+      mutateRuntimeStatus,
+      mutateReplayRuntimeStatus,
+      mutateAgentMemory,
+      mutateStatus,
+      mutateDecisions,
+    ]
   )
 
   useEffect(() => {
@@ -358,8 +422,12 @@ function App() {
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
                   runtimeStatus={runtimeStatus}
+                  replayRuntimeStatus={replayRuntimeStatus}
+                  agentMemory={agentMemory}
                   runtimeControlsEnabled={runtimeControlsEnabled}
                   onRuntimeControl={handleRuntimeControl}
+                  onFactoryReset={handleFactoryReset}
+                  onKillSwitch={handleKillSwitch}
                   lastUpdate={lastUpdate}
                   language={language}
                   traders={traders}

@@ -69,11 +69,18 @@ function sortByCycleDesc(a, b) {
 }
 
 export function createDecisionFromContext({ trader, cycleNumber, context, timestampIso }) {
-  const action = decideAction(context)
+  const llmDecision = context?.llm_decision || null
+  const action = llmDecision?.action || decideAction(context)
   const symbol = context?.symbol || '600519.SH'
   const price = latestPrice(context)
-  const confidence = confidenceFromContext(context, action)
-  const quantity = action === 'hold' ? 0 : 100
+  const confidence = Number.isFinite(Number(llmDecision?.confidence))
+    ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
+    : confidenceFromContext(context, action)
+  const quantity = Number.isFinite(Number(llmDecision?.quantity))
+    ? Math.max(0, Math.floor(Number(llmDecision.quantity)))
+    : (action === 'hold' ? 0 : 100)
+  const reasoning = llmDecision?.reasoning || buildReasoning(action, context)
+  const decisionSource = llmDecision?.source === 'openai' ? 'llm.openai' : 'rule.heuristic'
 
   const stopLoss = action === 'buy'
     ? Number((price * 0.985).toFixed(2))
@@ -85,10 +92,13 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const decision = {
     timestamp: timestampIso,
     cycle_number: cycleNumber,
-    system_prompt: 'agent.market_context.v1',
+    system_prompt: llmDecision?.model
+      ? `agent.market_context.v1+${llmDecision.model}`
+      : 'agent.market_context.v1',
     input_prompt: `Evaluate ${symbol} using intraday + daily context`,
     cot_trace: 'compressed-mock-runtime-rationale',
     decision_json: JSON.stringify({ action, symbol }),
+    decision_source: decisionSource,
     account_state: {
       total_balance: toSafeNumber(context?.position_state?.cash_cny, 0) + toSafeNumber(context?.position_state?.shares, 0) * price,
       available_balance: toSafeNumber(context?.position_state?.cash_cny, 0),
@@ -108,7 +118,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
         stop_loss: stopLoss,
         take_profit: takeProfit,
         confidence,
-        reasoning: buildReasoning(action, context),
+        reasoning,
         order_id: 100000 + cycleNumber,
         timestamp: timestampIso,
         success: true,
@@ -127,6 +137,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
 export function createInMemoryAgentRuntime({
   traders,
   evaluateTrader,
+  onDecision,
   nowFn = Date.now,
   cycleMs = 15_000,
   maxHistory = 120,
@@ -137,6 +148,7 @@ export function createInMemoryAgentRuntime({
   const decisionsByTrader = new Map(safeTraders.map((trader) => [trader.trader_id, []]))
   const callsByTrader = new Map(safeTraders.map((trader) => [trader.trader_id, 0]))
   const evaluate = typeof evaluateTrader === 'function' ? evaluateTrader : async () => ({ context: null })
+  const notifyDecision = typeof onDecision === 'function' ? onDecision : null
   let totalCycles = 0
   let successfulCycles = 0
   let failedCycles = 0
@@ -170,6 +182,20 @@ export function createInMemoryAgentRuntime({
       list.unshift(decision)
       decisionsByTrader.set(trader.trader_id, list.slice(0, historyLimit))
       callsByTrader.set(trader.trader_id, effectiveCycle)
+
+      if (notifyDecision) {
+        try {
+          await notifyDecision({
+            trader,
+            decision,
+            context,
+            cycleNumber: effectiveCycle,
+          })
+        } catch {
+          // Keep runtime robust: decision generation succeeds even if sink fails.
+        }
+      }
+
       successfulCycles += 1
     } catch {
       failedCycles += 1
@@ -279,6 +305,23 @@ export function createInMemoryAgentRuntime({
     return pause()
   }
 
+  function reset() {
+    for (const trader of safeTraders) {
+      decisionsByTrader.set(trader.trader_id, [])
+      callsByTrader.set(trader.trader_id, 0)
+    }
+    totalCycles = 0
+    successfulCycles = 0
+    failedCycles = 0
+    cycleInFlight = false
+    lastCycleStartedMs = null
+    lastCycleCompletedMs = null
+    return {
+      state: getState(),
+      metrics: getMetrics(),
+    }
+  }
+
   return {
     start,
     stop,
@@ -291,5 +334,6 @@ export function createInMemoryAgentRuntime({
     getLatestDecisions,
     getCallCount,
     getMetrics,
+    reset,
   }
 }

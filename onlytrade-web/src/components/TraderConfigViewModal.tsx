@@ -1,5 +1,5 @@
 import type { TraderConfigData } from '../types'
-import { PunkAvatar, getTraderAvatar } from './PunkAvatar'
+import { TraderAvatar } from './TraderAvatar'
 
 // 提取下划线后面的名称部分
 function getShortName(fullName: string): string {
@@ -44,8 +44,9 @@ export function TraderConfigViewModal({
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-[#2B3139] bg-gradient-to-r from-[#1E2329] to-[#252B35]">
           <div className="flex items-center gap-3">
-            <PunkAvatar
-              seed={getTraderAvatar(traderData.trader_id || '', traderData.trader_name)}
+            <TraderAvatar
+              traderId={traderData.trader_id || ''}
+              traderName={traderData.trader_name}
               size={48}
               className="rounded-lg"
             />

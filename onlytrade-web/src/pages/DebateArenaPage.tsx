@@ -3,7 +3,7 @@ import useSWR from 'swr'
 import { api } from '../lib/api'
 import { notify } from '../lib/notify'
 import { useLanguage } from '../contexts/LanguageContext'
-import { PunkAvatar } from '../components/PunkAvatar'
+import { TraderAvatar } from '../components/TraderAvatar'
 import type {
   DebateSession,
   DebateSessionWithDetails,
@@ -582,7 +582,7 @@ export function DebateArenaPage() {
                 onClick={() => { setTraderId(tr.trader_id); if (decision && !decision.executed) setExecId(detail?.id || null) }}
                 className={`p-2 rounded-lg cursor-pointer transition-all ${traderId === tr.trader_id ? 'bg-nofx-success/20 ring-1 ring-nofx-success' : 'bg-nofx-bg-lighter hover:bg-nofx-bg-light'}`}>
                 <div className="flex items-center gap-2">
-                  <PunkAvatar seed={tr.trader_id} size={32} className="rounded-lg" />
+                  <TraderAvatar traderId={tr.trader_id} traderName={tr.trader_name} size={32} className="rounded-lg" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-nofx-text font-medium truncate">{tr.trader_name}</div>
                     <div className="text-xs text-nofx-text-muted truncate">{tr.ai_model}</div>
@@ -595,7 +595,7 @@ export function DebateArenaPage() {
               <div key={tr.trader_id} className="p-2 rounded-lg bg-nofx-bg-lighter opacity-50">
                 <div className="flex items-center gap-2">
                   <div className="grayscale">
-                    <PunkAvatar seed={tr.trader_id} size={32} className="rounded-lg" />
+                    <TraderAvatar traderId={tr.trader_id} traderName={tr.trader_name} size={32} className="rounded-lg" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-nofx-text font-medium truncate">{tr.trader_name}</div>

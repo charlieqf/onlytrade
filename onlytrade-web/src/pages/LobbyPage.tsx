@@ -4,7 +4,7 @@ import { Trophy, ArrowRight, Sparkles } from 'lucide-react'
 import { api } from '../lib/api'
 import type { CompetitionData, CompetitionTraderData } from '../types'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
-import { PunkAvatar, getTraderAvatar } from '../components/PunkAvatar'
+import { TraderAvatar } from '../components/TraderAvatar'
 import { useLanguage } from '../contexts/LanguageContext'
 
 function getTraderSlug(trader: CompetitionTraderData) {
@@ -148,8 +148,9 @@ export function LobbyPage() {
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <PunkAvatar
-                        seed={getTraderAvatar(trader.trader_id, trader.trader_name)}
+                      <TraderAvatar
+                        traderId={trader.trader_id}
+                        traderName={trader.trader_name}
                         size={40}
                         className="rounded-lg"
                       />

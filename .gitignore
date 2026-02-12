@@ -8,12 +8,17 @@ onlytrade-web/dist/
 # local env
 .env
 .env.*
+.venv/
 
 # logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# runtime memory snapshots
+data/agent-memory/*.json
+data/runtime/*.json
 
 # OS
 .DS_Store

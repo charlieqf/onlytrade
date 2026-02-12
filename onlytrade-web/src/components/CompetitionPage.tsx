@@ -6,7 +6,7 @@ import { ComparisonChart } from './ComparisonChart'
 import { getTraderColor } from '../utils/traderColors'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
-import { PunkAvatar, getTraderAvatar } from './PunkAvatar'
+import { TraderAvatar } from './TraderAvatar'
 import { DeepVoidBackground } from './DeepVoidBackground'
 
 export function CompetitionPage() {
@@ -106,6 +106,15 @@ export function CompetitionPage() {
 
   // 找出领先者
   const leader = sortedTraders[0]
+  const replayProgressPct = competition.replay?.day_bar_count
+    ? Math.max(
+      0,
+      Math.min(
+        100,
+        Number((((competition.replay.day_bar_index || 0) / competition.replay.day_bar_count) * 100).toFixed(1))
+      )
+    )
+    : null
 
   return (
     <DeepVoidBackground className="py-8" disableAnimation>
@@ -153,6 +162,22 @@ export function CompetitionPage() {
             >
               {(leader?.total_pnl ?? 0) >= 0 ? '+' : ''}
               {leader?.total_pnl_pct?.toFixed(2) || '0.00'}%
+            </div>
+            <div className="text-[11px] text-zinc-400 mt-2 space-y-0.5">
+              <div>
+                {language === 'zh' ? '回放交易日' : 'Replay Day'}:
+                <span className="text-zinc-200 ml-1">{competition.replay?.trading_day || '--'}</span>
+              </div>
+              <div>
+                {language === 'zh' ? '日序' : 'Day'}:
+                <span className="text-zinc-200 ml-1">{competition.replay?.day_index ?? '--'}</span>
+                <span className="ml-1">/ {competition.replay?.day_count ?? '--'}</span>
+              </div>
+              <div>
+                {language === 'zh' ? '日内进度' : 'In-day'}:
+                <span className="text-zinc-200 ml-1">{competition.replay?.day_bar_index ?? '--'} / {competition.replay?.day_bar_count ?? '--'}</span>
+                <span className="ml-1">({replayProgressPct != null ? `${replayProgressPct}%` : '--'})</span>
+              </div>
             </div>
           </div>
         </div>
@@ -235,9 +260,10 @@ export function CompetitionPage() {
                         >
                           {index + 1}
                         </div>
-                        {/* Punk Avatar */}
-                        <PunkAvatar
-                          seed={getTraderAvatar(trader.trader_id, trader.trader_name)}
+                        {/* Trader Avatar */}
+                        <TraderAvatar
+                          traderId={trader.trader_id}
+                          traderName={trader.trader_name}
                           size={36}
                           className="rounded-lg"
                         />
@@ -403,8 +429,9 @@ export function CompetitionPage() {
                     <div className="text-center">
                       {/* Avatar */}
                       <div className="flex justify-center mb-3">
-                        <PunkAvatar
-                          seed={getTraderAvatar(trader.trader_id, trader.trader_name)}
+                        <TraderAvatar
+                          traderId={trader.trader_id}
+                          traderName={trader.trader_name}
                           size={56}
                           className="rounded-xl"
                         />

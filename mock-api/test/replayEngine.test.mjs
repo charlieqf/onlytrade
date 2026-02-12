@@ -133,3 +133,40 @@ test('replay engine step advances by one bar while paused', () => {
   assert.equal(engine.getStatus().cursor_index, 1)
   assert.equal(engine.getStatus().running, false)
 })
+
+test('replay engine status includes trading-day boundary fields', () => {
+  const day1 = 1_700_000_000_000
+  const day2 = day1 + 24 * 60 * 60 * 1000
+  const batch = {
+    schema_version: 'market.frames.v1',
+    frames: [
+      { ...makeFrame({ symbol: '600519.SH', startTsMs: day1, seq: 1 }), window: { start_ts_ms: day1, end_ts_ms: day1 + 60_000, trading_day: '2026-02-10' } },
+      { ...makeFrame({ symbol: '600519.SH', startTsMs: day1 + 60_000, seq: 2 }), window: { start_ts_ms: day1 + 60_000, end_ts_ms: day1 + 120_000, trading_day: '2026-02-10' } },
+      { ...makeFrame({ symbol: '600519.SH', startTsMs: day2, seq: 3 }), window: { start_ts_ms: day2, end_ts_ms: day2 + 60_000, trading_day: '2026-02-11' } },
+    ],
+  }
+
+  const engine = createReplayEngine({
+    replayBatch: batch,
+    initialSpeed: 60,
+    initialRunning: false,
+    warmupBars: 1,
+    loop: false,
+  })
+
+  const status1 = engine.getStatus()
+  assert.equal(status1.day_count, 2)
+  assert.equal(status1.day_index, 1)
+  assert.equal(status1.is_day_start, true)
+  assert.equal(status1.is_day_end, false)
+
+  engine.step(1)
+  const status2 = engine.getStatus()
+  assert.equal(status2.day_index, 1)
+  assert.equal(status2.is_day_end, true)
+
+  engine.step(1)
+  const status3 = engine.getStatus()
+  assert.equal(status3.day_index, 2)
+  assert.equal(status3.is_day_start, true)
+})

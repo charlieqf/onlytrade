@@ -137,3 +137,54 @@ test('runtime supports external-clock mode with running state but no internal ti
   runtime.pause()
   assert.equal(runtime.getState().running, false)
 })
+
+test('runtime invokes onDecision callback with trader and decision payload', async () => {
+  const recorded = []
+  const runtime = createInMemoryAgentRuntime({
+    traders: [trader],
+    autoTimer: false,
+    maxHistory: 5,
+    nowFn: () => new Date('2026-02-12T00:05:00.000Z').getTime(),
+    evaluateTrader: async () => ({
+      context: makeContext({ ret5: 0.003, rsi14: 57, sma20: 106, sma60: 100, price: 115 }),
+      cycleNumber: 1,
+    }),
+    onDecision: async (payload) => {
+      recorded.push(payload)
+    },
+  })
+
+  runtime.resume()
+  await runtime.runCycleOnce()
+
+  assert.equal(recorded.length, 1)
+  assert.equal(recorded[0].trader.trader_id, 't_001')
+  assert.equal(recorded[0].decision.cycle_number, 1)
+  assert.equal(recorded[0].decision.decisions[0].symbol, '600519.SH')
+})
+
+test('runtime reset clears decisions, call counts, and metrics', async () => {
+  const runtime = createInMemoryAgentRuntime({
+    traders: [trader],
+    autoTimer: false,
+    maxHistory: 5,
+    nowFn: () => new Date('2026-02-12T00:06:00.000Z').getTime(),
+    evaluateTrader: async () => ({
+      context: makeContext({ ret5: 0.003, rsi14: 57, sma20: 106, sma60: 100, price: 115 }),
+      cycleNumber: 1,
+    }),
+  })
+
+  runtime.resume()
+  await runtime.runCycleOnce()
+  await runtime.runCycleOnce()
+
+  assert.equal(runtime.getLatestDecisions('t_001', 5).length, 2)
+  assert.equal(runtime.getCallCount('t_001'), 2)
+  assert.equal(runtime.getMetrics().totalCycles, 2)
+
+  const resetPayload = runtime.reset()
+  assert.equal(resetPayload.metrics.totalCycles, 0)
+  assert.equal(runtime.getLatestDecisions('t_001', 5).length, 0)
+  assert.equal(runtime.getCallCount('t_001'), 0)
+})

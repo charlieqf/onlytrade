@@ -90,7 +90,7 @@ export interface Statistics {
   total_close_positions: number
 }
 
-export type AgentRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_cycle_ms'
+export type AgentRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_cycle_ms' | 'set_decision_every_bars'
 
 export interface AgentRuntimeMetrics {
   totalCycles: number
@@ -114,13 +114,43 @@ export interface AgentRuntimeState {
 export interface AgentRuntimeStatus extends AgentRuntimeState {
   metrics: AgentRuntimeMetrics
   decision_every_bars?: number
+  kill_switch?: {
+    active: boolean
+    reason: string | null
+    activated_at: string | null
+    activated_by: string | null
+    deactivated_at: string | null
+    deactivated_by: string | null
+    control_token_required: boolean
+  }
+  llm?: {
+    enabled: boolean
+    effective_enabled?: boolean
+    model: string | null
+    token_saver?: boolean | null
+    max_output_tokens?: number | null
+  }
   traders: AgentRuntimeTraderCall[]
+}
+
+export interface AgentKillSwitchResult {
+  action: 'activate' | 'deactivate'
+  kill_switch: {
+    active: boolean
+    reason: string | null
+    activated_at: string | null
+    activated_by: string | null
+    deactivated_at: string | null
+    deactivated_by: string | null
+    control_token_required: boolean
+  }
 }
 
 export interface AgentRuntimeControlResult {
   action: AgentRuntimeControlAction
   state: AgentRuntimeState
   metrics: AgentRuntimeMetrics
+  decision_every_bars?: number
 }
 
 export type ReplayRuntimeControlAction = 'pause' | 'resume' | 'step' | 'set_speed' | 'set_cursor'
@@ -133,6 +163,13 @@ export interface ReplayRuntimeState {
   cursor_index: number
   timeline_length: number
   current_ts_ms: number | null
+  day_count?: number
+  day_index?: number
+  trading_day?: string | null
+  is_day_start?: boolean
+  is_day_end?: boolean
+  day_bar_index?: number
+  day_bar_count?: number
 }
 
 export interface ReplayRuntimeStatus extends ReplayRuntimeState {
@@ -142,6 +179,100 @@ export interface ReplayRuntimeStatus extends ReplayRuntimeState {
 export interface ReplayRuntimeControlResult {
   action: ReplayRuntimeControlAction
   state: ReplayRuntimeState
+}
+
+export interface AgentMemoryReplayState {
+  trading_day: string | null
+  day_index: number
+  day_count: number
+  bar_cursor: number
+  is_day_start: boolean
+  is_day_end: boolean
+}
+
+export interface AgentMemoryStats {
+  initial_balance: number
+  latest_total_balance: number
+  latest_available_balance: number
+  latest_unrealized_profit: number
+  return_rate_pct: number
+  peak_balance: number
+  trough_balance: number
+  decisions: number
+  wins: number
+  losses: number
+  holds: number
+  buy_trades?: number
+  sell_trades?: number
+  total_fees_paid?: number
+}
+
+export interface AgentMemoryHolding {
+  symbol: string
+  shares: number
+  avg_cost: number
+  mark_price: number
+  unrealized_pnl: number
+  value: number
+  weight_pct: number
+}
+
+export interface AgentMemoryRecentAction {
+  cycle_number: number
+  action: string
+  symbol: string | null
+  price: number
+  ts: string
+  fee_paid?: number
+}
+
+export interface AgentMemorySnapshot {
+  schema_version?: string
+  meta?: {
+    run_id?: string
+    created_at?: string
+    updated_at?: string
+  }
+  config?: {
+    market?: string
+    currency?: string
+    lot_size?: number
+    initial_balance?: number
+    decision_every_bars?: number
+    llm_model?: string | null
+  }
+  trader_id: string
+  trader_name: string
+  updated_at: string | null
+  replay: AgentMemoryReplayState
+  stats: AgentMemoryStats
+  daily_journal?: Array<{
+    trading_day: string
+    day_index: number
+    decisions: number
+    buys: number
+    sells: number
+    holds: number
+    start_balance: number
+    end_balance: number
+    peak_balance: number
+    trough_balance: number
+    last_action: string
+    updated_at: string
+  }>
+  holdings: AgentMemoryHolding[]
+  recent_actions: AgentMemoryRecentAction[]
+}
+
+export interface FactoryResetResult {
+  action: 'factory_reset'
+  cursor_index: number
+  use_warmup: boolean
+  state: {
+    runtime: AgentRuntimeState & { metrics: AgentRuntimeMetrics | null }
+    replay: ReplayRuntimeState | null
+    memory: AgentMemorySnapshot[]
+  }
 }
 
 // AI Trading相关类型
@@ -283,6 +414,13 @@ export interface CompetitionTraderData {
 export interface CompetitionData {
   traders: CompetitionTraderData[]
   count: number
+  replay?: {
+    trading_day: string | null
+    day_index: number
+    day_count: number
+    day_bar_index: number
+    day_bar_count: number
+  }
 }
 
 // Trader Configuration Data for View Modal

@@ -28,16 +28,22 @@ VITE_DEMO_MODE=mock-live npm run dev
 
 Set `VITE_DEMO_MODE=live` to disable static mock interception and use real APIs.
 
-### Build Yesterday Replay Pack (A-share)
+### Build Multi-Day Replay Pack (A-share)
 
 ```bash
 node scripts/fetch-cn-replay.mjs
 ```
 
-This fetches yesterday 1m bars (Yahoo) for a starter CN-A symbol set and writes:
+This fetches recent CN-A 1m bars (Yahoo) for a starter symbol set and writes:
 
 - `data/replay/cn-a/<YYYY-MM-DD>/frames.1m.jsonl`
 - `onlytrade-web/public/replay/cn-a/latest/frames.1m.json`
+
+Useful env vars:
+
+- `REPLAY_DAYS=3` (default)
+- `REPLAY_DATE=2026-02-11` (latest trading day in the replay bundle)
+- `SYMBOLS=600519.SS,601318.SS,300750.SZ`
 
 ### Build/Update 90-Day Daily History (1d)
 
@@ -84,6 +90,90 @@ Agent data context endpoint (mock-api):
 
 ```bash
 curl "http://localhost:8080/api/agent/market-context?symbol=600519.SH&intraday_interval=1m&intraday_limit=180&daily_limit=90"
+```
+
+## VM Deployment (Git Push -> VM Pull)
+
+Recommended flow:
+
+1. Local machine
+
+```bash
+git add -A
+git commit -m "your message"
+git push origin main
+```
+
+2. Ubuntu VM
+
+```bash
+cd /path/to/onlytrade
+bash scripts/deploy-vm.sh --branch main
+```
+
+The deploy script performs:
+
+- `git fetch/checkout/pull --ff-only`
+- `npm ci` for `mock-api` and `onlytrade-web`
+- tests + frontend build (can be skipped)
+- optional PM2/systemd restarts
+- API health checks
+
+Useful flags:
+
+- `--skip-tests`
+- `--skip-build`
+- `--python-venv` (create/update `.venv`)
+
+Python virtualenv helper (if/when Python is used on VM):
+
+```bash
+bash scripts/setup-python-venv.sh .venv requirements.txt
+source .venv/bin/activate
+```
+
+## SSH Ops CLI
+
+Use `scripts/onlytrade-ops.sh` from SSH terminal for common runtime operations.
+
+```bash
+# show health/runtime/replay status
+bash scripts/onlytrade-ops.sh status
+
+# emergency stop all agents (blocks LLM decisions)
+bash scripts/onlytrade-ops.sh kill-on "manual_emergency_stop"
+
+# allow agents again
+bash scripts/onlytrade-ops.sh kill-off "manual_resume"
+
+# clean rerun from day-1 first bar and start 3-day replay
+bash scripts/onlytrade-ops.sh start-3day --speed 60 --cadence 10
+
+# factory reset only
+bash scripts/onlytrade-ops.sh factory-reset --cursor 0
+```
+
+Optional secure control token (recommended):
+
+```bash
+export ONLYTRADE_CONTROL_TOKEN="your-strong-token"
+```
+
+If not exported, the script will try reading `CONTROL_API_TOKEN` from `mock-api/.env.local`.
+
+From local terminal, you can run the same ops via SSH (`ssh -i` under the hood):
+
+```bash
+bash scripts/onlytrade-ssh-ops.sh status
+bash scripts/onlytrade-ssh-ops.sh kill-on "manual_emergency_stop"
+bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
+```
+
+If repo path on VM is custom:
+
+```bash
+export ONLYTRADE_VM_REPO=/your/path/to/onlytrade
+bash scripts/onlytrade-ssh-ops.sh status
 ```
 
 ## Planning + Progress

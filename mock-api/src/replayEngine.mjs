@@ -17,6 +17,7 @@ function buildReplayState(replayBatch) {
   const frameList = Array.isArray(replayBatch?.frames) ? replayBatch.frames : []
   const timelineSet = new Set()
   const framesBySymbol = new Map()
+  const tradingDayByTs = new Map()
 
   for (const frame of frameList) {
     const symbol = frame?.instrument?.symbol
@@ -24,6 +25,9 @@ function buildReplayState(replayBatch) {
     if (!symbol || !Number.isFinite(startTs) || frame?.interval !== '1m') continue
 
     timelineSet.add(startTs)
+    if (!tradingDayByTs.has(startTs) && frame?.window?.trading_day) {
+      tradingDayByTs.set(startTs, frame.window.trading_day)
+    }
     if (!framesBySymbol.has(symbol)) {
       framesBySymbol.set(symbol, [])
     }
@@ -32,6 +36,29 @@ function buildReplayState(replayBatch) {
 
   const timeline = Array.from(timelineSet).sort((a, b) => a - b)
   const frameBySymbolAndTs = new Map()
+  const dayRanges = []
+
+  let currentRange = null
+  for (let i = 0; i < timeline.length; i++) {
+    const ts = timeline[i]
+    const tradingDay = tradingDayByTs.get(ts) || new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+
+    if (!currentRange || currentRange.trading_day !== tradingDay) {
+      if (currentRange) {
+        dayRanges.push(currentRange)
+      }
+      currentRange = {
+        trading_day: tradingDay,
+        start_index: i,
+        end_index: i,
+      }
+    } else {
+      currentRange.end_index = i
+    }
+  }
+  if (currentRange) {
+    dayRanges.push(currentRange)
+  }
 
   for (const [symbol, list] of framesBySymbol.entries()) {
     list.sort((a, b) => a.window.start_ts_ms - b.window.start_ts_ms)
@@ -46,6 +73,7 @@ function buildReplayState(replayBatch) {
     timeline,
     framesBySymbol,
     frameBySymbolAndTs,
+    dayRanges,
   }
 }
 
@@ -161,6 +189,15 @@ export function createReplayEngine({
   }
 
   function getStatus() {
+    const currentTs = getCurrentTimestamp()
+    const dayRange = cursorIndex >= 0
+      ? state.dayRanges.find((range) => cursorIndex >= range.start_index && cursorIndex <= range.end_index)
+      : null
+
+    const dayIndex = dayRange
+      ? state.dayRanges.findIndex((range) => range === dayRange) + 1
+      : 0
+
     return {
       running,
       speed,
@@ -168,7 +205,14 @@ export function createReplayEngine({
       warmup_bars: warmupBars,
       cursor_index: cursorIndex,
       timeline_length: timelineLength,
-      current_ts_ms: getCurrentTimestamp(),
+      current_ts_ms: currentTs,
+      day_count: state.dayRanges.length,
+      day_index: dayIndex,
+      trading_day: dayRange?.trading_day || null,
+      is_day_start: !!dayRange && cursorIndex === dayRange.start_index,
+      is_day_end: !!dayRange && cursorIndex === dayRange.end_index,
+      day_bar_index: dayRange ? (cursorIndex - dayRange.start_index + 1) : 0,
+      day_bar_count: dayRange ? (dayRange.end_index - dayRange.start_index + 1) : 0,
     }
   }
 

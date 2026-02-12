@@ -16,7 +16,7 @@ import { getModelIcon } from './ModelIcons'
 import { TraderConfigModal } from './TraderConfigModal'
 import { DeepVoidBackground } from './DeepVoidBackground'
 import { ExchangeConfigModal } from './traders/ExchangeConfigModal'
-import { PunkAvatar, getTraderAvatar } from './PunkAvatar'
+import { TraderAvatar } from './TraderAvatar'
 import {
   Bot,
   Brain,
@@ -1077,13 +1077,15 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                 >
                   <div className="flex items-center gap-3 md:gap-4">
                     <div className="flex-shrink-0">
-                      <PunkAvatar
-                        seed={getTraderAvatar(trader.trader_id, trader.trader_name)}
+                      <TraderAvatar
+                        traderId={trader.trader_id}
+                        traderName={trader.trader_name}
                         size={48}
                         className="rounded-lg hidden md:block"
                       />
-                      <PunkAvatar
-                        seed={getTraderAvatar(trader.trader_id, trader.trader_name)}
+                      <TraderAvatar
+                        traderId={trader.trader_id}
+                        traderName={trader.trader_name}
                         size={40}
                         className="rounded-lg md:hidden"
                       />

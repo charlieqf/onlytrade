@@ -33,6 +33,9 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeControlAction,
   AgentRuntimeControlResult,
+  AgentKillSwitchResult,
+  AgentMemorySnapshot,
+  FactoryResetResult,
   ReplayRuntimeStatus,
   ReplayRuntimeControlAction,
   ReplayRuntimeControlResult,
@@ -403,11 +406,14 @@ export const api = {
 
   async controlAgentRuntime(
     action: AgentRuntimeControlAction,
-    cycleMs?: number
+    value?: number
   ): Promise<AgentRuntimeControlResult> {
     const payload: Record<string, unknown> = { action }
     if (action === 'set_cycle_ms') {
-      payload.cycle_ms = cycleMs
+      payload.cycle_ms = value
+    }
+    if (action === 'set_decision_every_bars') {
+      payload.decision_every_bars = value
     }
 
     const result = await httpClient.post<AgentRuntimeControlResult>(
@@ -420,9 +426,41 @@ export const api = {
     return result.data
   },
 
+  async setAgentKillSwitch(
+    action: 'activate' | 'deactivate',
+    reason?: string
+  ): Promise<AgentKillSwitchResult> {
+    const payload: Record<string, unknown> = { action }
+    if (reason) payload.reason = reason
+
+    const result = await httpClient.post<AgentKillSwitchResult>(
+      `${API_BASE}/agent/runtime/kill-switch`,
+      payload
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || 'Kill switch control failed')
+    }
+    return result.data
+  },
+
   async getReplayRuntimeStatus(): Promise<ReplayRuntimeStatus> {
     const result = await httpClient.get<ReplayRuntimeStatus>(`${API_BASE}/replay/runtime/status`)
     if (!result.success || !result.data) throw new Error('获取回放运行时状态失败')
+    return result.data
+  },
+
+  async getAgentMemory(traderId?: string): Promise<AgentMemorySnapshot> {
+    const params = new URLSearchParams()
+    if (traderId) {
+      params.append('trader_id', traderId)
+    }
+    const query = params.toString()
+    const url = query
+      ? `${API_BASE}/agent/memory?${query}`
+      : `${API_BASE}/agent/memory`
+
+    const result = await httpClient.get<AgentMemorySnapshot>(url)
+    if (!result.success || !result.data) throw new Error('获取Agent记忆失败')
     return result.data
   },
 
@@ -444,6 +482,28 @@ export const api = {
     )
     if (!result.success || !result.data) {
       throw new Error(result.message || '回放运行时控制失败')
+    }
+    return result.data
+  },
+
+  async factoryResetRuntime(options?: {
+    cursorIndex?: number
+    useWarmup?: boolean
+  }): Promise<FactoryResetResult> {
+    const payload: Record<string, unknown> = {}
+    if (options?.cursorIndex != null) {
+      payload.cursor_index = options.cursorIndex
+    }
+    if (options?.useWarmup != null) {
+      payload.use_warmup = options.useWarmup
+    }
+
+    const result = await httpClient.post<FactoryResetResult>(
+      `${API_BASE}/dev/factory-reset`,
+      payload
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || 'Factory reset failed')
     }
     return result.data
   },

@@ -89,7 +89,15 @@ const TRADERS: TraderInfo[] = [
   },
   {
     trader_id: 't_003',
-    trader_name: 'Event Flow',
+    trader_name: 'Mei Lin Alpha',
+    ai_model: 'gpt-4o-mini',
+    exchange_id: 'sim-cn',
+    is_running: true,
+    show_in_competition: true,
+  },
+  {
+    trader_id: 't_004',
+    trader_name: 'Blonde Macro',
     ai_model: 'gpt-4o-mini',
     exchange_id: 'sim-cn',
     is_running: true,
@@ -98,7 +106,7 @@ const TRADERS: TraderInfo[] = [
 ]
 
 const BASE_COMPETITION: CompetitionData = {
-  count: 3,
+  count: 4,
   traders: [
     {
       trader_id: 't_001',
@@ -126,13 +134,25 @@ const BASE_COMPETITION: CompetitionData = {
     },
     {
       trader_id: 't_003',
-      trader_name: 'Event Flow',
+      trader_name: 'Mei Lin Alpha',
       ai_model: 'gpt-4o-mini',
       exchange: 'sim',
       total_equity: 98790.44,
       total_pnl: -1209.56,
       total_pnl_pct: -1.21,
       position_count: 1,
+      margin_used_pct: 0,
+      is_running: true,
+    },
+    {
+      trader_id: 't_004',
+      trader_name: 'Blonde Macro',
+      ai_model: 'gpt-4o-mini',
+      exchange: 'sim',
+      total_equity: 100512.63,
+      total_pnl: 512.63,
+      total_pnl_pct: 0.51,
+      position_count: 2,
       margin_used_pct: 0,
       is_running: true,
     },
@@ -150,7 +170,12 @@ function getCompetitionData(): CompetitionData {
   const traders = BASE_COMPETITION.traders.map((trader, idx) => {
     const phase = idx * 2.1
     const wave = Math.sin((tick + phase) / 2.8) * 0.55
-    const drift = (idx === 0 ? 0.015 : idx === 1 ? 0.004 : -0.006) * tick
+    const drift = (
+      idx === 0 ? 0.015
+        : idx === 1 ? 0.004
+          : idx === 2 ? -0.006
+            : 0.0025
+    ) * tick
     const pct = Number((trader.total_pnl_pct + wave + drift).toFixed(2))
     const pnl = Number(((initial * pct) / 100).toFixed(2))
     const equity = Number((initial + pnl).toFixed(2))
@@ -240,6 +265,9 @@ function getPositions(traderId = 't_001'): Position[] {
   ]
   if (traderId === 't_003') {
     return base.slice(0, 1)
+  }
+  if (traderId === 't_004') {
+    return base.slice(1)
   }
   return base
 }

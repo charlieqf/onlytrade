@@ -10,6 +10,7 @@ const DEFAULT_SYMBOLS = [
 ]
 
 const TARGET_DATE = process.env.REPLAY_DATE || getPreviousTradingDateShanghai()
+const REPLAY_DAYS = Math.max(1, Math.min(Number(process.env.REPLAY_DAYS || 3), 10))
 const SYMBOLS = (process.env.SYMBOLS || DEFAULT_SYMBOLS.join(','))
   .split(',')
   .map((s) => s.trim())
@@ -31,6 +32,36 @@ function getPreviousTradingDateShanghai() {
   const m = String(shanghai.getMonth() + 1).padStart(2, '0')
   const d = String(shanghai.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+function addDays(yyyyMmDd, days) {
+  const [y, m, d] = yyyyMmDd.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  const ny = dt.getUTCFullYear()
+  const nm = String(dt.getUTCMonth() + 1).padStart(2, '0')
+  const nd = String(dt.getUTCDate()).padStart(2, '0')
+  return `${ny}-${nm}-${nd}`
+}
+
+function isWeekendShanghai(yyyyMmDd) {
+  const dt = new Date(`${yyyyMmDd}T00:00:00+08:00`)
+  const day = dt.getDay()
+  return day === 0 || day === 6
+}
+
+function getRecentTradingDatesShanghai(endDate, count) {
+  const dates = []
+  let cursor = endDate
+
+  while (dates.length < count) {
+    if (!isWeekendShanghai(cursor)) {
+      dates.push(cursor)
+    }
+    cursor = addDays(cursor, -1)
+  }
+
+  return dates.reverse()
 }
 
 function shanghaiHourMinute(tsMs) {
@@ -168,18 +199,22 @@ function toFrame({ symbol, tradingDate, bar, seq }) {
 async function main() {
   const allFrames = []
   let seq = 1
+  const replayDates = getRecentTradingDatesShanghai(TARGET_DATE, REPLAY_DAYS)
 
-  console.log(`Building replay pack for ${TARGET_DATE}`)
+  console.log(`Building replay pack ending ${TARGET_DATE} (${REPLAY_DAYS} trading days)`)
+  console.log(`Trading days: ${replayDates.join(', ')}`)
   console.log(`Symbols: ${SYMBOLS.join(', ')}`)
 
-  for (const symbol of SYMBOLS) {
-    try {
-      const bars = await fetchYahooBars(symbol, TARGET_DATE)
-      const frames = bars.map((bar) => toFrame({ symbol, tradingDate: TARGET_DATE, bar, seq: seq++ }))
-      allFrames.push(...frames)
-      console.log(`${symbol}: ${frames.length} bars`)
-    } catch (err) {
-      console.warn(`${symbol}: failed -> ${err.message}`)
+  for (const tradingDate of replayDates) {
+    for (const symbol of SYMBOLS) {
+      try {
+        const bars = await fetchYahooBars(symbol, tradingDate)
+        const frames = bars.map((bar) => toFrame({ symbol, tradingDate, bar, seq: seq++ }))
+        allFrames.push(...frames)
+        console.log(`${tradingDate} ${symbol}: ${frames.length} bars`)
+      } catch (err) {
+        console.warn(`${tradingDate} ${symbol}: failed -> ${err.message}`)
+      }
     }
   }
 
@@ -212,12 +247,16 @@ async function main() {
 
   const meta = {
     trading_day: TARGET_DATE,
+    trading_day_start: replayDates[0],
+    trading_day_end: replayDates[replayDates.length - 1],
+    trading_days: replayDates,
+    trading_day_count: replayDates.length,
     provider: PROVIDER,
     interval: INTERVAL,
     symbols: [...new Set(allFrames.map((f) => f.instrument.symbol))],
     frame_count: allFrames.length,
     generated_at: new Date().toISOString(),
-    source_note: 'Yahoo Finance 1m bars replay pack for frontend mock/replay use',
+    source_note: 'Yahoo Finance 1m bars replay pack for frontend mock/replay use (multi-day)',
   }
   await writeFile(path.join(dayDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8')
   await writeFile(path.join(latestPublicDir, 'meta.json'), JSON.stringify(meta), 'utf8')

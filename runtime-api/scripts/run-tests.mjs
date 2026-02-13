@@ -1,25 +1,44 @@
 import { spawnSync } from 'node:child_process'
+import { readdir } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-function run(args) {
+function runNodeTest(args) {
   const result = spawnSync(process.execPath, args, {
     stdio: 'inherit',
     env: process.env,
   })
 
   if (typeof result.status === 'number') return result.status
-  // In rare cases spawn can fail before producing a status.
   return 1
 }
 
-// Node's test runner flags differ slightly across Node versions.
-// Some environments (notably Windows CI) benefit from serial execution,
-// but older Node versions may not support the concurrency flag.
-const preferred = ['--test', '--test-concurrency=1']
-const fallback = ['--test']
+// Run test files sequentially for portability.
+// This avoids relying on Node-version-specific concurrency flags and reduces
+// flakiness from concurrently spawned child processes.
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const testDir = path.resolve(__dirname, '..', 'test')
 
-const code = run(preferred)
-if (code === 0) process.exit(0)
+let entries
+try {
+  entries = await readdir(testDir, { withFileTypes: true })
+} catch {
+  process.exit(runNodeTest(['--test']))
+}
 
-// If the flag is unsupported, retry without it.
-// We don't try to parse stderr reliably here; a second run is cheap.
-process.exit(run(fallback))
+const testFiles = entries
+  .filter((ent) => ent.isFile() && ent.name.endsWith('.test.mjs'))
+  .map((ent) => path.join(testDir, ent.name))
+  .sort((a, b) => a.localeCompare(b))
+
+if (testFiles.length === 0) {
+  process.exit(runNodeTest(['--test']))
+}
+
+for (const filePath of testFiles) {
+  const code = runNodeTest(['--test', filePath])
+  if (code !== 0) process.exit(code)
+}
+
+process.exit(0)

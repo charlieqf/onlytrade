@@ -701,6 +701,11 @@ function getStatus(traderId) {
   const scanIntervalSec = RUNTIME_DATA_MODE === 'live_file'
     ? Math.max(1, Math.round((Number(runtimeState.cycle_ms || AGENT_RUNTIME_CYCLE_MS) || AGENT_RUNTIME_CYCLE_MS) / 1000))
     : Math.max(1, Math.round((60 / Math.max(0.1, replaySpeed)) * agentDecisionEveryBars))
+
+  const spec = getMarketSpecForExchange(trader.exchange_id)
+  const gate = getTraderGateState(trader, Date.now())
+  const liveStatus = RUNTIME_DATA_MODE === 'live_file' ? liveFileStatusForMarket(spec.market) : null
+
   return {
     trader_id: trader.trader_id,
     trader_name: trader.trader_name,
@@ -717,6 +722,17 @@ function getStatus(traderId) {
     last_reset_time: '',
     ai_provider: llmDecider ? 'openai-runtime' : 'rule-runtime',
     strategy_type: 'ai_trading',
+    market_gate: {
+      enabled: AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file',
+      market: spec.market,
+      timezone: spec.timezone,
+      allow_run: !!gate.allow_run,
+      manual_paused: !!agentRuntimeManualPause,
+      kill_switch_active: !!killSwitchState.active,
+      session: gate.session,
+      live_fresh_ok: !!gate.live_fresh_ok,
+      live_file: publicLiveFileStatus(liveStatus),
+    },
   }
 }
 

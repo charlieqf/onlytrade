@@ -35,12 +35,25 @@ This file is the living progress tracker. Update it as work lands.
 - Upgraded LLM response contract to strict `decisions[0]` JSON schema and added dev token-saver prompt/context mode
 - Added persistent kill-switch for emergency stop of all agent decisions (blocks LLM calls until deactivated)
 - Persistence strategy confirmed: JSON-first for near-term ops; DB deferred unless scaling requires it
+- Rebrand landed: OpenTrade naming in UI/docs/contracts
+- Live ops improvements:
+  - Live-file session gating (auto pause/resume by market hours)
+  - Daily decision persistence to JSONL (keeps today's Thought & Actions visible until local midnight)
+  - Trade event logging enhanced with post-trade cash/position snapshots
+  - Position history UI polls without flashing; fee/after columns backfilled for seeded events
+- Multi-market foundation (single backend):
+  - Market spec and session rules for `sim-cn` (Shanghai) and `sim-us` (New York, weekday-only regular session)
+  - Separate CN/US live-file providers (`LIVE_FRAMES_PATH_CN`, `LIVE_FRAMES_PATH_US`)
+  - US ingestion scripts added (Alpaca IEX 1m+1d -> canonical frames file)
+  - Two US tech agents added (`us_001`, `us_002`) with portrait avatars
 
 ## Demo Milestones
 
 - [x] Milestone 1: Static demo (content complete, static data)
 - [x] Milestone 2: Mock-live demo (app + agents look live with prepared mock streams)
 - [ ] Milestone 3: Real `gpt-4o-mini` agent logic on mock stock data
+
+Note: the current codebase now supports real-time/live-file market mode and multi-market agent gating. Milestones remain useful for demo framing, but live ops have started to supersede the earlier mock-live-only track.
 
 Reference: `docs/DEMO_MILESTONES.md`
 

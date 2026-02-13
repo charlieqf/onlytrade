@@ -52,3 +52,22 @@ Acceptance criteria:
 
 Out of scope:
 - Live stock data vendor integration, production-grade scaling.
+
+## Milestone 4 - Live Market Data (Ops-Ready Demo)
+
+Goal: demonstrate the full room experience with live-file market data ingestion, market-session-aware agent gating, and ops runbooks.
+
+Scope:
+- Backend runs in `RUNTIME_DATA_MODE=live_file`.
+- Market ingestion writes canonical frames to live files (e.g. CN-A via AKShare; US via Alpaca IEX).
+- Agent runtime only runs during that market's session and when live data is fresh.
+- UI continues to show today's chat/actions/transactions until local midnight.
+
+Acceptance criteria:
+- During market session: new bars arrive and agents produce decisions.
+- Outside session: agents stop producing decisions without manual intervention.
+- Operators can verify freshness via runtime status endpoints and log tails.
+
+Out of scope:
+- Holiday calendars for all markets.
+- Production-grade HA and monitoring.

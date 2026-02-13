@@ -83,6 +83,43 @@ export function TraderDashboardPage({
     onNavigateToLobby,
 }: TraderDashboardPageProps) {
     const quoteCurrency = selectedTrader?.exchange_id?.toLowerCase().includes('sim-us') ? 'USD' : 'CNY'
+
+    const noDecisionsHint = (() => {
+        if (!selectedTrader) return null
+        if (!selectedTrader.is_running) {
+            return language === 'zh'
+                ? '该交易员当前未运行：请先在大厅启动。'
+                : 'This trader is stopped. Start it in the lobby first.'
+        }
+
+        const gate = status?.market_gate
+        if (!gate) {
+            return t('aiDecisionsWillAppear', language)
+        }
+        if (gate.kill_switch_active) {
+            return language === 'zh'
+                ? '已触发紧急停止（Kill Switch）：系统暂停生成新的决策。'
+                : 'Kill switch is active: decisions are paused.'
+        }
+        if (gate.manual_paused) {
+            return language === 'zh'
+                ? '运行已手动暂停：恢复运行后将继续产生决策。'
+                : 'Runtime is manually paused. Resume to generate decisions.'
+        }
+        if (gate.enabled && gate.session && gate.session.is_open === false) {
+            const tzLabel = gate.market === 'US' ? 'New York' : 'Shanghai'
+            return language === 'zh'
+                ? `市场休市（${tzLabel}）：下一交易时段将自动恢复。`
+                : `Market is closed (${tzLabel}). Decisions will resume next session.`
+        }
+        if (gate.enabled && gate.live_fresh_ok === false) {
+            return language === 'zh'
+                ? '实时行情尚未就绪或已过期：等待数据更新后将自动恢复。'
+                : 'Live market data is not ready or stale. Will resume when data refreshes.'
+        }
+
+        return t('aiDecisionsWillAppear', language)
+    })()
     const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | undefined>(undefined)
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
@@ -710,7 +747,7 @@ export function TraderDashboardPage({
                                             {t('noDecisionsYet', language)}
                                         </div>
                                         <div className="text-sm">
-                                            {t('aiDecisionsWillAppear', language)}
+                                            {noDecisionsHint || t('aiDecisionsWillAppear', language)}
                                         </div>
                                     </div>
                                 )}

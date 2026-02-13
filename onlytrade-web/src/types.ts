@@ -13,6 +13,31 @@ export interface SystemStatus {
   ai_provider: string
   strategy_type?: 'ai_trading' | 'grid_trading'
   grid_symbol?: string
+
+  market_gate?: {
+    enabled: boolean
+    market: string
+    timezone: string
+    allow_run: boolean
+    manual_paused: boolean
+    kill_switch_active: boolean
+    session?: {
+      is_open?: boolean
+      reason?: string | null
+      phase?: string
+      timezone?: string
+      now_shanghai?: string
+      now_local?: string
+    }
+    live_fresh_ok?: boolean
+    live_file?: {
+      stale?: boolean
+      last_error?: string | null
+      frame_count?: number
+      last_mtime_ms?: number | null
+      last_load_ts_ms?: number | null
+    } | null
+  }
 }
 
 export interface AccountInfo {

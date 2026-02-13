@@ -21,19 +21,39 @@ function intervalMs(interval) {
   }
 }
 
-function tradingDayString(tsMs) {
-  return new Date(tsMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+function inferMarketFromSymbol(symbol) {
+  const s = String(symbol || '').trim().toUpperCase()
+  if (/^\d{6}\.(SH|SZ)$/.test(s)) return 'CN-A'
+  return 'US'
 }
 
-function sessionPhase(tsMs) {
+function defaultTimezoneForMarket(market) {
+  return market === 'US' ? 'America/New_York' : 'Asia/Shanghai'
+}
+
+function defaultCurrencyForMarket(market) {
+  return market === 'US' ? 'USD' : 'CNY'
+}
+
+function tradingDayString(tsMs, timeZone = 'Asia/Shanghai') {
+  return new Date(tsMs).toLocaleDateString('en-CA', { timeZone })
+}
+
+function sessionPhase(tsMs, { market = 'CN-A', timeZone = 'Asia/Shanghai' } = {}) {
   const hm = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Shanghai',
+    timeZone,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   }).format(new Date(tsMs))
   const [hh, mm] = hm.split(':').map(Number)
   const mins = hh * 60 + mm
+
+  if (market === 'US') {
+    // Regular session only for now.
+    if (mins >= 570 && mins < 960) return 'regular'
+    return 'closed'
+  }
 
   if (mins >= 555 && mins < 570) return 'pre_open'
   if (mins >= 570 && mins < 690) return 'continuous_am'
@@ -65,6 +85,9 @@ function toCanonicalFrame(entry, context, seq = 0) {
   const interval = context.interval
   const provider = context.provider || 'upstream-proxy'
   const mode = context.mode || 'real'
+  const market = context.market || inferMarketFromSymbol(symbol)
+  const timezone = context.timezone || defaultTimezoneForMarket(market)
+  const currency = context.currency || defaultCurrencyForMarket(market)
 
   if (
     entry &&
@@ -81,8 +104,8 @@ function toCanonicalFrame(entry, context, seq = 0) {
         ...entry.instrument,
         symbol: entry.instrument.symbol || symbol,
         exchange: entry.instrument.exchange || exchangeFromSymbol(symbol),
-        timezone: entry.instrument.timezone || 'Asia/Shanghai',
-        currency: entry.instrument.currency || 'CNY',
+        timezone: entry.instrument.timezone || timezone,
+        currency: entry.instrument.currency || currency,
       },
       interval: entry.interval || interval,
       seq: safeNumber(entry.seq, seq + 1),
@@ -109,7 +132,7 @@ function toCanonicalFrame(entry, context, seq = 0) {
 
   return {
     schema_version: 'market.bar.v1',
-    market: 'CN-A',
+    market,
     mode,
     provider,
     feed: 'bars',
@@ -119,17 +142,17 @@ function toCanonicalFrame(entry, context, seq = 0) {
     instrument: {
       symbol,
       exchange: exchangeFromSymbol(symbol),
-      timezone: 'Asia/Shanghai',
-      currency: 'CNY',
+      timezone,
+      currency,
     },
     interval,
     window: {
       start_ts_ms: startTs,
       end_ts_ms: endTs,
-      trading_day: tradingDayString(startTs),
+      trading_day: tradingDayString(startTs, timezone),
     },
     session: {
-      phase: sessionPhase(startTs),
+      phase: sessionPhase(startTs, { market, timeZone: timezone }),
       is_halt: false,
       is_partial: false,
     },
@@ -299,6 +322,7 @@ export function createMarketDataService({
   async function getFrames({ symbol = '600519.SH', interval = '5m', limit = 800, source = '' } = {}) {
     const maxItems = safeLimit(limit)
     const forceMock = source === 'mock'
+    const market = inferMarketFromSymbol(symbol)
 
     if (!forceMock && providerMode === 'real' && upstreamBaseUrl) {
       try {
@@ -314,7 +338,7 @@ export function createMarketDataService({
         if (upstreamFrames.length) {
           return {
             schema_version: 'market.frames.v1',
-            market: 'CN-A',
+            market: upstreamFrames[0]?.market || market,
             mode: 'real',
             provider: 'upstream-proxy',
             frames: upstreamFrames.slice(-maxItems),
@@ -330,7 +354,7 @@ export function createMarketDataService({
       if (dailyFrames.length) {
         return {
           schema_version: 'market.frames.v1',
-          market: 'CN-A',
+          market: dailyFrames[0]?.market || market,
           mode: dailyHistoryBatch?.mode || 'real',
           provider: dailyHistoryBatch?.provider || 'daily-history',
           frames: dedupeAndSortFrames(dailyFrames).slice(-maxItems),
@@ -338,7 +362,7 @@ export function createMarketDataService({
       }
     }
 
-    if (!forceMock && interval === '1m') {
+    if (!forceMock) {
       if (typeof replayFrameProvider === 'function') {
         const liveReplayFrames = await Promise.resolve(
           replayFrameProvider({ symbol, interval, limit: maxItems })
@@ -351,7 +375,7 @@ export function createMarketDataService({
             : (replayBatch?.provider || 'replay-stream')
           return {
             schema_version: 'market.frames.v1',
-            market: 'CN-A',
+            market: liveReplayFrames[0]?.market || market,
             mode,
             provider,
             frames: dedupeAndSortFrames(liveReplayFrames).slice(-maxItems),
@@ -359,14 +383,16 @@ export function createMarketDataService({
         }
       }
 
-      const replayFrames = pickBatchFrames(replayBatch, { symbol, interval, limit: maxItems })
-      if (replayFrames.length) {
-        return {
-          schema_version: 'market.frames.v1',
-          market: 'CN-A',
-          mode: 'mock',
-          provider: replayBatch?.provider || 'replay-stream',
-          frames: dedupeAndSortFrames(replayFrames).slice(-maxItems),
+      if (interval === '1m') {
+        const replayFrames = pickBatchFrames(replayBatch, { symbol, interval, limit: maxItems })
+        if (replayFrames.length) {
+          return {
+            schema_version: 'market.frames.v1',
+            market: replayFrames[0]?.market || market,
+            mode: 'mock',
+            provider: replayBatch?.provider || 'replay-stream',
+            frames: dedupeAndSortFrames(replayFrames).slice(-maxItems),
+          }
         }
       }
     }

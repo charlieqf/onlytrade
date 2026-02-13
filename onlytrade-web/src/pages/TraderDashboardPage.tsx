@@ -37,6 +37,7 @@ function getModelDisplayName(modelId: string): string {
 function getMarketDisplay(exchangeId: string | undefined): string {
     if (!exchangeId) return 'CN-SIM'
     if (exchangeId.toLowerCase().includes('sim-cn')) return 'CN-SIM'
+    if (exchangeId.toLowerCase().includes('sim-us')) return 'US-SIM'
     return exchangeId.toUpperCase()
 }
 
@@ -81,6 +82,7 @@ export function TraderDashboardPage({
     onTraderSelect,
     onNavigateToLobby,
 }: TraderDashboardPageProps) {
+    const quoteCurrency = selectedTrader?.exchange_id?.toLowerCase().includes('sim-us') ? 'USD' : 'CNY'
     const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | undefined>(undefined)
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
@@ -361,7 +363,7 @@ export function TraderDashboardPage({
                     <StatCard
                         title={t('totalEquity', language)}
                         value={`${account?.total_equity?.toFixed(2) || '0.00'}`}
-                        unit="CNY"
+                        unit={quoteCurrency}
                         change={account?.total_pnl_pct || 0}
                         positive={(account?.total_pnl ?? 0) > 0}
                         icon="💰"
@@ -369,14 +371,14 @@ export function TraderDashboardPage({
                     <StatCard
                         title={t('availableBalance', language)}
                         value={`${account?.available_balance?.toFixed(2) || '0.00'}`}
-                        unit="CNY"
+                        unit={quoteCurrency}
                         subtitle={`${account?.available_balance && account?.total_equity ? ((account.available_balance / account.total_equity) * 100).toFixed(1) : '0.0'}% ${t('free', language)}`}
                         icon="💳"
                     />
                     <StatCard
                         title={t('totalPnL', language)}
                         value={`${account?.total_pnl !== undefined && account.total_pnl >= 0 ? '+' : ''}${account?.total_pnl?.toFixed(2) || '0.00'}`}
-                        unit="CNY"
+                        unit={quoteCurrency}
                         change={account?.total_pnl_pct || 0}
                         positive={(account?.total_pnl ?? 0) >= 0}
                         icon="📈"

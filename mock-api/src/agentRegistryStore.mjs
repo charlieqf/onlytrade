@@ -34,21 +34,30 @@ function normalizeAssetFileName(value) {
   return text
 }
 
-function normalizeStockSymbol(value) {
-  const text = String(value || '').trim().toUpperCase()
-  if (!text) return null
-  if (!/^\d{6}\.(SH|SZ)$/.test(text)) return null
-  return text
+function isCnStockSymbol(symbol) {
+  return /^\d{6}\.(SH|SZ)$/.test(String(symbol || '').trim().toUpperCase())
 }
 
-function normalizeStockPool(value) {
+function isUsTicker(symbol) {
+  return /^[A-Z]{1,6}$/.test(String(symbol || '').trim().toUpperCase())
+}
+
+function normalizeStockPool(value, exchangeId = '') {
   if (!Array.isArray(value)) return []
   const seen = new Set()
   const output = []
 
+  const exchange = String(exchangeId || '').trim().toLowerCase()
+
   for (const item of value) {
-    const symbol = normalizeStockSymbol(item)
-    if (!symbol || seen.has(symbol)) continue
+    const symbol = String(item || '').trim().toUpperCase()
+    if (!symbol) continue
+    const cn = isCnStockSymbol(symbol)
+    const us = isUsTicker(symbol)
+    if (exchange.includes('sim-cn') && !cn) continue
+    if (exchange.includes('sim-us') && !us) continue
+    if (!exchange && !(cn || us)) continue
+    if (seen.has(symbol)) continue
     seen.add(symbol)
     output.push(symbol)
     if (output.length >= 100) break
@@ -110,7 +119,7 @@ function parseManifest(raw, expectedAgentId = '') {
   const riskProfile = normalizeOptionalSlug(payload.risk_profile)
   const personality = normalizeOptionalText(payload.personality, 240)
   const stylePromptCn = normalizeOptionalText(payload.style_prompt_cn, 800)
-  const stockPool = normalizeStockPool(payload.stock_pool)
+  const stockPool = normalizeStockPool(payload.stock_pool, exchangeId)
 
   return {
     ...payload,

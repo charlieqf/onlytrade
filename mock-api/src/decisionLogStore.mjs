@@ -47,13 +47,14 @@ export function createDecisionLogStore({ baseDir, timeZone = 'Asia/Shanghai' } =
     return path.join(baseDir, traderId, `${dayKey}.jsonl`)
   }
 
-  async function appendDecision({ traderId, decision, nowMs = Date.now() } = {}) {
+  async function appendDecision({ traderId, decision, nowMs = Date.now(), timeZone: timeZoneOverride } = {}) {
     const safeTraderId = ensureString(traderId).trim()
     if (!safeTraderId) return false
     if (!decision || typeof decision !== 'object') return false
 
     const ts = ensureString(decision.timestamp, new Date(nowMs).toISOString())
-    const dayKey = dayKeyInTimeZone(Date.parse(ts) || nowMs, timeZone)
+    const tz = String(timeZoneOverride || timeZone || 'Asia/Shanghai')
+    const dayKey = dayKeyInTimeZone(Date.parse(ts) || nowMs, tz)
     const dir = path.join(baseDir, safeTraderId)
     await ensureDir(dir)
     const payload = {
@@ -67,11 +68,12 @@ export function createDecisionLogStore({ baseDir, timeZone = 'Asia/Shanghai' } =
     return true
   }
 
-  async function listLatest({ traderId, limit = 20, nowMs = Date.now() } = {}) {
+  async function listLatest({ traderId, limit = 20, nowMs = Date.now(), timeZone: timeZoneOverride } = {}) {
     const safeTraderId = ensureString(traderId).trim()
     if (!safeTraderId) return []
     const maxItems = safeLimit(limit)
-    const dayKey = dayKeyInTimeZone(nowMs, timeZone)
+    const tz = String(timeZoneOverride || timeZone || 'Asia/Shanghai')
+    const dayKey = dayKeyInTimeZone(nowMs, tz)
     const fp = filePath(safeTraderId, dayKey)
 
     try {
@@ -88,10 +90,11 @@ export function createDecisionLogStore({ baseDir, timeZone = 'Asia/Shanghai' } =
     }
   }
 
-  async function getFileStatus({ traderId, nowMs = Date.now() } = {}) {
+  async function getFileStatus({ traderId, nowMs = Date.now(), timeZone: timeZoneOverride } = {}) {
     const safeTraderId = ensureString(traderId).trim()
     if (!safeTraderId) return null
-    const dayKey = dayKeyInTimeZone(nowMs, timeZone)
+    const tz = String(timeZoneOverride || timeZone || 'Asia/Shanghai')
+    const dayKey = dayKeyInTimeZone(nowMs, tz)
     const fp = filePath(safeTraderId, dayKey)
     try {
       const st = await stat(fp)

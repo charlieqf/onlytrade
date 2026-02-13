@@ -13,7 +13,13 @@ import { createOpenAIAgentDecider } from './src/agentLlmDecision.mjs'
 import { createAgentRegistryStore } from './src/agentRegistryStore.mjs'
 import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
-import { getCnAMarketSessionStatus } from './src/cnMarketSession.mjs'
+import {
+  getMarketSpecForExchange,
+  getMarketSessionStatusForExchange,
+  inferMarketFromSymbol,
+  isCnStockSymbol,
+  isUsTicker,
+} from './src/marketSpec.mjs'
 import { createDecisionLogStore, dayKeyInTimeZone } from './src/decisionLogStore.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
@@ -120,9 +126,16 @@ const REPLAY_PATH = path.join(
   'frames.1m.json'
 )
 
-const LIVE_FRAMES_PATH = path.resolve(
+const LIVE_FRAMES_PATH_CN = path.resolve(
   ROOT_DIR,
-  process.env.LIVE_FRAMES_PATH || path.join('data', 'live', 'onlytrade', 'frames.1m.json')
+  process.env.LIVE_FRAMES_PATH_CN
+    || process.env.LIVE_FRAMES_PATH
+    || path.join('data', 'live', 'onlytrade', 'frames.1m.json')
+)
+
+const LIVE_FRAMES_PATH_US = path.resolve(
+  ROOT_DIR,
+  process.env.LIVE_FRAMES_PATH_US || path.join('data', 'live', 'us', 'frames.us.json')
 )
 
 const DAILY_HISTORY_PATH = path.join(
@@ -196,6 +209,16 @@ const CN_STOCK_NAME_BY_SYMBOL = {
   '688981.SH': '中芯国际',
 }
 
+const US_STOCK_NAME_BY_SYMBOL = {
+  AAPL: 'Apple',
+  MSFT: 'Microsoft',
+  AMZN: 'Amazon',
+  GOOGL: 'Alphabet (Google)',
+  META: 'Meta',
+  NVDA: 'NVIDIA',
+  TSLA: 'Tesla',
+}
+
 function tick() {
   return Math.floor((Date.now() - BOOT_TS) / STEP_MS)
 }
@@ -248,14 +271,21 @@ function buildAgentAssetUrl(agentId, fileName) {
   return `/api/agents/${encodeURIComponent(safeAgentId)}/assets/${encodeURIComponent(safeFileName)}`
 }
 
-function normalizeStockPool(value) {
+function normalizeStockPool(value, exchangeId = '') {
   if (!Array.isArray(value)) return []
   const seen = new Set()
   const output = []
 
+  const exchange = String(exchangeId || '').trim().toLowerCase()
+
   for (const item of value) {
     const symbol = String(item || '').trim().toUpperCase()
-    if (!/^\d{6}\.(SH|SZ)$/.test(symbol)) continue
+    if (!symbol) continue
+    const isCn = isCnStockSymbol(symbol)
+    const isUs = isUsTicker(symbol)
+    if (exchange.includes('sim-cn') && !isCn) continue
+    if (exchange.includes('sim-us') && !isUs) continue
+    if (!exchange && !(isCn || isUs)) continue
     if (seen.has(symbol)) continue
     seen.add(symbol)
     output.push(symbol)
@@ -268,7 +298,9 @@ function normalizeStockPool(value) {
 function symbolsToEntries(symbols) {
   return symbols.map((symbol) => ({
     symbol,
-    name: CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol,
+    name: (isCnStockSymbol(symbol)
+      ? (CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol)
+      : (US_STOCK_NAME_BY_SYMBOL[String(symbol).toUpperCase()] || symbol)),
     category: 'stock',
   }))
 }
@@ -283,7 +315,7 @@ function toTraderRecord(agent) {
   const riskProfile = String(agent?.risk_profile || '').trim().toLowerCase()
   const personality = String(agent?.personality || '').trim()
   const stylePromptCn = String(agent?.style_prompt_cn || '').trim()
-  const stockPool = normalizeStockPool(agent?.stock_pool)
+  const stockPool = normalizeStockPool(agent?.stock_pool, agent?.exchange_id)
 
   const avatarUrl = explicitAvatarUrl || buildAgentAssetUrl(agentId, avatarFile)
   const avatarHdUrl = explicitAvatarHdUrl || buildAgentAssetUrl(agentId, avatarHdFile)
@@ -395,7 +427,7 @@ function getTraderById(traderId) {
     risk_profile: agent.risk_profile || '',
     personality: agent.personality || '',
     style_prompt_cn: agent.style_prompt_cn || '',
-    stock_pool: normalizeStockPool(agent.stock_pool),
+    stock_pool: normalizeStockPool(agent.stock_pool, agent.exchange_id),
     avatar_url: agent.avatar_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_file),
     avatar_hd_url: agent.avatar_hd_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_hd_file),
   }))
@@ -518,109 +550,53 @@ function derivedDecisionCycleMs() {
   return Math.max(1000, Math.round((60_000 * agentDecisionEveryBars) / Math.max(0.1, replaySpeed)))
 }
 
-function getAgentSessionGuardSnapshot(nowMs = Date.now(), { liveStatusOverride = undefined } = {}) {
-  const enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
-  const session = enabled ? getCnAMarketSessionStatus(nowMs) : null
-  const liveStatus = enabled
-    ? (liveStatusOverride !== undefined
-      ? liveStatusOverride
-      : (liveFileFrameProvider ? liveFileFrameProvider.getStatus() : null))
-    : null
-  const liveFreshOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!liveStatus?.stale && !liveStatus?.last_error && (liveStatus?.frame_count || 0) > 0)
-
+function publicLiveFileStatus(status) {
+  if (!status) return null
   return {
-    enabled,
-    auto_resume: !!AGENT_SESSION_GUARD_AUTO_RESUME,
-    now_ms: nowMs,
-    session,
-    live_file: liveStatus,
-    live_fresh_ok: liveFreshOk,
-    auto_paused: !!agentSessionGuardState.auto_paused,
-    auto_paused_at_ms: agentSessionGuardState.auto_paused_at_ms,
-    last_check_ms: agentSessionGuardState.last_check_ms,
+    stale: !!status.stale,
+    last_load_ts_ms: status.last_load_ts_ms,
+    last_mtime_ms: status.last_mtime_ms,
+    last_error: status.last_error,
+    frame_count: status.frame_count,
+    symbols_1m_count: Array.isArray(status.symbols_1m) ? status.symbols_1m.length : 0,
   }
 }
 
-async function enforceAgentSessionGuard({ reason = 'timer' } = {}) {
-  let refreshedLiveStatus = undefined
-  if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
-    try {
-      await liveFileFrameProvider.refresh(false)
-    } catch {
-      // keep guard robust; stale status will block auto-resume
-    }
-    refreshedLiveStatus = liveFileFrameProvider.getStatus()
+function getMarketSessionGatePublicSnapshot(nowMs = Date.now()) {
+  const enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
+  if (!enabled) {
+    return { enabled: false }
   }
 
-  const snapshot = getAgentSessionGuardSnapshot(Date.now(), { liveStatusOverride: refreshedLiveStatus })
-  if (!snapshot.enabled || !agentRuntime) {
-    return { changed: false, snapshot }
-  }
-
-  agentSessionGuardState.last_check_ms = snapshot.now_ms
-  agentSessionGuardState.last_session = snapshot.session
-  agentSessionGuardState.last_live_status = snapshot.live_file
-
-  if (killSwitchState.active) {
-    return { changed: false, snapshot }
-  }
-
-  const isOpen = !!snapshot.session?.is_open
-  const runtimeState = agentRuntime.getState()
-  const runningTraders = getRunningRuntimeTraders()
-  const hasRunningTraders = runningTraders.length > 0
-
-  // Outside session: pause if the runtime is running.
-  if (!isOpen) {
-    if (runtimeState.running) {
-      agentRuntime.pause()
-      agentSessionGuardState.auto_paused = true
-      agentSessionGuardState.auto_paused_at_ms = snapshot.now_ms
-      return { changed: true, snapshot: { ...snapshot, reason } }
-    }
-    return { changed: false, snapshot: { ...snapshot, reason } }
-  }
-
-  // In session: optionally resume, but only if we paused it.
-  if (!snapshot.auto_resume) {
-    return { changed: false, snapshot: { ...snapshot, reason } }
-  }
-
-  if (!runtimeState.running && agentSessionGuardState.auto_paused && hasRunningTraders && snapshot.live_fresh_ok) {
-    agentRuntime.resume()
-    agentSessionGuardState.auto_paused = false
-    agentSessionGuardState.auto_paused_at_ms = null
-    return { changed: true, snapshot: { ...snapshot, reason } }
-  }
-
-  return { changed: false, snapshot: { ...snapshot, reason } }
-}
-
-function getAgentSessionGuardPublicSnapshot(nowMs = Date.now()) {
-  const snapshot = getAgentSessionGuardSnapshot(nowMs)
-  if (!snapshot.enabled) {
-    return {
-      enabled: false,
-    }
-  }
-
-  const live = snapshot.live_file
-  const livePublic = live ? {
-    stale: !!live.stale,
-    last_load_ts_ms: live.last_load_ts_ms,
-    last_mtime_ms: live.last_mtime_ms,
-    last_error: live.last_error,
-    frame_count: live.frame_count,
-  } : null
+  const cnSession = getMarketSessionStatusForExchange('sim-cn', nowMs)
+  const usSession = getMarketSessionStatusForExchange('sim-us', nowMs)
+  const cnLive = liveFileFrameProviderCn?.getStatus?.() || null
+  const usLive = liveFileFrameProviderUs?.getStatus?.() || null
+  const cnFreshOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || isLiveFileFresh(cnLive)
+  const usFreshOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || isLiveFileFresh(usLive)
 
   return {
     enabled: true,
-    auto_resume: snapshot.auto_resume,
+    check_ms: AGENT_SESSION_GUARD_CHECK_MS,
     require_fresh_live_data: !!AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA,
-    auto_paused: snapshot.auto_paused,
-    auto_paused_at_ms: snapshot.auto_paused_at_ms,
-    session: snapshot.session,
-    live_file: livePublic,
+    manual_paused: !!agentRuntimeManualPause,
+    auto_paused: !!marketSessionGateState.auto_paused,
+    auto_paused_at_ms: marketSessionGateState.auto_paused_at_ms,
+    last_check_ms: marketSessionGateState.last_check_ms,
+    running_trader_ids: marketSessionGateState.running_trader_ids,
+    active_trader_ids: marketSessionGateState.active_trader_ids,
+    markets: {
+      'CN-A': {
+        session: cnSession,
+        live_fresh_ok: cnFreshOk,
+        live_file: publicLiveFileStatus(cnLive),
+      },
+      US: {
+        session: usSession,
+        live_fresh_ok: usFreshOk,
+        live_file: publicLiveFileStatus(usLive),
+      },
+    },
   }
 }
 
@@ -1315,14 +1291,21 @@ let dailyHistoryBatch = null
 let agentRuntime = null
 let replayEngine = null
 let replayEngineTimer = null
-let liveFileFrameProvider = null
-let agentSessionGuardTimer = null
-let agentSessionGuardState = {
+let liveFileFrameProviderCn = null
+let liveFileFrameProviderUs = null
+let marketSessionGateTimer = null
+let agentRuntimeManualPause = false
+let marketSessionGateState = {
+  enabled: true,
   auto_paused: false,
   auto_paused_at_ms: null,
   last_check_ms: null,
-  last_session: null,
-  last_live_status: null,
+  running_trader_ids: [],
+  active_trader_ids: [],
+  markets: {
+    'CN-A': null,
+    US: null,
+  },
 }
 let availableAgents = []
 let registeredAgents = []
@@ -1388,6 +1371,123 @@ chatService = createChatService({
   publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
   generateAgentMessageText: chatLlmResponder,
 })
+
+function liveFileProviderForSymbol(symbol) {
+  const market = inferMarketFromSymbol(symbol)
+  if (market === 'US') return liveFileFrameProviderUs
+  return liveFileFrameProviderCn
+}
+
+function liveFileStatusForMarket(marketId) {
+  if (marketId === 'US') return liveFileFrameProviderUs?.getStatus?.() || null
+  return liveFileFrameProviderCn?.getStatus?.() || null
+}
+
+async function refreshLiveFileProviders() {
+  if (liveFileFrameProviderCn?.refresh) {
+    try { await liveFileFrameProviderCn.refresh(false) } catch { /* ignore */ }
+  }
+  if (liveFileFrameProviderUs?.refresh) {
+    try { await liveFileFrameProviderUs.refresh(false) } catch { /* ignore */ }
+  }
+}
+
+function isLiveFileFresh(status) {
+  if (!status) return false
+  if (status.last_error) return false
+  if (status.stale) return false
+  if (!Number.isFinite(Number(status.frame_count)) || Number(status.frame_count) <= 0) return false
+  return true
+}
+
+function getTraderGateState(trader, nowMs = Date.now()) {
+  const guardEnabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
+  const spec = getMarketSpecForExchange(trader?.exchange_id)
+  const session = getMarketSessionStatusForExchange(trader?.exchange_id, nowMs)
+  const liveStatus = RUNTIME_DATA_MODE === 'live_file' ? liveFileStatusForMarket(spec.market) : null
+  const liveFresh = RUNTIME_DATA_MODE === 'live_file' ? isLiveFileFresh(liveStatus) : true
+  return {
+    market: spec.market,
+    timezone: spec.timezone,
+    session,
+    live_file: liveStatus,
+    live_fresh_ok: liveFresh,
+    allow_run: guardEnabled ? (!!session?.is_open && liveFresh) : true,
+  }
+}
+
+async function syncMarketSessionGate({ reason = 'interval', nowMs = Date.now() } = {}) {
+  if (!agentRuntime) return { running: [], active: [] }
+
+  marketSessionGateState.enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
+  marketSessionGateState.last_check_ms = nowMs
+
+  if (killSwitchState.active) {
+    agentRuntime.pause?.()
+    marketSessionGateState.active_trader_ids = []
+    marketSessionGateState.running_trader_ids = []
+    marketSessionGateState.auto_paused = true
+    if (!marketSessionGateState.auto_paused_at_ms) marketSessionGateState.auto_paused_at_ms = nowMs
+    return { running: [], active: [] }
+  }
+
+  const running = getRunningRuntimeTraders()
+
+  if (!marketSessionGateState.enabled) {
+    marketSessionGateState.reason = reason
+    marketSessionGateState.running_trader_ids = running.map((t) => t.trader_id)
+    marketSessionGateState.active_trader_ids = running.map((t) => t.trader_id)
+    agentRuntime.setTraders(running)
+
+    if (running.length === 0) {
+      agentRuntime.pause?.()
+      marketSessionGateState.auto_paused = true
+      if (!marketSessionGateState.auto_paused_at_ms) marketSessionGateState.auto_paused_at_ms = nowMs
+    } else if (!agentRuntime.getState?.().running && !agentRuntimeManualPause) {
+      agentRuntime.resume?.()
+      marketSessionGateState.auto_paused = false
+      marketSessionGateState.auto_paused_at_ms = null
+    }
+
+    return { running, active: running }
+  }
+
+  await refreshLiveFileProviders()
+
+  // Update per-market snapshots for UI/debugging.
+  marketSessionGateState.markets['CN-A'] = {
+    session: getMarketSessionStatusForExchange('sim-cn', nowMs),
+    live_file: liveFileFrameProviderCn?.getStatus?.() || null,
+  }
+  marketSessionGateState.markets.US = {
+    session: getMarketSessionStatusForExchange('sim-us', nowMs),
+    live_file: liveFileFrameProviderUs?.getStatus?.() || null,
+  }
+  marketSessionGateState.reason = reason
+
+  const active = running.filter((trader) => {
+    if (RUNTIME_DATA_MODE !== 'live_file') return true
+    return getTraderGateState(trader, nowMs).allow_run
+  })
+
+  marketSessionGateState.running_trader_ids = running.map((t) => t.trader_id)
+  marketSessionGateState.active_trader_ids = active.map((t) => t.trader_id)
+
+  agentRuntime.setTraders(active)
+
+  if (active.length === 0) {
+    agentRuntime.pause?.()
+    marketSessionGateState.auto_paused = true
+    if (!marketSessionGateState.auto_paused_at_ms) marketSessionGateState.auto_paused_at_ms = nowMs
+  } else if (!agentRuntime.getState?.().running && !agentRuntimeManualPause) {
+    agentRuntime.resume?.()
+    marketSessionGateState.auto_paused = false
+    marketSessionGateState.auto_paused_at_ms = null
+  }
+
+  return { running, active }
+}
+
 let marketDataService = createMarketDataService({
   provider: MARKET_PROVIDER,
   upstreamBaseUrl: MARKET_UPSTREAM_URL,
@@ -1396,24 +1496,37 @@ let marketDataService = createMarketDataService({
   replayBatch,
   dailyHistoryBatch,
   replayFrameProvider: async ({ symbol, interval, limit }) => {
-    if (interval !== '1m') return []
-
-    if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
-      return liveFileFrameProvider.getFrames({ symbol, interval, limit })
+    if (RUNTIME_DATA_MODE === 'live_file') {
+      const provider = liveFileProviderForSymbol(symbol)
+      if (provider) {
+        return provider.getFrames({ symbol, interval, limit })
+      }
     }
 
     if (!replayEngine) return []
-    return replayEngine.getVisibleFrames(symbol, limit)
+    if (interval === '1m') {
+      return replayEngine.getVisibleFrames(symbol, limit)
+    }
+    return []
   },
 })
 
 function syncMarketDataService() {
-  if (RUNTIME_DATA_MODE === 'live_file' && !liveFileFrameProvider) {
-    liveFileFrameProvider = createLiveFileFrameProvider({
-      filePath: LIVE_FRAMES_PATH,
-      refreshMs: LIVE_FILE_REFRESH_MS,
-      staleAfterMs: LIVE_FILE_STALE_MS,
-    })
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    if (!liveFileFrameProviderCn) {
+      liveFileFrameProviderCn = createLiveFileFrameProvider({
+        filePath: LIVE_FRAMES_PATH_CN,
+        refreshMs: LIVE_FILE_REFRESH_MS,
+        staleAfterMs: LIVE_FILE_STALE_MS,
+      })
+    }
+    if (!liveFileFrameProviderUs) {
+      liveFileFrameProviderUs = createLiveFileFrameProvider({
+        filePath: LIVE_FRAMES_PATH_US,
+        refreshMs: LIVE_FILE_REFRESH_MS,
+        staleAfterMs: LIVE_FILE_STALE_MS,
+      })
+    }
   }
 
   marketDataService = createMarketDataService({
@@ -1424,14 +1537,18 @@ function syncMarketDataService() {
     replayBatch,
     dailyHistoryBatch,
     replayFrameProvider: async ({ symbol, interval, limit }) => {
-      if (interval !== '1m') return []
-
-      if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
-        return liveFileFrameProvider.getFrames({ symbol, interval, limit })
+      if (RUNTIME_DATA_MODE === 'live_file') {
+        const provider = liveFileProviderForSymbol(symbol)
+        if (provider) {
+          return provider.getFrames({ symbol, interval, limit })
+        }
       }
 
       if (!replayEngine) return []
-      return replayEngine.getVisibleFrames(symbol, limit)
+      if (interval === '1m') {
+        return replayEngine.getVisibleFrames(symbol, limit)
+      }
+      return []
     },
   })
 }
@@ -1450,49 +1567,16 @@ async function refreshAgentState({ reconcile = true } = {}) {
   registeredAgents = nextRegistered.filter((agent) => agent.available !== false)
 
   const runtimeTraders = getRunningRuntimeTraders()
-  agentRuntime?.setTraders?.(runtimeTraders)
 
   if (agentRuntime) {
-    if (runtimeTraders.length === 0) {
-      agentRuntime.pause?.()
-      agentSessionGuardState.auto_paused = false
-      agentSessionGuardState.auto_paused_at_ms = null
-    } else if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
-      const session = getCnAMarketSessionStatus(Date.now())
-      let liveStatus = liveFileFrameProvider?.getStatus?.() || null
-      if (liveFileFrameProvider?.refresh) {
-        try {
-          await liveFileFrameProvider.refresh(false)
-          liveStatus = liveFileFrameProvider.getStatus()
-        } catch {
-          // If refresh fails, keep the existing status and avoid auto-resume.
-        }
-      }
-      const liveOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!!liveStatus && !liveStatus.stale && !liveStatus.last_error && (liveStatus.frame_count || 0) > 0)
-      if (!session.is_open) {
-        if (agentRuntime.getState?.().running) {
-          agentRuntime.pause?.()
-          agentSessionGuardState.auto_paused = true
-          agentSessionGuardState.auto_paused_at_ms = Date.now()
-          agentSessionGuardState.last_session = session
-          agentSessionGuardState.last_live_status = liveStatus
-        }
-      } else if (!agentRuntime.getState?.().running && liveOk) {
-        agentRuntime.resume?.()
-        agentSessionGuardState.auto_paused = false
-        agentSessionGuardState.auto_paused_at_ms = null
-        agentSessionGuardState.last_session = session
-        agentSessionGuardState.last_live_status = liveStatus
-      }
-    } else if (!agentRuntime.getState?.().running) {
-      agentRuntime.resume?.()
-    }
+    await syncMarketSessionGate({ reason: 'refresh_agent_state', nowMs: Date.now() })
   }
 
   return {
     available_agents: availableAgents,
     registered_agents: registeredAgents,
     running_agent_ids: runtimeTraders.map((trader) => trader.trader_id),
+    active_agent_ids: marketSessionGateState.active_trader_ids,
   }
 }
 
@@ -1635,7 +1719,7 @@ function aggregateManifestStockPool() {
   const seen = new Set()
   const output = []
   for (const agent of [...registeredAgents, ...availableAgents]) {
-    const pool = normalizeStockPool(agent?.stock_pool)
+    const pool = normalizeStockPool(agent?.stock_pool, agent?.exchange_id)
     for (const symbol of pool) {
       if (seen.has(symbol)) continue
       seen.add(symbol)
@@ -1645,10 +1729,14 @@ function aggregateManifestStockPool() {
   return output
 }
 
-function symbolList({ traderId = '' } = {}) {
+function symbolList({ traderId = '', exchangeId = '' } = {}) {
   const wantedTraderId = String(traderId || '').trim()
+  const wantedExchangeId = String(exchangeId || '').trim() || (wantedTraderId
+    ? String(getTraderById(wantedTraderId)?.exchange_id || '').trim()
+    : '')
+  const wantedMarket = getMarketSpecForExchange(wantedExchangeId).market
   if (wantedTraderId) {
-    const traderPool = normalizeStockPool(getTraderById(wantedTraderId)?.stock_pool)
+    const traderPool = normalizeStockPool(getTraderById(wantedTraderId)?.stock_pool, wantedExchangeId)
     if (traderPool.length) {
       return symbolsToEntries(traderPool)
     }
@@ -1659,14 +1747,20 @@ function symbolList({ traderId = '' } = {}) {
     return symbolsToEntries(manifestPool)
   }
 
-  if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
-    const symbols = liveFileFrameProvider.getSymbols('1m')
-    if (symbols.length) {
-      return symbolsToEntries(symbols)
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    const provider = wantedMarket === 'US' ? liveFileFrameProviderUs : liveFileFrameProviderCn
+    const symbols = provider?.getSymbols?.('1m') || []
+    if (symbols.length) return symbolsToEntries(symbols)
+
+    // No market hint: return union across markets.
+    if (!wantedTraderId && !wantedExchangeId) {
+      const cn = liveFileFrameProviderCn?.getSymbols?.('1m') || []
+      const us = liveFileFrameProviderUs?.getSymbols?.('1m') || []
+      const merged = Array.from(new Set([...cn, ...us]))
+      if (merged.length) return symbolsToEntries(merged)
     }
-    if (STRICT_LIVE_MODE) {
-      return []
-    }
+
+    if (STRICT_LIVE_MODE) return []
   }
 
   if (STRICT_LIVE_MODE) {
@@ -1690,10 +1784,10 @@ function symbolList({ traderId = '' } = {}) {
 }
 
 function pickTraderSymbol(trader, cycleNumber = 1) {
-  const traderPool = normalizeStockPool(trader?.stock_pool)
+  const traderPool = normalizeStockPool(trader?.stock_pool, trader?.exchange_id)
   const symbols = (traderPool.length
     ? traderPool
-    : symbolList({ traderId: trader?.trader_id }).map((item) => item.symbol)
+    : symbolList({ traderId: trader?.trader_id, exchangeId: trader?.exchange_id }).map((item) => item.symbol)
   )
   if (!symbols.length) {
     if (STRICT_LIVE_MODE) {
@@ -1706,8 +1800,10 @@ function pickTraderSymbol(trader, cycleNumber = 1) {
 }
 
 async function evaluateTraderContext(trader, { cycleNumber }) {
-  if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE && liveFileFrameProvider) {
-    const liveStatus = liveFileFrameProvider.getStatus()
+  const symbol = pickTraderSymbol(trader, cycleNumber)
+  if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE) {
+    const provider = liveFileProviderForSymbol(symbol)
+    const liveStatus = provider?.getStatus?.() || null
     if (liveStatus?.stale) {
       const error = new Error('live_file_stale')
       error.code = 'live_file_stale'
@@ -1719,8 +1815,6 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       throw error
     }
   }
-
-  const symbol = pickTraderSymbol(trader, cycleNumber)
   const [intradayBatch, dailyBatch] = await Promise.all([
     marketDataService.getFrames({
       symbol,
@@ -1736,17 +1830,23 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
 
   const account = getAccount(trader.trader_id)
   const positions = getPositions(trader.trader_id)
+  const marketSpec = getMarketSpecForExchange(trader.exchange_id)
   const positionState = buildPositionState({ symbol, account, positions })
-  const latestEventTs = intradayBatch.frames[intradayBatch.frames.length - 1]?.event_ts_ms
+  const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
+  const latestEventTs = intradayFrames[intradayFrames.length - 1]?.event_ts_ms
   const context = buildAgentMarketContext({
     symbol,
     asOfTsMs: Number.isFinite(latestEventTs) ? latestEventTs : Date.now(),
     intradayBatch,
     dailyBatch,
     positionState,
+    marketSpec,
   })
   context.runtime_config = {
     commission_rate: AGENT_COMMISSION_RATE,
+    lot_size: marketSpec.lot_size,
+    t_plus_one: marketSpec.t_plus_one,
+    currency: marketSpec.currency,
   }
 
   const memorySnapshot = memoryStore.getSnapshot(trader.trader_id)
@@ -2005,6 +2105,9 @@ app.get('/api/decisions/latest', (req, res) => {
   const safeLimit = Number.isFinite(limit) ? limit : 5
   const runtimeDecisions = agentRuntime?.getLatestDecisions(traderId || undefined, safeLimit) || []
 
+  const traderExchangeId = traderId ? String(getTraderById(traderId)?.exchange_id || '') : ''
+  const tz = getMarketSpecForExchange(traderExchangeId).timezone
+
   if (!traderId) {
     res.json(ok(runtimeDecisions))
     return
@@ -2012,7 +2115,7 @@ app.get('/api/decisions/latest', (req, res) => {
 
   Promise.resolve()
     .then(async () => {
-      const logged = await decisionLogStore.listLatest({ traderId, limit: safeLimit })
+      const logged = await decisionLogStore.listLatest({ traderId, limit: safeLimit, timeZone: tz })
       const items = []
 
       for (const row of runtimeDecisions) {
@@ -2026,11 +2129,11 @@ app.get('/api/decisions/latest', (req, res) => {
       if (items.length === 0) {
         const snapshot = memoryStore?.getSnapshot?.(traderId) || null
         const recent = Array.isArray(snapshot?.recent_actions) ? snapshot.recent_actions : []
-        const todayKey = dayKeyInTimeZone(Date.now(), 'Asia/Shanghai')
+        const todayKey = dayKeyInTimeZone(Date.now(), tz)
         const filtered = recent.filter((action) => {
           const ts = Date.parse(String(action?.ts || ''))
           if (!Number.isFinite(ts)) return false
-          return dayKeyInTimeZone(ts, 'Asia/Shanghai') === todayKey
+          return dayKeyInTimeZone(ts, tz) === todayKey
         })
 
         const accountState = {
@@ -2109,7 +2212,7 @@ app.get('/api/agent/runtime/status', (_req, res) => {
     cycle_ms: derivedDecisionCycleMs(),
     metrics,
     decision_every_bars: agentDecisionEveryBars,
-    market_session_guard: getAgentSessionGuardPublicSnapshot(),
+    market_session_guard: getMarketSessionGatePublicSnapshot(),
     kill_switch: killSwitchPublicState(),
     llm: {
       enabled: !!llmDecider,
@@ -2154,8 +2257,11 @@ app.post('/api/agent/runtime/control', async (req, res) => {
 
   if (action === 'pause') {
     agentRuntime.pause()
+    agentRuntimeManualPause = true
   } else if (action === 'resume') {
-    agentRuntime.resume()
+    agentRuntimeManualPause = false
+    // Resume only if market gate allows running traders.
+    await syncMarketSessionGate({ reason: 'manual_resume', nowMs: Date.now() })
   } else if (action === 'step') {
     await agentRuntime.stepOnce()
   } else if (action === 'set_cycle_ms') {
@@ -2225,8 +2331,8 @@ app.post('/api/agent/runtime/kill-switch', async (req, res) => {
 })
 
 app.get('/api/replay/runtime/status', async (_req, res) => {
-  if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
-    await liveFileFrameProvider.refresh(false)
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    await refreshLiveFileProviders()
   }
 
   const replayState = replayEngine?.getStatus?.() || {
@@ -2240,14 +2346,17 @@ app.get('/api/replay/runtime/status', async (_req, res) => {
     current_ts_ms: null,
   }
 
-  const liveFileStatus = RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider
-    ? liveFileFrameProvider.getStatus()
-    : null
+  const cnLive = RUNTIME_DATA_MODE === 'live_file' ? (liveFileFrameProviderCn?.getStatus?.() || null) : null
+  const usLive = RUNTIME_DATA_MODE === 'live_file' ? (liveFileFrameProviderUs?.getStatus?.() || null) : null
 
   res.json(ok({
     ...replayState,
     data_mode: RUNTIME_DATA_MODE,
-    live_file: liveFileStatus,
+    live_file: cnLive,
+    live_files: {
+      'CN-A': cnLive,
+      US: usLive,
+    },
     symbols: symbolList().map((item) => item.symbol),
   }))
 })
@@ -2379,15 +2488,25 @@ app.get('/api/agent/market-context', async (req, res) => {
 
     const account = getAccount(traderId)
     const positions = getPositions(traderId)
+    const marketSpec = getMarketSpecForExchange(getTraderById(traderId)?.exchange_id)
     const positionState = buildPositionState({ symbol, account, positions })
-    const latestEventTs = intradayBatch.frames[intradayBatch.frames.length - 1]?.event_ts_ms
+    const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
+    const latestEventTs = intradayFrames[intradayFrames.length - 1]?.event_ts_ms
     const payload = buildAgentMarketContext({
       symbol,
       asOfTsMs: Number.isFinite(latestEventTs) ? latestEventTs : Date.now(),
       intradayBatch,
       dailyBatch,
       positionState,
+      marketSpec,
     })
+
+    payload.runtime_config = {
+      commission_rate: AGENT_COMMISSION_RATE,
+      lot_size: marketSpec.lot_size,
+      t_plus_one: marketSpec.t_plus_one,
+      currency: marketSpec.currency,
+    }
 
     const memorySnapshot = memoryStore.getSnapshot(traderId)
     if (memorySnapshot) {
@@ -2607,7 +2726,8 @@ agentRuntime = createInMemoryAgentRuntime({
     })
 
     try {
-      await decisionLogStore.appendDecision({ traderId: trader.trader_id, decision })
+      const tz = getMarketSpecForExchange(trader.exchange_id).timezone
+      await decisionLogStore.appendDecision({ traderId: trader.trader_id, decision, timeZone: tz })
     } catch {
       // keep runtime robust: failure to persist decisions must not break trading loop
     }
@@ -2626,17 +2746,17 @@ if (killSwitchState.active) {
 }
 
 if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
-  enforceAgentSessionGuard({ reason: 'boot' }).catch(() => {})
-  agentSessionGuardTimer = setInterval(() => {
-    enforceAgentSessionGuard({ reason: 'interval' }).catch(() => {})
+  syncMarketSessionGate({ reason: 'boot', nowMs: Date.now() }).catch(() => {})
+  marketSessionGateTimer = setInterval(() => {
+    syncMarketSessionGate({ reason: 'interval', nowMs: Date.now() }).catch(() => {})
   }, AGENT_SESSION_GUARD_CHECK_MS)
 }
 
 function handleShutdown() {
   agentRuntime?.stop()
-  if (agentSessionGuardTimer) {
-    clearInterval(agentSessionGuardTimer)
-    agentSessionGuardTimer = null
+  if (marketSessionGateTimer) {
+    clearInterval(marketSessionGateTimer)
+    marketSessionGateTimer = null
   }
   if (replayEngineTimer) {
     clearInterval(replayEngineTimer)
@@ -2668,7 +2788,7 @@ app.listen(PORT, () => {
     ? `llm=openai model=${OPENAI_MODEL} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
   const replayRuntimeInfo = RUNTIME_DATA_MODE === 'live_file'
-    ? `data_mode=live_file live_frames_path=${LIVE_FRAMES_PATH} refresh_ms=${LIVE_FILE_REFRESH_MS} stale_ms=${LIVE_FILE_STALE_MS}`
+    ? `data_mode=live_file live_frames_cn=${LIVE_FRAMES_PATH_CN} live_frames_us=${LIVE_FRAMES_PATH_US} refresh_ms=${LIVE_FILE_REFRESH_MS} stale_ms=${LIVE_FILE_STALE_MS}`
     : (replayEngine?.getStatus?.()
       ? `replay_runtime speed=${replayEngine.getStatus().speed}x tick_ms=${REPLAY_TICK_MS}`
       : 'replay_runtime unavailable')

@@ -130,7 +130,9 @@ export function buildAgentMarketContext({
   intradayBatch,
   dailyBatch,
   positionState,
+  marketSpec,
 }) {
+  const spec = marketSpec || {}
   const intradayFrames = sortedFrames(intradayBatch?.frames || [])
   const dailyFrames = sortedFrames(dailyBatch?.frames || [])
 
@@ -138,11 +140,11 @@ export function buildAgentMarketContext({
     schema_version: 'agent.market_context.v1',
     as_of_ts_ms: asOfTsMs,
     symbol,
-    market: 'CN-A',
+    market: spec.market || 'CN-A',
     constraints: {
-      lot_size: 100,
-      t_plus_one: true,
-      currency: 'CNY',
+      lot_size: Number.isFinite(Number(spec.lot_size)) ? Number(spec.lot_size) : 100,
+      t_plus_one: spec.t_plus_one !== undefined ? !!spec.t_plus_one : true,
+      currency: spec.currency || 'CNY',
     },
     intraday: {
       interval: intradayBatch?.frames?.[0]?.interval || '1m',

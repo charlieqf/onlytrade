@@ -1,0 +1,9 @@
+{
+  "agent_id": "t_004",
+  "agent_name": "Blonde Macro",
+  "ai_model": "gpt-4o-mini",
+  "exchange_id": "sim-cn",
+  "strategy_name": "Macro swing + volatility filters",
+  "avatar_file": "avatar.jpg",
+  "avatar_hd_file": "avatar-hd.jpg"
+}

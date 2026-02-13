@@ -12,6 +12,8 @@ interface AvatarProfile {
 interface TraderAvatarProps {
   traderId: string
   traderName: string
+  avatarUrl?: string
+  avatarHdUrl?: string
   size?: number
   className?: string
   enableHdPreview?: boolean
@@ -32,18 +34,30 @@ const TRADER_AVATAR_PROFILES: Record<string, AvatarProfile> = {
   },
 }
 
-function profileForTrader(traderId: string): AvatarProfile {
+function profileForTrader(traderId: string, avatarUrl?: string, avatarHdUrl?: string): AvatarProfile {
+  const dynamicAvatarUrl = String(avatarUrl || '').trim()
+  const dynamicAvatarHdUrl = String(avatarHdUrl || '').trim()
+  if (dynamicAvatarUrl) {
+    return {
+      style: 'photo',
+      photoUrl: dynamicAvatarUrl,
+      hdPreviewUrl: dynamicAvatarHdUrl || undefined,
+    }
+  }
+
   return TRADER_AVATAR_PROFILES[traderId] || { style: 'punk' }
 }
 
 export function TraderAvatar({
   traderId,
   traderName,
+  avatarUrl,
+  avatarHdUrl,
   size = 40,
   className = '',
   enableHdPreview = false,
 }: TraderAvatarProps) {
-  const profile = profileForTrader(traderId)
+  const profile = profileForTrader(traderId, avatarUrl, avatarHdUrl)
   const [showPreview, setShowPreview] = useState(false)
   const [previewPos, setPreviewPos] = useState<{ top: number; left: number } | null>(null)
   const avatarRef = useRef<HTMLSpanElement | null>(null)

@@ -1,0 +1,7 @@
+{
+  "agent_id": "t_002",
+  "agent_name": "Value Rebound",
+  "ai_model": "deepseek",
+  "exchange_id": "sim-cn",
+  "strategy_name": "Mean reversion + support zones"
+}

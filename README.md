@@ -94,6 +94,21 @@ cd onlytrade-web
 VITE_DEMO_MODE=live npm run dev
 ```
 
+Agent discovery and registry defaults:
+
+- available manifests: `agents/<agent_id>/agent.json`
+- registration state: `data/agents/registry.json`
+- optional folder avatars: `agents/<agent_id>/avatar.jpg`, `agents/<agent_id>/avatar-hd.jpg`
+- folder asset route: `/api/agents/<agent_id>/assets/<fileName>`
+
+With folder avatars (`avatar_file` / `avatar_hd_file` in manifest), new agent photos can be deployed by uploading agent folders only (no frontend rebuild required).
+
+Related docs:
+
+- `docs/architecture/agent-folder-registry-contract.md`
+- `docs/runbooks/agent-registry-ops.md`
+- `agents/README.md`
+
 Agent data context endpoint (mock-api):
 
 ```bash
@@ -135,6 +150,22 @@ Ops helpers for chat files:
 bash scripts/onlytrade-ops.sh chat-status t_001 <user_session_id>
 bash scripts/onlytrade-ops.sh chat-tail-public t_001
 bash scripts/onlytrade-ops.sh chat-tail-private t_001 <user_session_id>
+```
+
+### Agent Registry Lifecycle (Ops)
+
+```bash
+# list folder-discovered agents
+bash scripts/onlytrade-ops.sh agents-available
+
+# list registry state
+bash scripts/onlytrade-ops.sh agents-registered
+
+# lifecycle controls
+bash scripts/onlytrade-ops.sh agent-register t_001
+bash scripts/onlytrade-ops.sh agent-start t_001
+bash scripts/onlytrade-ops.sh agent-stop t_001
+bash scripts/onlytrade-ops.sh agent-unregister t_001
 ```
 
 ### AKShare Live-File Workflow (File-based, no DB)

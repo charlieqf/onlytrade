@@ -331,6 +331,8 @@ export interface TraderInfo {
   trader_name: string
   ai_model: string
   exchange_id?: string
+  avatar_url?: string
+  avatar_hd_url?: string
   is_running?: boolean
   show_in_competition?: boolean
   strategy_id?: string
@@ -452,6 +454,8 @@ export interface CompetitionTraderData {
   trader_id: string
   trader_name: string
   ai_model: string
+  avatar_url?: string
+  avatar_hd_url?: string
   exchange: string
   total_equity: number
   total_pnl: number
@@ -479,6 +483,8 @@ export interface TraderConfigData {
   trader_name: string
   ai_model: string
   exchange_id: string
+  avatar_url?: string
+  avatar_hd_url?: string
   strategy_id?: string  // 策略ID
   strategy_name?: string  // 策略名称
   is_cross_margin: boolean

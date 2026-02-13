@@ -264,6 +264,8 @@ export function TraderDashboardPage({
                                 <TraderAvatar
                                     traderId={selectedTrader.trader_id}
                                     traderName={selectedTrader.trader_name}
+                                    avatarUrl={selectedTrader.avatar_url}
+                                    avatarHdUrl={selectedTrader.avatar_hd_url}
                                     size={56}
                                     enableHdPreview
                                     className="rounded-xl border-2 border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]"
@@ -683,6 +685,8 @@ export function TraderDashboardPage({
                                                 <TraderAvatar
                                                     traderId={selectedTrader.trader_id}
                                                     traderName={selectedTrader.trader_name}
+                                                    avatarUrl={selectedTrader.avatar_url}
+                                                    avatarHdUrl={selectedTrader.avatar_hd_url}
                                                     size={34}
                                                     className="rounded-lg border border-white/10"
                                                 />

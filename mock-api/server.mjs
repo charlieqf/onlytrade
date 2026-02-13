@@ -10,6 +10,7 @@ import { createInMemoryAgentRuntime } from './src/agentDecisionRuntime.mjs'
 import { createReplayEngine } from './src/replayEngine.mjs'
 import { createAgentMemoryStore } from './src/agentMemoryStore.mjs'
 import { createOpenAIAgentDecider } from './src/agentLlmDecision.mjs'
+import { createAgentRegistryStore } from './src/agentRegistryStore.mjs'
 import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
@@ -122,14 +123,22 @@ const DAILY_HISTORY_PATH = path.join(
 
 const KILL_SWITCH_PATH = path.join(ROOT_DIR, 'data', 'runtime', 'kill-switch.json')
 
-const TRADERS = [
+const AGENTS_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.AGENTS_DIR || 'agents'
+)
+
+const AGENT_REGISTRY_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.AGENT_REGISTRY_PATH || path.join('data', 'agents', 'registry.json')
+)
+
+const DEFAULT_TRADERS = [
   {
     trader_id: 't_001',
     trader_name: 'HS300 Momentum',
     ai_model: 'qwen',
     exchange_id: 'sim-cn',
-    is_running: true,
-    show_in_competition: true,
     strategy_name: 'Momentum + trend confirmation',
   },
   {
@@ -137,8 +146,6 @@ const TRADERS = [
     trader_name: 'Value Rebound',
     ai_model: 'deepseek',
     exchange_id: 'sim-cn',
-    is_running: true,
-    show_in_competition: true,
     strategy_name: 'Mean reversion + support zones',
   },
   {
@@ -146,8 +153,6 @@ const TRADERS = [
     trader_name: 'Mei Lin Alpha',
     ai_model: 'gpt-4o-mini',
     exchange_id: 'sim-cn',
-    is_running: true,
-    show_in_competition: true,
     strategy_name: 'Event-driven + risk controls',
   },
   {
@@ -155,8 +160,6 @@ const TRADERS = [
     trader_name: 'Blonde Macro',
     ai_model: 'gpt-4o-mini',
     exchange_id: 'sim-cn',
-    is_running: true,
-    show_in_competition: true,
     strategy_name: 'Macro swing + volatility filters',
   },
 ]
@@ -169,58 +172,31 @@ const CN_STOCK_NAME_BY_SYMBOL = {
   '000858.SZ': '五粮液',
 }
 
-const BASE_COMPETITION = {
-  count: 4,
-  traders: [
-    {
-      trader_id: 't_001',
-      trader_name: 'HS300 Momentum',
-      ai_model: 'qwen',
-      exchange: 'sim',
-      total_equity: 102345.12,
-      total_pnl: 2345.12,
-      total_pnl_pct: 2.35,
-      position_count: 3,
-      margin_used_pct: 0,
-      is_running: true,
-    },
-    {
-      trader_id: 't_002',
-      trader_name: 'Value Rebound',
-      ai_model: 'deepseek',
-      exchange: 'sim',
-      total_equity: 100845.88,
-      total_pnl: 845.88,
-      total_pnl_pct: 0.85,
-      position_count: 2,
-      margin_used_pct: 0,
-      is_running: true,
-    },
-    {
-      trader_id: 't_003',
-      trader_name: 'Mei Lin Alpha',
-      ai_model: 'gpt-4o-mini',
-      exchange: 'sim',
-      total_equity: 98790.44,
-      total_pnl: -1209.56,
-      total_pnl_pct: -1.21,
-      position_count: 1,
-      margin_used_pct: 0,
-      is_running: true,
-    },
-    {
-      trader_id: 't_004',
-      trader_name: 'Blonde Macro',
-      ai_model: 'gpt-4o-mini',
-      exchange: 'sim',
-      total_equity: 100512.63,
-      total_pnl: 512.63,
-      total_pnl_pct: 0.51,
-      position_count: 2,
-      margin_used_pct: 0,
-      is_running: true,
-    },
-  ],
+const BASE_COMPETITION_BY_ID = {
+  t_001: {
+    total_equity: 102345.12,
+    total_pnl: 2345.12,
+    total_pnl_pct: 2.35,
+    position_count: 3,
+  },
+  t_002: {
+    total_equity: 100845.88,
+    total_pnl: 845.88,
+    total_pnl_pct: 0.85,
+    position_count: 2,
+  },
+  t_003: {
+    total_equity: 98790.44,
+    total_pnl: -1209.56,
+    total_pnl_pct: -1.21,
+    position_count: 1,
+  },
+  t_004: {
+    total_equity: 100512.63,
+    total_pnl: 512.63,
+    total_pnl_pct: 0.51,
+    position_count: 2,
+  },
 }
 
 const DECISION_SCRIPT = [
@@ -315,17 +291,101 @@ function fail(error, status = 500) {
   return { success: false, error, status }
 }
 
+function isSafeAssetFileName(value) {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(String(value || '').trim())
+}
+
+function buildAgentAssetUrl(agentId, fileName) {
+  const safeAgentId = String(agentId || '').trim()
+  const safeFileName = String(fileName || '').trim()
+  if (!safeAgentId || !safeFileName) return null
+  if (!isSafeAssetFileName(safeFileName)) return null
+  return `/api/agents/${encodeURIComponent(safeAgentId)}/assets/${encodeURIComponent(safeFileName)}`
+}
+
+function toTraderRecord(agent) {
+  const agentId = String(agent?.agent_id || '').trim()
+  const explicitAvatarUrl = String(agent?.avatar_url || '').trim()
+  const explicitAvatarHdUrl = String(agent?.avatar_hd_url || '').trim()
+  const avatarFile = String(agent?.avatar_file || '').trim()
+  const avatarHdFile = String(agent?.avatar_hd_file || '').trim()
+
+  const avatarUrl = explicitAvatarUrl || buildAgentAssetUrl(agentId, avatarFile)
+  const avatarHdUrl = explicitAvatarHdUrl || buildAgentAssetUrl(agentId, avatarHdFile)
+
+  return {
+    trader_id: agentId,
+    trader_name: String(agent?.agent_name || agent?.agent_id || '').trim(),
+    ai_model: String(agent?.ai_model || 'unknown').trim(),
+    exchange_id: String(agent?.exchange_id || 'sim-cn').trim(),
+    is_running: String(agent?.status || 'stopped') === 'running',
+    show_in_competition: agent?.show_in_lobby !== false,
+    strategy_name: String(agent?.strategy_name || '').trim(),
+    avatar_url: avatarUrl || undefined,
+    avatar_hd_url: avatarHdUrl || undefined,
+  }
+}
+
+function getRegisteredTraders() {
+  return registeredAgents.map(toTraderRecord)
+}
+
+function getLobbyTraders() {
+  return getRegisteredTraders().filter((trader) => trader.show_in_competition)
+}
+
+function getRunningRuntimeTraders() {
+  return getRegisteredTraders().filter((trader) => trader.is_running)
+}
+
+function fallbackCompetitionRow(trader) {
+  const baseline = BASE_COMPETITION_BY_ID[trader.trader_id]
+  if (baseline) {
+    return {
+      trader_id: trader.trader_id,
+      trader_name: trader.trader_name,
+      ai_model: trader.ai_model,
+      exchange: 'sim',
+      total_equity: baseline.total_equity,
+      total_pnl: baseline.total_pnl,
+      total_pnl_pct: baseline.total_pnl_pct,
+      position_count: baseline.position_count,
+      margin_used_pct: 0,
+      is_running: trader.is_running,
+      avatar_url: trader.avatar_url,
+      avatar_hd_url: trader.avatar_hd_url,
+    }
+  }
+
+  return {
+    trader_id: trader.trader_id,
+    trader_name: trader.trader_name,
+    ai_model: trader.ai_model,
+    exchange: 'sim',
+    total_equity: 100000,
+    total_pnl: 0,
+    total_pnl_pct: 0,
+    position_count: 0,
+    margin_used_pct: 0,
+    is_running: trader.is_running,
+    avatar_url: trader.avatar_url,
+    avatar_hd_url: trader.avatar_hd_url,
+  }
+}
+
 function getCompetitionData() {
   const simulation = getReplaySimulationState()
   const initial = 100000
+  const lobbyTraders = getLobbyTraders()
 
-  const traders = BASE_COMPETITION.traders.map((trader) => {
+  const traders = lobbyTraders.map((trader) => {
+    const fallback = fallbackCompetitionRow(trader)
     const snapshot = memoryStore?.getSnapshot?.(trader.trader_id)
     const stats = snapshot?.stats || {}
     const latestTotalBalance = Number(stats?.latest_total_balance)
 
     if (!Number.isFinite(latestTotalBalance) || latestTotalBalance <= 0) {
-      return trader
+      return fallback
     }
 
     const equity = Number(latestTotalBalance.toFixed(2))
@@ -333,14 +393,15 @@ function getCompetitionData() {
     const pct = Number((((equity - initial) / initial) * 100).toFixed(2))
     const positionCount = Array.isArray(snapshot?.holdings)
       ? snapshot.holdings.filter((holding) => Number(holding?.shares) > 0).length
-      : trader.position_count
+      : fallback.position_count
 
     return {
-      ...trader,
+      ...fallback,
       total_pnl_pct: pct,
       total_pnl: pnl,
       total_equity: equity,
       position_count: positionCount,
+      is_running: trader.is_running,
     }
   })
 
@@ -358,7 +419,27 @@ function getCompetitionData() {
 }
 
 function getTraderById(traderId) {
-  return TRADERS.find((t) => t.trader_id === traderId) || TRADERS[0]
+  const wanted = String(traderId || '').trim()
+  const registered = getRegisteredTraders()
+  const available = availableAgents.map((agent) => ({
+    trader_id: agent.agent_id,
+    trader_name: agent.agent_name,
+    ai_model: agent.ai_model,
+    exchange_id: agent.exchange_id,
+    is_running: false,
+    show_in_competition: false,
+    strategy_name: agent.strategy_name || '',
+    avatar_url: agent.avatar_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_file),
+    avatar_hd_url: agent.avatar_hd_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_hd_file),
+  }))
+
+  return (
+    registered.find((trader) => trader.trader_id === wanted) ||
+    available.find((trader) => trader.trader_id === wanted) ||
+    registered[0] ||
+    available[0] ||
+    DEFAULT_TRADERS[0]
+  )
 }
 
 function normalizeAgentHandle(traderName) {
@@ -370,7 +451,7 @@ function normalizeAgentHandle(traderName) {
 }
 
 function resolveRoomAgentForChat(roomId) {
-  const trader = TRADERS.find((item) => item.trader_id === roomId)
+  const trader = getRegisteredTraders().find((item) => item.trader_id === roomId)
   if (!trader) return null
 
   return {
@@ -417,6 +498,16 @@ function chatErrorStatus(error) {
   if (error?.code === 'room_not_found') return 404
   if (error?.code === 'rate_limited') return 429
   return 400
+}
+
+function agentErrorStatus(error) {
+  if (Number.isFinite(Number(error?.status))) {
+    return Number(error.status)
+  }
+  if (error?.code === 'invalid_agent_id') return 400
+  if (error?.code === 'agent_manifest_not_found') return 404
+  if (error?.code === 'agent_not_registered') return 409
+  return 500
 }
 
 function resolveNicknameForSession(userSessionId, preferredNickname = '') {
@@ -551,17 +642,16 @@ async function setKillSwitch({ active, reason = null, actor = 'unknown' }) {
 function getStatus(traderId) {
   const t = tick()
   const trader = getTraderById(traderId)
-  const runtimeCallCount = agentRuntime?.getCallCount(traderId) || 0
+  const runtimeCallCount = agentRuntime?.getCallCount(trader.trader_id) || 0
   const callCount = runtimeCallCount > 0 ? runtimeCallCount : 128 + t
   const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
   const secPerBar = 60 / Math.max(0.1, replaySpeed)
   const scanIntervalSec = Math.max(1, Math.round(secPerBar * agentDecisionEveryBars))
-  const runtimeRunning = !!agentRuntime?.getState?.().running
   return {
     trader_id: trader.trader_id,
     trader_name: trader.trader_name,
     ai_model: trader.ai_model,
-    is_running: runtimeRunning,
+    is_running: !!trader.is_running,
     start_time: new Date(Date.now() - 1000 * 60 * (95 + t)).toISOString(),
     runtime_minutes: 95 + t,
     call_count: callCount,
@@ -608,7 +698,14 @@ function getAccount(traderId) {
   }
 
   const competition = getCompetitionData()
-  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0]
+  const fallbackTrader = getTraderById(traderId)
+  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0] || {
+    trader_id: fallbackTrader.trader_id,
+    total_equity: 100000,
+    total_pnl: 0,
+    total_pnl_pct: 0,
+    position_count: 0,
+  }
   const floating = Number((Math.sin(getReplaySimulationState().step / 3) * 800).toFixed(2))
 
   return {
@@ -983,9 +1080,15 @@ let agentRuntime = null
 let replayEngine = null
 let replayEngineTimer = null
 let liveFileFrameProvider = null
+let availableAgents = []
+let registeredAgents = []
+const agentRegistryStore = createAgentRegistryStore({
+  agentsDir: AGENTS_DIR,
+  registryPath: AGENT_REGISTRY_PATH,
+})
 const memoryStore = createAgentMemoryStore({
   rootDir: ROOT_DIR,
-  traders: TRADERS,
+  traders: DEFAULT_TRADERS,
   commissionRate: AGENT_COMMISSION_RATE,
 })
 const chatSessionRegistry = new Map()
@@ -1068,6 +1171,29 @@ function syncMarketDataService() {
       return replayEngine.getVisibleFrames(symbol, limit)
     },
   })
+}
+
+async function refreshAgentState({ reconcile = true } = {}) {
+  if (reconcile) {
+    await agentRegistryStore.reconcile()
+  }
+
+  const [nextAvailable, nextRegistered] = await Promise.all([
+    agentRegistryStore.listAvailableAgents(),
+    agentRegistryStore.listRegisteredAgents(),
+  ])
+
+  availableAgents = nextAvailable
+  registeredAgents = nextRegistered.filter((agent) => agent.available !== false)
+
+  const runtimeTraders = getRunningRuntimeTraders()
+  agentRuntime?.setTraders?.(runtimeTraders)
+
+  return {
+    available_agents: availableAgents,
+    registered_agents: registeredAgents,
+    running_agent_ids: runtimeTraders.map((trader) => trader.trader_id),
+  }
 }
 
 function resetReplayEngine() {
@@ -1318,19 +1444,123 @@ app.get('/api/config', (_req, res) => {
   res.json({ beta_mode: true, registration_enabled: false })
 })
 
-app.get('/api/traders', (_req, res) => {
-  res.json(ok(TRADERS))
+app.get('/api/agents/:id/assets/:fileName', (req, res) => {
+  const agentId = String(req.params.id || '').trim()
+  const fileName = String(req.params.fileName || '').trim()
+
+  if (!/^[a-z][a-z0-9_]{1,63}$/.test(agentId)) {
+    res.status(400).json({ success: false, error: 'invalid_agent_id' })
+    return
+  }
+
+  if (!isSafeAssetFileName(fileName)) {
+    res.status(400).json({ success: false, error: 'invalid_asset_file' })
+    return
+  }
+
+  const assetPath = path.join(AGENTS_DIR, agentId, fileName)
+  res.set('Cache-Control', 'public, max-age=86400')
+  res.sendFile(assetPath, (error) => {
+    if (!error) return
+    if (!res.headersSent) {
+      res.status(404).json({ success: false, error: 'agent_asset_not_found' })
+    }
+  })
 })
 
-app.get('/api/competition', (_req, res) => {
-  res.json(ok(getCompetitionData()))
+app.get('/api/agents/available', async (_req, res) => {
+  try {
+    const state = await refreshAgentState()
+    res.json(ok(state.available_agents))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agents_available_failed' })
+  }
 })
 
-app.get('/api/top-traders', (_req, res) => {
-  const top = [...getCompetitionData().traders]
-    .sort((a, b) => b.total_pnl_pct - a.total_pnl_pct)
-    .slice(0, 3)
-  res.json(ok(top))
+app.get('/api/agents/registered', async (_req, res) => {
+  try {
+    const state = await refreshAgentState()
+    res.json(ok(state.registered_agents))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agents_registered_failed' })
+  }
+})
+
+app.post('/api/agents/:id/register', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim()
+    const registered = await agentRegistryStore.registerAgent(agentId)
+    await refreshAgentState()
+    res.json(ok(registered))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_register_failed' })
+  }
+})
+
+app.post('/api/agents/:id/unregister', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim()
+    const removed = await agentRegistryStore.unregisterAgent(agentId)
+    const state = await refreshAgentState()
+    res.json(ok({
+      ...removed,
+      running_agent_ids: state.running_agent_ids,
+    }))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_unregister_failed' })
+  }
+})
+
+app.post('/api/agents/:id/start', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim()
+    const started = await agentRegistryStore.startAgent(agentId)
+    await refreshAgentState()
+    res.json(ok(started))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_start_failed' })
+  }
+})
+
+app.post('/api/agents/:id/stop', async (req, res) => {
+  try {
+    const agentId = String(req.params.id || '').trim()
+    const stopped = await agentRegistryStore.stopAgent(agentId)
+    await refreshAgentState()
+    res.json(ok(stopped))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_stop_failed' })
+  }
+})
+
+app.get('/api/traders', async (_req, res) => {
+  try {
+    await refreshAgentState()
+    res.json(ok(getLobbyTraders()))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'traders_read_failed' })
+  }
+})
+
+app.get('/api/competition', async (_req, res) => {
+  try {
+    await refreshAgentState()
+    res.json(ok(getCompetitionData()))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'competition_read_failed' })
+  }
+})
+
+app.get('/api/top-traders', async (_req, res) => {
+  try {
+    await refreshAgentState()
+    const top = [...getCompetitionData().traders]
+      .sort((a, b) => b.total_pnl_pct - a.total_pnl_pct)
+      .slice(0, 3)
+    res.json(ok(top))
+  } catch (error) {
+    res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'top_traders_read_failed' })
+  }
 })
 
 app.post('/api/chat/session/bootstrap', (req, res) => {
@@ -1408,17 +1638,17 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
 })
 
 app.get('/api/status', (req, res) => {
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   res.json(ok(getStatus(traderId)))
 })
 
 app.get('/api/account', (req, res) => {
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   res.json(ok(getAccount(traderId)))
 })
 
 app.get('/api/positions', (req, res) => {
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   res.json(ok(getPositions(traderId)))
 })
 
@@ -1463,7 +1693,7 @@ app.get('/api/agent/runtime/status', (_req, res) => {
       token_saver: llmDecider ? AGENT_LLM_DEV_TOKEN_SAVER : null,
       max_output_tokens: llmDecider ? AGENT_LLM_MAX_OUTPUT_TOKENS : null,
     },
-    traders: TRADERS.map((trader) => ({
+    traders: getRegisteredTraders().map((trader) => ({
       trader_id: trader.trader_id,
       call_count: agentRuntime?.getCallCount?.(trader.trader_id) || 0,
     })),
@@ -1670,7 +1900,7 @@ app.get('/api/statistics', (_req, res) => {
 })
 
 app.get('/api/equity-history', (req, res) => {
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   const hours = Number(req.query.hours || 0)
   res.json(ok(generateEquityHistory(traderId, Number.isFinite(hours) ? hours : 0)))
 })
@@ -1678,7 +1908,7 @@ app.get('/api/equity-history', (req, res) => {
 app.post('/api/equity-history-batch', (req, res) => {
   const ids = Array.isArray(req.body?.trader_ids)
     ? req.body.trader_ids
-    : TRADERS.map((t) => t.trader_id)
+    : getLobbyTraders().map((t) => t.trader_id)
   const hours = Number(req.body?.hours || 0)
   const histories = Object.fromEntries(
     ids.map((id) => [id, generateEquityHistory(String(id), Number.isFinite(hours) ? hours : 0)])
@@ -1687,7 +1917,7 @@ app.post('/api/equity-history-batch', (req, res) => {
 })
 
 app.get('/api/positions/history', (req, res) => {
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   const limit = Number(req.query.limit || 100)
   res.json(ok(getPositionHistory(traderId, Number.isFinite(limit) ? limit : 100)))
 })
@@ -1703,7 +1933,7 @@ app.get('/api/agent/market-context', async (req, res) => {
   const intradayLimit = Number(req.query.intraday_limit || 180)
   const dailyLimit = Number(req.query.daily_limit || 90)
   const source = String(req.query.source || '')
-  const traderId = String(req.query.trader_id || TRADERS[0].trader_id)
+  const traderId = String(req.query.trader_id || getTraderById('').trader_id)
 
   try {
     const [intradayBatch, dailyBatch] = await Promise.all([
@@ -1886,9 +2116,11 @@ app.get('/api/traders/:id/config', (req, res) => {
     exchange_id: trader.exchange_id,
     strategy_name: trader.strategy_name,
     is_running: trader.is_running,
+    avatar_url: trader.avatar_url,
+    avatar_hd_url: trader.avatar_hd_url,
     initial_balance: 100000,
     scan_interval_minutes: 1,
-    show_in_competition: true,
+    show_in_competition: trader.show_in_competition !== false,
     is_cross_margin: false,
   }))
 })
@@ -1912,7 +2144,7 @@ if (RESET_AGENT_MEMORY_ON_BOOT) {
 }
 
 agentRuntime = createInMemoryAgentRuntime({
-  traders: TRADERS,
+  traders: [],
   evaluateTrader: evaluateTraderContext,
   cycleMs: AGENT_RUNTIME_CYCLE_MS,
   maxHistory: 120,
@@ -1941,6 +2173,8 @@ agentRuntime = createInMemoryAgentRuntime({
     })
   },
 })
+
+await refreshAgentState()
 agentRuntime.start()
 
 if (killSwitchState.active) {
@@ -1986,6 +2220,8 @@ app.listen(PORT, () => {
     : (replayEngine?.getStatus?.()
       ? `replay_runtime speed=${replayEngine.getStatus().speed}x tick_ms=${REPLAY_TICK_MS}`
       : 'replay_runtime unavailable')
+  const registryInfo = `agent_registry path=${AGENT_REGISTRY_PATH}`
+  const agentInfo = `agents_dir=${AGENTS_DIR} available=${availableAgents.length} registered=${registeredAgents.length}`
   console.log(`[mock-api] listening on http://localhost:${PORT}`)
   console.log(`[mock-api] ${replayInfo}`)
   console.log(`[mock-api] ${dailyHistoryInfo}`)
@@ -1996,4 +2232,6 @@ app.listen(PORT, () => {
   console.log(`[mock-api] ${resetInfo}`)
   console.log(`[mock-api] ${llmInfo}`)
   console.log(`[mock-api] ${replayRuntimeInfo}`)
+  console.log(`[mock-api] ${registryInfo}`)
+  console.log(`[mock-api] ${agentInfo}`)
 })

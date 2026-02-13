@@ -294,10 +294,10 @@ export function createInMemoryAgentRuntime({
   maxHistory = 120,
   autoTimer = true,
 } = {}) {
-  const safeTraders = Array.isArray(traders) ? traders : []
+  const initialTraders = Array.isArray(traders) ? traders : []
   const historyLimit = clamp(toSafeNumber(maxHistory, 120), 20, 500)
-  const decisionsByTrader = new Map(safeTraders.map((trader) => [trader.trader_id, []]))
-  const callsByTrader = new Map(safeTraders.map((trader) => [trader.trader_id, 0]))
+  const decisionsByTrader = new Map()
+  const callsByTrader = new Map()
   const evaluate = typeof evaluateTrader === 'function' ? evaluateTrader : async () => ({ context: null })
   const notifyDecision = typeof onDecision === 'function' ? onDecision : null
   let totalCycles = 0
@@ -309,6 +309,51 @@ export function createInMemoryAgentRuntime({
   let lastCycleStartedMs = null
   let lastCycleCompletedMs = null
   let currentCycleMs = clamp(toSafeNumber(cycleMs, 15_000), 3_000, 120_000)
+  let activeTraders = []
+
+  function normalizeTraders(nextTradersRaw) {
+    const nextTraders = Array.isArray(nextTradersRaw) ? nextTradersRaw : []
+    const byId = new Map()
+
+    for (const trader of nextTraders) {
+      const traderId = String(trader?.trader_id || '').trim()
+      if (!traderId) continue
+      byId.set(traderId, trader)
+    }
+
+    return Array.from(byId.values())
+  }
+
+  function syncTraderState(nextTradersRaw) {
+    const normalized = normalizeTraders(nextTradersRaw)
+    const nextIds = new Set(normalized.map((trader) => trader.trader_id))
+
+    for (const trader of normalized) {
+      if (!decisionsByTrader.has(trader.trader_id)) {
+        decisionsByTrader.set(trader.trader_id, [])
+      }
+      if (!callsByTrader.has(trader.trader_id)) {
+        callsByTrader.set(trader.trader_id, 0)
+      }
+    }
+
+    for (const traderId of Array.from(decisionsByTrader.keys())) {
+      if (!nextIds.has(traderId)) {
+        decisionsByTrader.delete(traderId)
+      }
+    }
+
+    for (const traderId of Array.from(callsByTrader.keys())) {
+      if (!nextIds.has(traderId)) {
+        callsByTrader.delete(traderId)
+      }
+    }
+
+    activeTraders = normalized
+    return activeTraders.length
+  }
+
+  syncTraderState(initialTraders)
 
   async function evaluateOne(trader) {
     const cycleNumber = toSafeNumber(callsByTrader.get(trader.trader_id), 0) + 1
@@ -363,7 +408,7 @@ export function createInMemoryAgentRuntime({
     cycleInFlight = true
     lastCycleStartedMs = nowFn()
     try {
-      for (const trader of safeTraders) {
+      for (const trader of activeTraders) {
         await evaluateOne(trader)
       }
       return true
@@ -457,9 +502,9 @@ export function createInMemoryAgentRuntime({
   }
 
   function reset() {
-    for (const trader of safeTraders) {
-      decisionsByTrader.set(trader.trader_id, [])
-      callsByTrader.set(trader.trader_id, 0)
+    for (const traderId of Array.from(decisionsByTrader.keys())) {
+      decisionsByTrader.set(traderId, [])
+      callsByTrader.set(traderId, 0)
     }
     totalCycles = 0
     successfulCycles = 0
@@ -471,6 +516,10 @@ export function createInMemoryAgentRuntime({
       state: getState(),
       metrics: getMetrics(),
     }
+  }
+
+  function setTraders(nextTraders) {
+    return syncTraderState(nextTraders)
   }
 
   return {
@@ -486,5 +535,6 @@ export function createInMemoryAgentRuntime({
     getCallCount,
     getMetrics,
     reset,
+    setTraders,
   }
 }

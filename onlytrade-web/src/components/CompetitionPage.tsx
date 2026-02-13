@@ -264,6 +264,8 @@ export function CompetitionPage() {
                         <TraderAvatar
                           traderId={trader.trader_id}
                           traderName={trader.trader_name}
+                          avatarUrl={trader.avatar_url}
+                          avatarHdUrl={trader.avatar_hd_url}
                           size={36}
                           className="rounded-lg"
                         />
@@ -432,6 +434,8 @@ export function CompetitionPage() {
                         <TraderAvatar
                           traderId={trader.trader_id}
                           traderName={trader.trader_name}
+                          avatarUrl={trader.avatar_url}
+                          avatarHdUrl={trader.avatar_hd_url}
                           size={56}
                           className="rounded-xl"
                         />

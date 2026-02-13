@@ -55,6 +55,15 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
 
   const userSessionId = String(body.data.user_session_id)
 
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_001/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  const registerBody = await registerRes.json()
+  assert.equal(registerRes.ok, true)
+  assert.equal(registerBody.success, true)
+
   const publicReadBefore = await fetch(`${baseUrl}/api/chat/rooms/t_001/public?limit=20`)
   const publicReadBeforeBody = await publicReadBefore.json()
   assert.equal(publicReadBefore.ok, true)

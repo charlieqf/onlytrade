@@ -1,0 +1,12 @@
+{
+  "schema_version": "agent.registry.v1",
+  "agents": {
+    "t_001": {
+      "registered_at": "2026-02-13T01:50:18.407Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    }
+  }
+}

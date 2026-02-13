@@ -1079,12 +1079,16 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       <TraderAvatar
                         traderId={trader.trader_id}
                         traderName={trader.trader_name}
+                        avatarUrl={trader.avatar_url}
+                        avatarHdUrl={trader.avatar_hd_url}
                         size={48}
                         className="rounded-lg hidden md:block"
                       />
                       <TraderAvatar
                         traderId={trader.trader_id}
                         traderName={trader.trader_name}
+                        avatarUrl={trader.avatar_url}
+                        avatarHdUrl={trader.avatar_hd_url}
                         size={40}
                         className="rounded-lg md:hidden"
                       />

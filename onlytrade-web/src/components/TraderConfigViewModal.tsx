@@ -47,6 +47,8 @@ export function TraderConfigViewModal({
             <TraderAvatar
               traderId={traderData.trader_id || ''}
               traderName={traderData.trader_name}
+              avatarUrl={traderData.avatar_url}
+              avatarHdUrl={traderData.avatar_hd_url}
               size={48}
               className="rounded-lg"
             />

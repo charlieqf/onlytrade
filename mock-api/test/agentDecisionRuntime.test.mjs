@@ -188,3 +188,47 @@ test('runtime reset clears decisions, call counts, and metrics', async () => {
   assert.equal(runtime.getLatestDecisions('t_001', 5).length, 0)
   assert.equal(runtime.getCallCount('t_001'), 0)
 })
+
+test('runtime supports replacing trader set at runtime', async () => {
+  const traderA = {
+    trader_id: 't_001',
+    trader_name: 'HS300 Momentum',
+    ai_model: 'qwen',
+  }
+  const traderB = {
+    trader_id: 't_002',
+    trader_name: 'Value Rebound',
+    ai_model: 'deepseek',
+  }
+
+  const runtime = createInMemoryAgentRuntime({
+    traders: [traderA],
+    autoTimer: false,
+    maxHistory: 5,
+    nowFn: () => new Date('2026-02-12T00:07:00.000Z').getTime(),
+    evaluateTrader: async ({ trader_id }, { cycleNumber }) => ({
+      context: makeContext({
+        ret5: trader_id === 't_001' ? 0.003 : 0.002,
+        rsi14: 56,
+        sma20: 106,
+        sma60: 101,
+        price: trader_id === 't_001' ? 111 : 109,
+      }),
+      cycleNumber,
+    }),
+  })
+
+  await runtime.stepOnce()
+  assert.equal(runtime.getCallCount('t_001'), 1)
+  assert.equal(runtime.getCallCount('t_002'), 0)
+
+  runtime.setTraders([traderA, traderB])
+  await runtime.stepOnce()
+  assert.equal(runtime.getCallCount('t_001'), 2)
+  assert.equal(runtime.getCallCount('t_002'), 1)
+
+  runtime.setTraders([traderB])
+  await runtime.stepOnce()
+  assert.equal(runtime.getCallCount('t_001'), 0)
+  assert.equal(runtime.getCallCount('t_002'), 2)
+})

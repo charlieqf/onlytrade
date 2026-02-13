@@ -1,0 +1,9 @@
+{
+  "agent_id": "t_003",
+  "agent_name": "Mei Lin Alpha",
+  "ai_model": "gpt-4o-mini",
+  "exchange_id": "sim-cn",
+  "strategy_name": "Event-driven + risk controls",
+  "avatar_file": "avatar.jpg",
+  "avatar_hd_file": "avatar-hd.jpg"
+}

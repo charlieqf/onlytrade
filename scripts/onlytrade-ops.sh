@@ -65,7 +65,13 @@ Commands:
                                  Show chat file status for room/private
   chat-tail-public <room_id>     Tail room public chat JSONL
   chat-tail-private <room_id> <user_session_id>
-                                 Tail room private chat JSONL
+                                  Tail room private chat JSONL
+  agents-available                List folder-discovered agents
+  agents-registered               List registered agents (registry)
+  agent-register <agent_id>       Register an available agent
+  agent-unregister <agent_id>     Unregister an agent
+  agent-start <agent_id>          Mark agent running
+  agent-stop <agent_id>           Mark agent stopped
   decisions [trader_id] [limit]   Fetch latest decisions
   memory [trader_id]              Fetch agent memory snapshot(s)
   watch [seconds]                 Poll status repeatedly (default 3s)
@@ -364,6 +370,34 @@ chat_tail_private() {
   tail -n 40 -f "$file_path"
 }
 
+agents_available() {
+  curl_get "/api/agents/available"
+}
+
+agents_registered() {
+  curl_get "/api/agents/registered"
+}
+
+agent_register() {
+  local agent_id="$1"
+  curl_post "/api/agents/$agent_id/register" '{}'
+}
+
+agent_unregister() {
+  local agent_id="$1"
+  curl_post "/api/agents/$agent_id/unregister" '{}'
+}
+
+agent_start() {
+  local agent_id="$1"
+  curl_post "/api/agents/$agent_id/start" '{}'
+}
+
+agent_stop() {
+  local agent_id="$1"
+  curl_post "/api/agents/$agent_id/stop" '{}'
+}
+
 start_three_day_run() {
   local speed="$1"
   local bars="$2"
@@ -557,6 +591,44 @@ main() {
         exit 1
       fi
       chat_tail_private "$room_id" "$user_session_id"
+      ;;
+    agents-available)
+      agents_available | json_pretty
+      ;;
+    agents-registered)
+      agents_registered | json_pretty
+      ;;
+    agent-register)
+      local agent_id="${1:-}"
+      if [ -z "$agent_id" ]; then
+        echo "[ops] ERROR: agent-register requires <agent_id>" >&2
+        exit 1
+      fi
+      agent_register "$agent_id" | json_pretty
+      ;;
+    agent-unregister)
+      local agent_id="${1:-}"
+      if [ -z "$agent_id" ]; then
+        echo "[ops] ERROR: agent-unregister requires <agent_id>" >&2
+        exit 1
+      fi
+      agent_unregister "$agent_id" | json_pretty
+      ;;
+    agent-start)
+      local agent_id="${1:-}"
+      if [ -z "$agent_id" ]; then
+        echo "[ops] ERROR: agent-start requires <agent_id>" >&2
+        exit 1
+      fi
+      agent_start "$agent_id" | json_pretty
+      ;;
+    agent-stop)
+      local agent_id="${1:-}"
+      if [ -z "$agent_id" ]; then
+        echo "[ops] ERROR: agent-stop requires <agent_id>" >&2
+        exit 1
+      fi
+      agent_stop "$agent_id" | json_pretty
       ;;
     decisions)
       local trader="${1:-}"

@@ -1,0 +1,7 @@
+{
+  "agent_id": "t_001",
+  "agent_name": "HS300 Momentum",
+  "ai_model": "qwen",
+  "exchange_id": "sim-cn",
+  "strategy_name": "Momentum + trend confirmation"
+}

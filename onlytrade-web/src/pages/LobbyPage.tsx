@@ -137,6 +137,7 @@ export function LobbyPage() {
             {topTraders.map((trader, idx) => {
               const pct = trader.total_pnl_pct ?? 0
               const positive = pct >= 0
+              const isRunning = !!trader.is_running
               return (
                 <button
                   key={trader.trader_id}
@@ -151,6 +152,8 @@ export function LobbyPage() {
                       <TraderAvatar
                         traderId={trader.trader_id}
                         traderName={trader.trader_name}
+                        avatarUrl={trader.avatar_url}
+                        avatarHdUrl={trader.avatar_hd_url}
                         size={40}
                         className="rounded-lg"
                       />
@@ -158,8 +161,22 @@ export function LobbyPage() {
                         <div className="text-sm font-bold text-white line-clamp-1">
                           {trader.trader_name}
                         </div>
-                        <div className="text-xs text-zinc-400">
-                          #{idx + 1}
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="text-xs text-zinc-400">
+                            #{idx + 1}
+                          </div>
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full border"
+                            style={{
+                              color: isRunning ? '#0ECB81' : '#A1A1AA',
+                              borderColor: isRunning ? 'rgba(14,203,129,0.35)' : 'rgba(161,161,170,0.35)',
+                              backgroundColor: isRunning ? 'rgba(14,203,129,0.12)' : 'rgba(161,161,170,0.10)',
+                            }}
+                          >
+                            {isRunning
+                              ? (language === 'zh' ? '运行中' : 'Running')
+                              : (language === 'zh' ? '已停止' : 'Stopped')}
+                          </span>
                         </div>
                       </div>
                     </div>

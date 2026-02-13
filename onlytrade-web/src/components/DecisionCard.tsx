@@ -10,6 +10,8 @@ interface DecisionCardProps {
 
 // Action type configuration
 const ACTION_CONFIG: Record<string, { color: string; bg: string; icon: string; label: string }> = {
+  buy: { color: '#0ECB81', bg: 'rgba(14, 203, 129, 0.15)', icon: '📈', label: 'BUY' },
+  sell: { color: '#F6465D', bg: 'rgba(246, 70, 93, 0.15)', icon: '📉', label: 'SELL' },
   open_long: { color: '#0ECB81', bg: 'rgba(14, 203, 129, 0.15)', icon: '📈', label: 'LONG' },
   open_short: { color: '#F6465D', bg: 'rgba(246, 70, 93, 0.15)', icon: '📉', label: 'SHORT' },
   close_long: { color: '#F0B90B', bg: 'rgba(240, 185, 11, 0.15)', icon: '💰', label: 'CLOSE' },
@@ -44,9 +46,10 @@ function getConfidenceColor(confidence: number | undefined): string {
 
 // Single Action Card Component
 function ActionCard({ action, language, onSymbolClick }: { action: DecisionAction; language: Language; onSymbolClick?: (symbol: string) => void }) {
-  const config = ACTION_CONFIG[action.action] || ACTION_CONFIG.wait
-  const isLong = action.action.includes('long')
-  const isOpen = action.action.includes('open')
+  const normalizedAction = String(action.action || '').toLowerCase()
+  const config = ACTION_CONFIG[normalizedAction] || ACTION_CONFIG.wait
+  const isLong = normalizedAction.includes('long') || normalizedAction === 'buy'
+  const isOpen = normalizedAction.includes('open') || normalizedAction === 'buy' || normalizedAction === 'sell'
 
   return (
     <div

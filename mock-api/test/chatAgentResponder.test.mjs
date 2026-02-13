@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildProactiveAgentMessage, shouldAgentReply } from '../src/chat/chatAgentResponder.mjs'
+import { buildAgentReply, buildProactiveAgentMessage, shouldAgentReply } from '../src/chat/chatAgentResponder.mjs'
 
 test('agent reply policy by message type', () => {
   assert.equal(shouldAgentReply({ messageType: 'public_mention_agent' }), true)
@@ -9,24 +9,35 @@ test('agent reply policy by message type', () => {
   assert.equal(shouldAgentReply({ messageType: 'public_plain', random: 0.99, threshold: 0.1 }), false)
 })
 
-test('proactive message can be personality-first and non-stock', () => {
+test('proactive message uses provided llm text', () => {
   const message = buildProactiveAgentMessage({
     roomAgent: {
       agentName: 'HS300 Momentum',
     },
     roomId: 't_001',
-    latestDecision: {
-      decisions: [{ symbol: '600519.SH' }],
-    },
+    text: 'LLM proactive text',
     nowMs: 61_000,
   })
 
-  const personalityHints = [
-    'vibe check',
-    'small reset reminder',
-    'community prompt',
-    'question of the moment',
-  ]
-  assert.equal(personalityHints.some((hint) => message.text.includes(hint)), true)
-  assert.equal(message.text.includes('Current focus:'), false)
+  assert.equal(message.text, 'LLM proactive text')
+})
+
+test('agent reply uses provided llm text', () => {
+  const message = buildAgentReply({
+    roomAgent: {
+      agentName: 'HS300 Momentum',
+      personality: '冷静直接，偏顺势执行。',
+    },
+    inboundMessage: {
+      room_id: 't_001',
+      user_session_id: 'usr_sess_1',
+      visibility: 'public',
+      message_type: 'public_mention_agent',
+      text: '@agent 汇报一下',
+    },
+    text: 'LLM reply text',
+    nowMs: 123,
+  })
+
+  assert.equal(message.text, 'LLM reply text')
 })

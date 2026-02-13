@@ -185,6 +185,16 @@ Run one cycle:
 python scripts/akshare/run_cycle.py
 ```
 
+Cron-safe market guard (recommended on hosts where cron timezone differs
+from Asia/Shanghai):
+
+```bash
+python scripts/akshare/run_cycle_if_market_open.py
+```
+
+Use `scripts/akshare/crontab.example` to schedule the guard every minute on
+weekdays; the script itself enforces A-share session windows.
+
 Ops wrapper helpers:
 
 ```bash
@@ -199,13 +209,20 @@ Enable backend live-file mode (before starting `mock-api`):
 
 ```bash
 RUNTIME_DATA_MODE=live_file
+STRICT_LIVE_MODE=true
+MARKET_PROVIDER=real
 LIVE_FRAMES_PATH=data/live/onlytrade/frames.1m.json
-LIVE_FILE_REFRESH_MS=2000
+LIVE_FILE_REFRESH_MS=10000
 ```
 
-Default mode remains replay mode:
+For production/live sessions, do not run replay mode.
+
+If `STRICT_LIVE_MODE=true`, backend will fail fast unless `RUNTIME_DATA_MODE=live_file` and `MARKET_PROVIDER=real`.
+
+Replay mode is for offline development only:
 
 ```bash
+STRICT_LIVE_MODE=false
 RUNTIME_DATA_MODE=replay
 ```
 

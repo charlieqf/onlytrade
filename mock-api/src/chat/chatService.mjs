@@ -38,6 +38,10 @@ function sanitizeNickname(value) {
   return text.slice(0, 24)
 }
 
+function isRoomAgentRunning(roomAgent) {
+  return roomAgent?.isRunning === true || roomAgent?.is_running === true
+}
+
 function dayKeyInTimeZone(tsMs, timeZone = 'Asia/Shanghai') {
   const dtf = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -132,6 +136,7 @@ export function createChatService({
   proactivePublicIntervalMs = Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 90_000),
   chatContextTimeZone = process.env.CHAT_CONTEXT_TIMEZONE || 'Asia/Shanghai',
   shouldAgentReply = defaultShouldAgentReply,
+  generateAgentMessageText = null,
 } = {}) {
   if (!store) {
     throw new Error('chat_store_required')
@@ -147,6 +152,18 @@ export function createChatService({
     : 0.05
   const safeProactivePublicIntervalMs = Math.max(10_000, Number(proactivePublicIntervalMs) || 90_000)
   const proactiveStateByRoom = new Map()
+
+  async function generateAgentText(payload) {
+    if (typeof generateAgentMessageText !== 'function') return ''
+    try {
+      const raw = await generateAgentMessageText(payload)
+      const text = sanitizeText(raw)
+      if (!text) return ''
+      return text.slice(0, safeMaxTextLen)
+    } catch {
+      return ''
+    }
+  }
 
   function ensureRoomAgent(roomId) {
     const roomAgent = resolveRoomAgent(roomId)
@@ -176,6 +193,10 @@ export function createChatService({
   }
 
   async function maybeEmitProactivePublicMessage(roomId, roomAgent) {
+    if (!isRoomAgentRunning(roomAgent)) {
+      return
+    }
+
     const now = nowMs()
     const lastProactiveTs = Number(proactiveStateByRoom.get(roomId) || 0)
     if (now - lastProactiveTs < safeProactivePublicIntervalMs) {
@@ -191,11 +212,22 @@ export function createChatService({
       return
     }
 
-    const proactiveMessage = buildProactiveAgentMessage({
+    const generatedText = await generateAgentText({
+      kind: 'proactive',
       roomAgent,
       roomId,
       latestDecision: resolveLatestDecision(roomId),
       historyContext: todayMessages,
+      nowMs: now,
+    })
+    if (!generatedText) {
+      return
+    }
+
+    const proactiveMessage = buildProactiveAgentMessage({
+      roomAgent,
+      roomId,
+      text: generatedText,
       nowMs: now,
     })
 
@@ -260,20 +292,34 @@ export function createChatService({
     }
 
     let agentReply = null
-    if (shouldAgentReply({ messageType: safeMessageType, random: random(), threshold: safePublicReplyRate })) {
-      const nowReply = nowMs()
-      agentReply = buildAgentReply({
+    if (
+      isRoomAgentRunning(roomAgent)
+      && shouldAgentReply({ messageType: safeMessageType, random: random(), threshold: safePublicReplyRate })
+    ) {
+      const historyContext = await readTodayContext(safeRoomId, safeUserSessionId, safeVisibility)
+      const generatedText = await generateAgentText({
+        kind: 'reply',
         roomAgent,
+        roomId: safeRoomId,
         inboundMessage: userMessage,
         latestDecision: resolveLatestDecision(safeRoomId),
-        historyContext: await readTodayContext(safeRoomId, safeUserSessionId, safeVisibility),
-        nowMs: nowReply,
+        historyContext,
+        nowMs: now,
       })
+      if (generatedText) {
+      const nowReply = nowMs()
+        agentReply = buildAgentReply({
+          roomAgent,
+          inboundMessage: userMessage,
+          text: generatedText,
+          nowMs: nowReply,
+        })
 
-      if (safeVisibility === 'private') {
-        await store.appendPrivate(safeRoomId, safeUserSessionId, agentReply)
-      } else {
-        await store.appendPublic(safeRoomId, agentReply)
+        if (safeVisibility === 'private') {
+          await store.appendPrivate(safeRoomId, safeUserSessionId, agentReply)
+        } else {
+          await store.appendPublic(safeRoomId, agentReply)
+        }
       }
     }
 

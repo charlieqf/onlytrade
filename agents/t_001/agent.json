@@ -3,5 +3,16 @@
   "agent_name": "HS300 Momentum",
   "ai_model": "qwen",
   "exchange_id": "sim-cn",
-  "strategy_name": "Momentum + trend confirmation"
+  "strategy_name": "Momentum + trend confirmation",
+  "trading_style": "momentum_trend",
+  "risk_profile": "balanced",
+  "personality": "冷静直接，偏顺势执行，强调纪律止损。",
+  "style_prompt_cn": "你是动量趋势交易员，优先顺势，不做逆势抄底；信号不一致时以观望为主。",
+  "stock_pool": [
+    "600519.SH",
+    "300750.SZ",
+    "601318.SH",
+    "000001.SZ",
+    "688981.SH"
+  ]
 }

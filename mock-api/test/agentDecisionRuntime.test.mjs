@@ -58,6 +58,46 @@ test('createDecisionFromContext emits sell when overbought or negative momentum'
 
   assert.equal(decision.decisions[0].action, 'sell')
   assert.equal(decision.decisions[0].quantity, 100)
+  assert.equal(typeof decision.decisions[0].realized_pnl, 'number')
+})
+
+test('createDecisionFromContext honors trader trading_style from manifest metadata', () => {
+  const weakPullbackContext = makeContext({
+    ret5: -0.004,
+    rsi14: 40,
+    sma20: 106,
+    sma60: 100,
+    price: 98,
+  })
+
+  const momentumDecision = createDecisionFromContext({
+    trader: {
+      trader_id: 'x_momo',
+      trader_name: 'Momentum Trader',
+      ai_model: 'qwen',
+      trading_style: 'momentum_trend',
+      risk_profile: 'balanced',
+    },
+    cycleNumber: 11,
+    context: weakPullbackContext,
+    timestampIso: '2026-02-12T00:02:00.000Z',
+  })
+
+  const meanReversionDecision = createDecisionFromContext({
+    trader: {
+      trader_id: 'x_revert',
+      trader_name: 'Reversion Trader',
+      ai_model: 'qwen',
+      trading_style: 'mean_reversion',
+      risk_profile: 'balanced',
+    },
+    cycleNumber: 11,
+    context: weakPullbackContext,
+    timestampIso: '2026-02-12T00:02:00.000Z',
+  })
+
+  assert.equal(momentumDecision.decisions[0].action, 'sell')
+  assert.equal(meanReversionDecision.decisions[0].action, 'buy')
 })
 
 test('in-memory runtime stores per-trader latest decisions and metrics', async () => {

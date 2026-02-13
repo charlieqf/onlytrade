@@ -37,7 +37,16 @@ test('listAvailableAgents discovers manifests from agents/*/agent.json', async (
   })
 
   await writeManifest(agentsDir, 't_001', { agent_name: 'HS300 Momentum' })
-  await writeManifest(agentsDir, 't_002', { agent_name: 'Value Rebound', avatar_file: 'avatar.jpg', avatar_hd_file: 'avatar-hd.jpg' })
+  await writeManifest(agentsDir, 't_002', {
+    agent_name: 'Value Rebound',
+    avatar_file: 'avatar.jpg',
+    avatar_hd_file: 'avatar-hd.jpg',
+    trading_style: ' mean_reversion ',
+    risk_profile: ' balanced ',
+    personality: ' 冷静耐心，偏逆向思考。 ',
+    style_prompt_cn: ' 弱势分批吸纳，强势分批止盈。 ',
+    stock_pool: ['600519.SH', '601318.sh', 'invalid', '300750.SZ', '600519.SH'],
+  })
 
   const available = await store.listAvailableAgents()
   assert.equal(available.length, 2)
@@ -45,6 +54,11 @@ test('listAvailableAgents discovers manifests from agents/*/agent.json', async (
   assert.equal(available[1].agent_id, 't_002')
   assert.equal(available[1].avatar_file, 'avatar.jpg')
   assert.equal(available[1].avatar_hd_file, 'avatar-hd.jpg')
+  assert.equal(available[1].trading_style, 'mean_reversion')
+  assert.equal(available[1].risk_profile, 'balanced')
+  assert.equal(available[1].personality, '冷静耐心，偏逆向思考。')
+  assert.equal(available[1].style_prompt_cn, '弱势分批吸纳，强势分批止盈。')
+  assert.deepEqual(available[1].stock_pool, ['600519.SH', '601318.SH', '300750.SZ'])
 })
 
 test('register/unregister persists registry.json state', async (t) => {

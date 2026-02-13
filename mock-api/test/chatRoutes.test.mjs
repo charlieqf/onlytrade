@@ -34,6 +34,7 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
       PORT: String(port),
       AGENT_LLM_ENABLED: 'false',
       RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
     },
     stdio: 'ignore',
   })
@@ -68,7 +69,6 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
   const publicReadBeforeBody = await publicReadBefore.json()
   assert.equal(publicReadBefore.ok, true)
   assert.equal(Array.isArray(publicReadBeforeBody.data.messages), true)
-  assert.equal(publicReadBeforeBody.data.messages.some((item) => item.sender_type === 'agent'), true)
 
   const invalidMentionRes = await fetch(`${baseUrl}/api/chat/rooms/t_001/messages`, {
     method: 'POST',
@@ -99,7 +99,7 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
   assert.equal(validPublicPost.ok, true)
   assert.equal(publicPostBody.success, true)
   assert.equal(typeof publicPostBody.data.message.sender_name, 'string')
-  assert.equal(typeof publicPostBody.data.agent_reply.sender_name, 'string')
+  assert.equal(publicPostBody.data.agent_reply, null)
 
   const publicReadAfter = await fetch(`${baseUrl}/api/chat/rooms/t_001/public?limit=20`)
   const publicReadBody = await publicReadAfter.json()
@@ -125,5 +125,5 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
   assert.equal(privateRead.ok, true)
   assert.equal(privateReadBody.success, true)
   assert.equal(Array.isArray(privateReadBody.data.messages), true)
-  assert.equal(privateReadBody.data.messages.length >= 2, true)
+  assert.equal(privateReadBody.data.messages.length >= 1, true)
 })

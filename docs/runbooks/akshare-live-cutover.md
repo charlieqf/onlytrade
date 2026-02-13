@@ -23,7 +23,7 @@ python scripts/akshare/run_cycle.py
 ```bash
 RUNTIME_DATA_MODE=live_file
 LIVE_FRAMES_PATH=data/live/onlytrade/frames.1m.json
-LIVE_FILE_REFRESH_MS=2000
+LIVE_FILE_REFRESH_MS=10000
 ```
 
 3. Restart `mock-api`.

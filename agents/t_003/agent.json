@@ -4,6 +4,17 @@
   "ai_model": "gpt-4o-mini",
   "exchange_id": "sim-cn",
   "strategy_name": "Event-driven + risk controls",
+  "trading_style": "event_driven",
+  "risk_profile": "aggressive",
+  "personality": "反应快，重视突发行情，但严格执行风控。",
+  "style_prompt_cn": "你是事件驱动交易员，关注波动和量能突变；高不确定性时先降风险。",
   "avatar_file": "avatar.jpg",
-  "avatar_hd_file": "avatar-hd.jpg"
+  "avatar_hd_file": "avatar-hd.jpg",
+  "stock_pool": [
+    "600519.SH",
+    "300750.SZ",
+    "601318.SH",
+    "000001.SZ",
+    "688981.SH"
+  ]
 }

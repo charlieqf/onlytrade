@@ -7,39 +7,100 @@ function toSafeNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function decideAction(context) {
+function normalizeTradingStyle(trader) {
+  const explicit = String(trader?.trading_style || '').trim().toLowerCase()
+  if (explicit) return explicit
+
+  const strategy = String(trader?.strategy_name || '').trim().toLowerCase()
+  if (strategy.includes('momentum')) return 'momentum_trend'
+  if (strategy.includes('reversion') || strategy.includes('value')) return 'mean_reversion'
+  if (strategy.includes('event')) return 'event_driven'
+  if (strategy.includes('macro')) return 'macro_swing'
+  return 'balanced'
+}
+
+function normalizeRiskProfile(trader) {
+  const risk = String(trader?.risk_profile || '').trim().toLowerCase()
+  if (risk === 'conservative' || risk === 'aggressive' || risk === 'balanced') {
+    return risk
+  }
+  return 'balanced'
+}
+
+function decideAction(context, traderProfile = {}) {
   const ret5 = toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0)
+  const volRatio20 = toSafeNumber(context?.intraday?.feature_snapshot?.vol_ratio_20, 1)
   const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
   const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
   const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
 
   const bullishTrend = sma20 > 0 && sma60 > 0 && sma20 >= sma60
   const bearishTrend = sma20 > 0 && sma60 > 0 && sma20 < sma60
 
-  if (ret5 <= -0.002 || rsi14 >= 72 || bearishTrend) {
-    return 'sell'
+  if (style === 'mean_reversion') {
+    if (rsi14 >= 72 || (ret5 >= 0.004 && !bullishTrend)) return 'sell'
+    if ((ret5 <= -0.0025 && rsi14 <= 45 && !bearishTrend) || (ret5 <= -0.004 && rsi14 <= 40)) return 'buy'
+    return 'hold'
   }
 
-  if (ret5 >= 0.002 && bullishTrend && rsi14 <= 70) {
-    return 'buy'
+  if (style === 'event_driven') {
+    if (volRatio20 >= 1.5 && (ret5 <= -0.0035 || bearishTrend || rsi14 >= 73)) return 'sell'
+    if (volRatio20 >= 1.3 && ret5 >= 0.003 && bullishTrend && rsi14 <= 68) return 'buy'
+    return 'hold'
   }
 
+  if (style === 'macro_swing') {
+    if (bearishTrend || rsi14 >= 75 || ret5 <= -0.0045) return 'sell'
+    if (bullishTrend && rsi14 >= 45 && rsi14 <= 68 && ret5 >= -0.0015) return 'buy'
+    return 'hold'
+  }
+
+  if (ret5 <= -0.002 || rsi14 >= 72 || bearishTrend) return 'sell'
+  if (ret5 >= 0.002 && bullishTrend && rsi14 <= 70) return 'buy'
   return 'hold'
 }
 
-function confidenceFromContext(context, action) {
-  const ret5 = Math.abs(toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0))
+function confidenceFromContext(context, action, traderProfile = {}) {
+  const ret5Abs = Math.abs(toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0))
   const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
-  let base = 0.56 + clamp(ret5 * 18, 0, 0.2)
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
+  const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
+  let base = 0.56 + clamp(ret5Abs * 18, 0, 0.2)
 
-  if (action === 'buy' && rsi14 < 65) {
-    base += 0.04
-  }
-  if (action === 'sell' && rsi14 > 70) {
-    base += 0.04
-  }
+  if (action === 'buy' && rsi14 < 65) base += 0.04
+  if (action === 'sell' && rsi14 > 70) base += 0.04
+
+  if (style === 'event_driven') base += 0.02
+  if (style === 'macro_swing') base -= 0.01
+
+  if (risk === 'conservative') base -= 0.02
+  if (risk === 'aggressive') base += 0.02
 
   return Number(clamp(base, 0.51, 0.92).toFixed(2))
+}
+
+function baseQuantityFromProfile(action, lotSize, confidence, traderProfile = {}) {
+  if (action === 'hold') return 0
+
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
+  const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
+  let lots = 1
+
+  if (risk === 'aggressive') lots = 2
+  if (risk === 'conservative') lots = 1
+
+  if (style === 'event_driven' && risk === 'aggressive') {
+    lots = Math.max(lots, 2)
+  }
+  if (style === 'macro_swing' && risk !== 'aggressive') {
+    lots = 1
+  }
+  if (confidence >= 0.82 && risk !== 'conservative') {
+    lots += 1
+  }
+
+  return Math.max(1, Math.floor(toSafeNumber(lotSize, 100))) * Math.max(1, lots)
 }
 
 function latestPrice(context) {
@@ -121,19 +182,60 @@ function portfolioPositions(holdingsMap) {
   return rows
 }
 
-function buildReasoning(action, context) {
+function buildReasoning(action, context, traderProfile = {}) {
   const ret5 = toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0)
   const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
   const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
   const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
+  const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
 
   if (action === 'buy') {
-    return `Momentum positive (ret5=${ret5.toFixed(4)}), trend supportive (SMA20 ${sma20.toFixed(2)} >= SMA60 ${sma60.toFixed(2)}), RSI=${rsi14.toFixed(1)}.`
+    return `${style} buy setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, SMA20=${sma20.toFixed(2)}, SMA60=${sma60.toFixed(2)}, risk=${risk}).`
   }
   if (action === 'sell') {
-    return `Risk-off signal (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, trend ${sma20.toFixed(2)} vs ${sma60.toFixed(2)}).`
+    return `${style} sell/risk-off setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, trend ${sma20.toFixed(2)} vs ${sma60.toFixed(2)}, risk=${risk}).`
   }
-  return `No strong edge (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}), hold for confirmation.`
+  return `${style} no strong edge (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, risk=${risk}), hold.`
+}
+
+function buildDecisionInputPrompt(context, symbol, cycleNumber) {
+  const payload = {
+    cycle_number: cycleNumber,
+    symbol,
+    intraday: {
+      ret_5: toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0),
+      ret_20: toSafeNumber(context?.intraday?.feature_snapshot?.ret_20, 0),
+      atr_14: toSafeNumber(context?.intraday?.feature_snapshot?.atr_14, 0),
+      vol_ratio_20: toSafeNumber(context?.intraday?.feature_snapshot?.vol_ratio_20, 0),
+    },
+    daily: {
+      sma_20: toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0),
+      sma_60: toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0),
+      rsi_14: toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50),
+      range_20d_pct: toSafeNumber(context?.daily?.feature_snapshot?.range_20d_pct, 0),
+    },
+    position_state: {
+      shares: toSafeNumber(context?.position_state?.shares, 0),
+      avg_cost: toSafeNumber(context?.position_state?.avg_cost, 0),
+      cash_cny: toSafeNumber(context?.position_state?.cash_cny, 0),
+    },
+  }
+  return JSON.stringify(payload)
+}
+
+function buildHeuristicTrace(action, reasoning, context, traderProfile = {}) {
+  const ret5 = toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0)
+  const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
+  const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
+  const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
+  const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
+  return [
+    `decision_path=heuristic action=${action} style=${style} risk=${risk}`,
+    `features: ret5=${ret5.toFixed(4)}, rsi14=${rsi14.toFixed(2)}, sma20=${sma20.toFixed(2)}, sma60=${sma60.toFixed(2)}`,
+    `reasoning: ${reasoning}`,
+  ].join('\n')
 }
 
 function sortByCycleDesc(a, b) {
@@ -142,16 +244,21 @@ function sortByCycleDesc(a, b) {
 
 export function createDecisionFromContext({ trader, cycleNumber, context, timestampIso }) {
   const llmDecision = context?.llm_decision || null
-  const action = String(llmDecision?.action || decideAction(context)).toLowerCase()
+  const traderProfile = {
+    tradingStyle: normalizeTradingStyle(trader),
+    riskProfile: normalizeRiskProfile(trader),
+  }
+
+  const action = String(llmDecision?.action || decideAction(context, traderProfile)).toLowerCase()
   const symbol = context?.symbol || '600519.SH'
   const price = latestPrice(context)
   const confidence = Number.isFinite(Number(llmDecision?.confidence))
     ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
-    : confidenceFromContext(context, action)
+    : confidenceFromContext(context, action, traderProfile)
+  const lotSize = Math.max(1, Math.floor(toSafeNumber(context?.constraints?.lot_size, 100)))
   const quantity = Number.isFinite(Number(llmDecision?.quantity))
     ? Math.max(0, Math.floor(Number(llmDecision.quantity)))
-    : (action === 'hold' ? 0 : 100)
-  const lotSize = Math.max(1, Math.floor(toSafeNumber(context?.constraints?.lot_size, 100)))
+    : baseQuantityFromProfile(action, lotSize, confidence, traderProfile)
   const requestedQuantity = action === 'hold' ? 0 : toLotQuantity(quantity, lotSize)
   const commissionRate = Math.max(0, toSafeNumber(context?.runtime_config?.commission_rate, 0.0003))
 
@@ -174,6 +281,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   let filledQuantity = 0
   let filledNotional = 0
   let feePaid = 0
+  let realizedPnl = 0
   let executionError = ''
 
   if (action === 'buy') {
@@ -200,8 +308,10 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     filledQuantity = Math.max(0, Math.min(requestedQuantity, availableQuantity))
 
     if (filledQuantity > 0) {
+      const avgCost = round(symbolHolding.avg_cost, 4)
       filledNotional = round(filledQuantity * price, 2)
       feePaid = round(filledNotional * commissionRate, 2)
+      realizedPnl = round((price - avgCost) * filledQuantity - feePaid, 2)
       symbolHolding.shares = Math.max(0, symbolHolding.shares - filledQuantity)
       cashCny = round(cashCny + filledNotional - feePaid, 2)
       executed = true
@@ -219,8 +329,12 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const totalUnrealizedProfit = portfolio.reduce((acc, position) => acc + position.unrealized_pnl, 0)
   const totalBalance = round(cashCny + marketValue, 2)
 
-  const reasoning = llmDecision?.reasoning || buildReasoning(action, context)
+  const reasoning = llmDecision?.reasoning || buildReasoning(action, context, traderProfile)
   const decisionSource = llmDecision?.source === 'openai' ? 'llm.openai' : 'rule.heuristic'
+  const systemPrompt = llmDecision?.system_prompt
+    || (llmDecision?.model ? `agent.market_context.v1+${llmDecision.model}` : 'agent.market_context.rule_engine.v1')
+  const inputPrompt = llmDecision?.input_prompt || buildDecisionInputPrompt(context, symbol, cycleNumber)
+  const cotTrace = llmDecision?.cot_trace || buildHeuristicTrace(action, reasoning, context, traderProfile)
   const actionSuccess = action === 'hold' ? true : executed
   const decisionSuccess = actionSuccess
   const executionLog = action === 'hold'
@@ -239,11 +353,9 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const decision = {
     timestamp: timestampIso,
     cycle_number: cycleNumber,
-    system_prompt: llmDecision?.model
-      ? `agent.market_context.v1+${llmDecision.model}`
-      : 'agent.market_context.v1',
-    input_prompt: `Evaluate ${symbol} using intraday + daily context`,
-    cot_trace: 'compressed-mock-runtime-rationale',
+    system_prompt: systemPrompt,
+    input_prompt: inputPrompt,
+    cot_trace: cotTrace,
     decision_json: JSON.stringify({ action, symbol }),
     decision_source: decisionSource,
     account_state: {
@@ -265,6 +377,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
         filled_quantity: filledQuantity,
         filled_notional: filledNotional,
         fee_paid: feePaid,
+        realized_pnl: realizedPnl,
         leverage: 1,
         price: Number(price.toFixed(2)),
         stop_loss: action === 'hold' ? undefined : stopLoss,

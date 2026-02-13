@@ -20,11 +20,41 @@ function normalizeOptionalText(value, maxLen = 512) {
   return text.slice(0, maxLen)
 }
 
+function normalizeOptionalSlug(value) {
+  const text = String(value || '').trim().toLowerCase()
+  if (!text) return null
+  if (!/^[a-z][a-z0-9_]{1,63}$/.test(text)) return null
+  return text
+}
+
 function normalizeAssetFileName(value) {
   const text = String(value || '').trim()
   if (!text) return null
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(text)) return null
   return text
+}
+
+function normalizeStockSymbol(value) {
+  const text = String(value || '').trim().toUpperCase()
+  if (!text) return null
+  if (!/^\d{6}\.(SH|SZ)$/.test(text)) return null
+  return text
+}
+
+function normalizeStockPool(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const output = []
+
+  for (const item of value) {
+    const symbol = normalizeStockSymbol(item)
+    if (!symbol || seen.has(symbol)) continue
+    seen.add(symbol)
+    output.push(symbol)
+    if (output.length >= 100) break
+  }
+
+  return output
 }
 
 function assertValidAgentId(agentId) {
@@ -76,6 +106,11 @@ function parseManifest(raw, expectedAgentId = '') {
   const avatarHdFile = normalizeAssetFileName(payload.avatar_hd_file)
   const avatarUrl = normalizeOptionalText(payload.avatar_url)
   const avatarHdUrl = normalizeOptionalText(payload.avatar_hd_url)
+  const tradingStyle = normalizeOptionalSlug(payload.trading_style)
+  const riskProfile = normalizeOptionalSlug(payload.risk_profile)
+  const personality = normalizeOptionalText(payload.personality, 240)
+  const stylePromptCn = normalizeOptionalText(payload.style_prompt_cn, 800)
+  const stockPool = normalizeStockPool(payload.stock_pool)
 
   return {
     ...payload,
@@ -87,6 +122,11 @@ function parseManifest(raw, expectedAgentId = '') {
     avatar_hd_file: avatarHdFile,
     avatar_url: avatarUrl,
     avatar_hd_url: avatarHdUrl,
+    trading_style: tradingStyle,
+    risk_profile: riskProfile,
+    personality,
+    style_prompt_cn: stylePromptCn,
+    stock_pool: stockPool,
   }
 }
 

@@ -89,8 +89,8 @@ export function LobbyPage() {
 
                 <div className="text-xs text-zinc-400">
                   {language === 'zh'
-                    ? 'Demo 模式：页面使用静态或模拟流数据，便于演示完整交互。'
-                    : 'Demo mode: pages run on static or simulated stream data for complete interaction demos.'}
+                    ? '实时模式：页面使用实时行情与实盘运行状态。'
+                    : 'Live mode: pages use realtime market data and runtime state.'}
                 </div>
               </div>
             </div>

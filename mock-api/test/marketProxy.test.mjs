@@ -263,3 +263,23 @@ test('createMarketDataService uses replay frame provider for advancing 1m replay
   assert.equal(batch.frames.length, 1)
   assert.equal(batch.frames[0].bar.close, 1510.5)
 })
+
+test('createMarketDataService throws in strict live mode when 1m live frames unavailable', async () => {
+  const service = createMarketDataService({
+    provider: 'real',
+    strictLive: true,
+    replayBatch: {
+      schema_version: 'market.frames.v1',
+      market: 'CN-A',
+      mode: 'mock',
+      provider: 'replay-stream',
+      frames: [],
+    },
+    replayFrameProvider: () => [],
+  })
+
+  await assert.rejects(
+    () => service.getFrames({ symbol: SYMBOL, interval: '1m', limit: 2 }),
+    (error) => error?.message === 'live_frames_unavailable'
+  )
+})

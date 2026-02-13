@@ -291,6 +291,7 @@ export function createMarketDataService({
   replayBatch = null,
   dailyHistoryBatch = null,
   replayFrameProvider = null,
+  strictLive = false,
   fetchImpl = fetch,
 } = {}) {
   const providerMode = provider === 'real' ? 'real' : 'mock'
@@ -368,6 +369,12 @@ export function createMarketDataService({
           frames: dedupeAndSortFrames(replayFrames).slice(-maxItems),
         }
       }
+    }
+
+    if (!forceMock && strictLive && interval === '1m') {
+      const error = new Error('live_frames_unavailable')
+      error.code = 'live_frames_unavailable'
+      throw error
     }
 
     return {

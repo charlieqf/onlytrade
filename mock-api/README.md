@@ -35,7 +35,7 @@ Optional env vars:
 - `AGENT_DECISION_EVERY_BARS`: trigger agent decision every N replay bars (default `10`, i.e. every 10 minutes of market data in `1m` replay).
 - `RUNTIME_DATA_MODE`: `replay` (default) or `live_file`.
 - `LIVE_FRAMES_PATH`: canonical live file path for `live_file` mode (default `data/live/onlytrade/frames.1m.json`).
-- `LIVE_FILE_REFRESH_MS`: live-file reload check interval in milliseconds (default `2000`).
+- `LIVE_FILE_REFRESH_MS`: live-file reload check interval in milliseconds (default `10000`).
 - `AGENT_COMMISSION_RATE`: commission applied per buy/sell turnover (default `0.0003` = 3 bps).
 - `REPLAY_SPEED`: replay speed multiplier for `1m` bars (default `60`).
 - `REPLAY_WARMUP_BARS`: initial visible bars before replay starts advancing (default `120`).

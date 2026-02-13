@@ -3,5 +3,16 @@
   "agent_name": "Value Rebound",
   "ai_model": "deepseek",
   "exchange_id": "sim-cn",
-  "strategy_name": "Mean reversion + support zones"
+  "strategy_name": "Mean reversion + support zones",
+  "trading_style": "mean_reversion",
+  "risk_profile": "conservative",
+  "personality": "耐心谨慎，偏逆向，强调分批和安全边际。",
+  "style_prompt_cn": "你是均值回归交易员，优先在超跌与支撑附近分批参与，避免追涨。",
+  "stock_pool": [
+    "600519.SH",
+    "300750.SZ",
+    "601318.SH",
+    "000001.SZ",
+    "688981.SH"
+  ]
 }

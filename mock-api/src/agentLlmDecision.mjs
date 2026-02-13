@@ -225,57 +225,41 @@ function universalInstruction({ tokenSaver = false } = {}) {
 }
 
 function styleInstructionForTrader(trader, { tokenSaver = false } = {}) {
-  const traderId = String(trader?.trader_id || '').toLowerCase()
-  const strategy = String(trader?.strategy_name || '').toLowerCase()
+  const tradingStyle = String(trader?.trading_style || '').trim().toLowerCase()
+  const riskProfile = String(trader?.risk_profile || 'balanced').trim().toLowerCase() || 'balanced'
+  const personality = String(trader?.personality || '').trim()
+  const stylePromptCn = String(trader?.style_prompt_cn || '').trim()
+  const strategyName = String(trader?.strategy_name || '').trim()
 
-  if (traderId === 't_001' || strategy.includes('momentum')) {
-    if (tokenSaver) {
-      return 'Style: momentum trend-following; avoid counter-trend entries and cut quickly on momentum loss.'
-    }
-    return [
-      'Style: Momentum/Trend Follower.',
-      'Mindset: participate when trend and short-term return align; cut exposure quickly when momentum fades.',
-      'Bias: fewer but cleaner directional decisions; avoid mean-reversion catching.',
-    ].join(' ')
+  const styleBriefByKey = {
+    momentum_trend: 'Style: momentum trend-following; avoid counter-trend entries and cut quickly on momentum loss.',
+    mean_reversion: 'Style: mean-reversion/value rebound; buy weakness selectively and avoid breakout chasing.',
+    event_driven: 'Style: event/regime-shift; respond to volatility spikes and de-risk fast under uncertainty.',
+    macro_swing: 'Style: macro swing; prefer slower directional entries with disciplined risk and lower churn.',
   }
 
-  if (traderId === 't_002' || strategy.includes('mean reversion') || strategy.includes('reversion')) {
-    if (tokenSaver) {
-      return 'Style: mean-reversion/value rebound; buy weakness selectively and avoid breakout chasing.'
-    }
-    return [
-      'Style: Value Rebound / Mean Reversion.',
-      'Mindset: accumulate when short-term weakness appears in broader stable structure.',
-      'Bias: scale cautiously, avoid chasing strong breakouts, protect downside if weakness persists.',
-    ].join(' ')
-  }
+  const fallbackBrief = 'Style: balanced systematic discretionary; trade only when signals align.'
+  const styleBrief = styleBriefByKey[tradingStyle] || fallbackBrief
 
-  if (traderId === 't_003' || strategy.includes('event')) {
-    if (tokenSaver) {
-      return 'Style: event/regime-shift; respond to volatility spikes and de-risk fast under uncertainty.'
-    }
-    return [
-      'Style: Event Flow / Regime Shift.',
-      'Mindset: react to abrupt state changes using volatility and volume context.',
-      'Bias: quick de-risking when uncertainty spikes; only commit when conviction is clear.',
-    ].join(' ')
-  }
+  if (tokenSaver) {
+    const compact = [
+      styleBrief,
+      `risk=${riskProfile}`,
+      strategyName ? `strategy=${strategyName}` : '',
+      personality ? `personality=${personality}` : '',
+      stylePromptCn ? `style_prompt_cn=${stylePromptCn}` : '',
+    ].filter(Boolean).join(' | ')
 
-  if (traderId === 't_004' || strategy.includes('macro')) {
-    if (tokenSaver) {
-      return 'Style: macro swing; prefer slower directional entries with disciplined risk and lower churn.'
-    }
-    return [
-      'Style: Macro Swing / Regime Rotation.',
-      'Mindset: hold directional positions longer when higher-timeframe context is supportive.',
-      'Bias: fewer trades, avoid overtrading, prioritize capital efficiency and clear invalidation.',
-    ].join(' ')
+    return compact
   }
 
   return [
-    'Style: Balanced systematic discretionary.',
-    'Mindset: trade only when signals align; otherwise hold and preserve capital.',
-  ].join(' ')
+    styleBrief,
+    strategyName ? `Strategy name: ${strategyName}.` : '',
+    `Risk profile: ${riskProfile}.`,
+    personality ? `Personality: ${personality}.` : '',
+    stylePromptCn ? `CN style instruction: ${stylePromptCn}.` : '',
+  ].filter(Boolean).join(' ')
 }
 
 export function createOpenAIAgentDecider({
@@ -304,6 +288,25 @@ export function createOpenAIAgentDecider({
 
     const allowedSymbol = payload?.symbol || context?.symbol || '600519.SH'
     const reasoningMaxChars = devTokenSaver ? 160 : 320
+    const userPayload = devTokenSaver
+      ? {
+        c: cycleNumber,
+        t: {
+          id: trader?.trader_id,
+          p: trader?.ai_model,
+        },
+        x: payload,
+      }
+      : {
+        cycle_number: cycleNumber,
+        trader: {
+          trader_id: trader?.trader_id,
+          trader_name: trader?.trader_name,
+          profile: trader?.ai_model,
+        },
+        context: payload,
+      }
+    const userPrompt = JSON.stringify(userPayload)
 
     const decisionSchema = {
       name: 'agent_trade_decision_bundle',
@@ -370,24 +373,7 @@ export function createOpenAIAgentDecider({
             { role: 'system', content: systemPrompt },
             {
               role: 'user',
-              content: devTokenSaver
-                ? JSON.stringify({
-                  c: cycleNumber,
-                  t: {
-                    id: trader?.trader_id,
-                    p: trader?.ai_model,
-                  },
-                  x: payload,
-                })
-                : JSON.stringify({
-                  cycle_number: cycleNumber,
-                  trader: {
-                    trader_id: trader?.trader_id,
-                    trader_name: trader?.trader_name,
-                    profile: trader?.ai_model,
-                  },
-                  context: payload,
-                }),
+              content: userPrompt,
             },
           ],
         }),
@@ -418,6 +404,9 @@ export function createOpenAIAgentDecider({
         ...normalizeDecision(extracted, context),
         source: 'openai',
         model,
+        system_prompt: systemPrompt,
+        input_prompt: userPrompt,
+        cot_trace: String(extracted?.reasoning || ''),
       }
     } finally {
       clearTimeout(timer)

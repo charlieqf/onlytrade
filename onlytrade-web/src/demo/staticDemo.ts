@@ -47,11 +47,13 @@ function replayFramesForSymbol(
 
 export type DemoMode = 'static' | 'mock-live' | 'live'
 
-const DEMO_MODE_RAW = (import.meta.env.VITE_DEMO_MODE || 'static').toLowerCase()
+const DEMO_MODE_RAW = (import.meta.env.VITE_DEMO_MODE || 'live').toLowerCase()
+const DEMO_MODE_ALLOWED = (import.meta.env.VITE_ALLOW_DEMO_MODE || 'false').toLowerCase() === 'true'
 const DEMO_BOOT_TS = Date.now()
 const MOCK_LIVE_STEP_MS = 8000
 
 export function getDemoMode(): DemoMode {
+  if (!DEMO_MODE_ALLOWED) return 'live'
   if (DEMO_MODE_RAW === 'live') return 'live'
   if (DEMO_MODE_RAW === 'mock-live' || DEMO_MODE_RAW === 'mocklive') return 'mock-live'
   return 'static'

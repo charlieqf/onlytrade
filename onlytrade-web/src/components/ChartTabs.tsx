@@ -47,7 +47,9 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
 
   // Load room symbol universe (A-share focused).
   useEffect(() => {
-    fetch('/api/symbols?exchange=sim-cn')
+    const query = new URLSearchParams({ exchange: 'sim-cn' })
+    if (traderId) query.set('trader_id', traderId)
+    fetch(`/api/symbols?${query.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         const list = Array.isArray(data?.symbols) ? data.symbols : []
@@ -69,7 +71,7 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
           { symbol: '300750.SZ', name: '宁德时代', category: 'stock' },
         ])
       })
-  }, [])
+  }, [traderId])
 
   // 点击外部关闭下拉
   useEffect(() => {

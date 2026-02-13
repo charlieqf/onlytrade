@@ -51,6 +51,7 @@ export interface DecisionAction {
   filled_quantity?: number
   filled_notional?: number
   fee_paid?: number
+  realized_pnl?: number
   leverage: number
   price: number
   stop_loss?: number      // Stop loss price
@@ -331,6 +332,10 @@ export interface TraderInfo {
   trader_name: string
   ai_model: string
   exchange_id?: string
+  trading_style?: string
+  risk_profile?: string
+  personality?: string
+  style_prompt_cn?: string
   avatar_url?: string
   avatar_hd_url?: string
   is_running?: boolean
@@ -454,6 +459,10 @@ export interface CompetitionTraderData {
   trader_id: string
   trader_name: string
   ai_model: string
+  trading_style?: string
+  risk_profile?: string
+  personality?: string
+  style_prompt_cn?: string
   avatar_url?: string
   avatar_hd_url?: string
   exchange: string
@@ -483,6 +492,10 @@ export interface TraderConfigData {
   trader_name: string
   ai_model: string
   exchange_id: string
+  trading_style?: string
+  risk_profile?: string
+  personality?: string
+  style_prompt_cn?: string
   avatar_url?: string
   avatar_hd_url?: string
   strategy_id?: string  // 策略ID

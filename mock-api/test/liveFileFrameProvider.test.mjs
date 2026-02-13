@@ -114,3 +114,27 @@ test('provider keeps last good cache on read/parse failure', async () => {
   assert.ok(provider.getStatus().last_error)
 
 })
+
+test('provider stale window honors staleAfterMs override', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'onlytrade-live-provider-'))
+  const filePath = path.join(tempDir, 'frames.1m.json')
+
+  await writeCanonicalAtomic(filePath, {
+    schema_version: 'market.frames.v1',
+    market: 'CN-A',
+    mode: 'real',
+    provider: 'akshare',
+    frames: [frame({ ts: 1_700_000_000_000, close: 30 })],
+  })
+
+  const provider = createLiveFileFrameProvider({ filePath, refreshMs: 10, staleAfterMs: 30 })
+  await provider.getFrames({ symbol: '600519.SH', interval: '1m', limit: 10 })
+
+  const fresh = provider.getStatus()
+  assert.equal(fresh.stale, false)
+  assert.equal(fresh.stale_after_ms, 1500)
+
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  const stale = provider.getStatus()
+  assert.equal(stale.stale, true)
+})

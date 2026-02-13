@@ -34,12 +34,13 @@ function indexFrames(frames) {
   return bySymbolInterval
 }
 
-export function createLiveFileFrameProvider({ filePath, refreshMs = 2000 } = {}) {
+export function createLiveFileFrameProvider({ filePath, refreshMs = 10000, staleAfterMs = 180000 } = {}) {
   if (!filePath) {
     throw new Error('live_file_path_required')
   }
 
-  const minRefreshMs = Math.max(250, Number(refreshMs) || 2000)
+  const minRefreshMs = Math.max(250, Number(refreshMs) || 10000)
+  const staleWindowMs = Math.max(minRefreshMs * 6, Number(staleAfterMs) || 180000)
   let lastAttemptTsMs = 0
   let lastLoadTsMs = null
   let lastMtimeMs = null
@@ -103,6 +104,7 @@ export function createLiveFileFrameProvider({ filePath, refreshMs = 2000 } = {})
     return {
       file_path: filePath,
       refresh_ms: minRefreshMs,
+      stale_after_ms: staleWindowMs,
       mode,
       provider,
       symbols_1m: getSymbols('1m'),
@@ -112,7 +114,7 @@ export function createLiveFileFrameProvider({ filePath, refreshMs = 2000 } = {})
       last_mtime_ms: lastMtimeMs,
       last_error: lastError,
       last_error_ts_ms: lastErrorTsMs,
-      stale: !lastLoadTsMs || Date.now() - lastLoadTsMs > minRefreshMs * 6,
+      stale: !lastLoadTsMs || Date.now() - lastLoadTsMs > staleWindowMs,
     }
   }
 

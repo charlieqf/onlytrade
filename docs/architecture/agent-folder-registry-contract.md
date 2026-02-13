@@ -17,6 +17,10 @@ Minimal manifest schema:
   "ai_model": "qwen",
   "exchange_id": "sim-cn",
   "strategy_name": "Momentum + trend confirmation",
+  "trading_style": "momentum_trend",
+  "risk_profile": "balanced",
+  "personality": "冷静直接，偏顺势执行",
+  "style_prompt_cn": "你是动量趋势交易员，优先顺势，不做逆势抄底。",
   "avatar_file": "avatar.jpg",
   "avatar_hd_file": "avatar-hd.jpg"
 }
@@ -32,6 +36,11 @@ Required fields:
 Optional fields:
 
 - any metadata (`strategy_name`, tags, description, etc.)
+- style/personality metadata:
+  - `trading_style` (slug, e.g. `momentum_trend` / `mean_reversion` / `event_driven` / `macro_swing`)
+  - `risk_profile` (slug, e.g. `conservative` / `balanced` / `aggressive`)
+  - `personality` (short text for chat persona)
+  - `style_prompt_cn` (Chinese style prompt for LLM decision mode)
 - avatar metadata:
   - `avatar_file` (safe file name pattern `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
   - `avatar_hd_file` (same pattern)
@@ -80,6 +89,7 @@ Default on register:
 - lobby list = registered where `show_in_lobby=true`
 - runtime loop set = registered where `status=running`
 - status enum is strictly `running|stopped`
+- trader style/persona are sourced from folder manifests, not hardcoded per `trader_id`
 
 ## API behavior
 

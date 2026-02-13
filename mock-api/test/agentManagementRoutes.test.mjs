@@ -48,7 +48,16 @@ test('agent management routes drive registry-backed trader and competition paylo
   await mkdir(agentsDir, { recursive: true })
   await mkdir(path.dirname(registryPath), { recursive: true })
   await writeFile(registryPath, JSON.stringify({ schema_version: 'agent.registry.v1', agents: {} }, null, 2), 'utf8')
-  await writeManifest(agentsDir, 't_001', { agent_name: 'HS300 Momentum', avatar_file: 'avatar.jpg', avatar_hd_file: 'avatar-hd.jpg' })
+  await writeManifest(agentsDir, 't_001', {
+    agent_name: 'HS300 Momentum',
+    avatar_file: 'avatar.jpg',
+    avatar_hd_file: 'avatar-hd.jpg',
+    trading_style: 'momentum_trend',
+    risk_profile: 'balanced',
+    personality: '冷静直接，偏顺势执行。',
+    style_prompt_cn: '优先顺势，不做逆势抄底。',
+    stock_pool: ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH'],
+  })
   await writeManifest(agentsDir, 't_002', { agent_name: 'Value Rebound' })
   await writeFile(path.join(agentsDir, 't_001', 'avatar.jpg'), 'avatar-thumb', 'utf8')
   await writeFile(path.join(agentsDir, 't_001', 'avatar-hd.jpg'), 'avatar-hd', 'utf8')
@@ -62,6 +71,7 @@ test('agent management routes drive registry-backed trader and competition paylo
       PORT: String(port),
       AGENT_LLM_ENABLED: 'false',
       RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
       AGENTS_DIR: agentsDir,
       AGENT_REGISTRY_PATH: registryPath,
     },
@@ -104,6 +114,23 @@ test('agent management routes drive registry-backed trader and competition paylo
   assert.equal(tradersAfterRegisterBody.data[0].trader_id, 't_001')
   assert.equal(tradersAfterRegisterBody.data[0].avatar_url, '/api/agents/t_001/assets/avatar.jpg')
   assert.equal(tradersAfterRegisterBody.data[0].avatar_hd_url, '/api/agents/t_001/assets/avatar-hd.jpg')
+  assert.equal(tradersAfterRegisterBody.data[0].trading_style, 'momentum_trend')
+  assert.equal(tradersAfterRegisterBody.data[0].risk_profile, 'balanced')
+  assert.equal(tradersAfterRegisterBody.data[0].personality, '冷静直接，偏顺势执行。')
+  assert.deepEqual(tradersAfterRegisterBody.data[0].stock_pool, ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH'])
+
+  const symbolsByTraderRes = await fetch(`${baseUrl}/api/symbols?trader_id=t_001`)
+  const symbolsByTraderBody = await symbolsByTraderRes.json()
+  assert.equal(symbolsByTraderRes.ok, true)
+  assert.deepEqual(
+    symbolsByTraderBody.symbols.map((item) => item.symbol),
+    ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH']
+  )
+
+  const decisionsAfterRegisterRes = await fetch(`${baseUrl}/api/decisions/latest?trader_id=t_001&limit=5`)
+  const decisionsAfterRegisterBody = await decisionsAfterRegisterRes.json()
+  assert.equal(decisionsAfterRegisterRes.ok, true)
+  assert.deepEqual(decisionsAfterRegisterBody.data, [])
 
   const avatarRes = await fetch(`${baseUrl}${tradersAfterRegisterBody.data[0].avatar_url}`)
   const avatarText = await avatarRes.text()

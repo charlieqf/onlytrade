@@ -66,6 +66,7 @@ test('rejects mention targets other than room agent', async () => {
       roomId: 't_001',
       agentId: 't_001',
       agentHandle: 'hs300_momentum',
+      isRunning: true,
     }),
   })
 
@@ -89,6 +90,7 @@ test('routes private_agent_dm into private writer', async () => {
       roomId: 't_001',
       agentId: 't_001',
       agentHandle: 'hs300_momentum',
+      isRunning: true,
     }),
   })
 
@@ -114,8 +116,10 @@ test('includes sender_name for user and agent messages', async () => {
       agentId: 't_001',
       agentHandle: 'hs300_momentum',
       agentName: 'HS300 Momentum',
+      isRunning: true,
     }),
     shouldAgentReply: () => true,
+    generateAgentMessageText: async () => 'LLM: noted in public room',
   })
 
   const result = await svc.postMessage({
@@ -153,8 +157,10 @@ test('agent reply uses today chat history context', async () => {
       agentId: 't_001',
       agentHandle: 'hs300_momentum',
       agentName: 'HS300 Momentum',
+      isRunning: true,
     }),
     shouldAgentReply: () => true,
+    generateAgentMessageText: async ({ historyContext }) => `LLM history size=${historyContext.length}`,
   })
 
   const result = await svc.postMessage({
@@ -166,8 +172,7 @@ test('agent reply uses today chat history context', async () => {
     messageType: 'public_mention_agent',
   })
 
-  assert.equal(result.agent_reply?.text.includes('Recent room context'), true)
-  assert.equal(result.agent_reply?.text.includes('bank stocks'), true)
+  assert.equal(result.agent_reply?.text, 'LLM history size=2')
 })
 
 test('injects proactive public message when room is quiet', async () => {
@@ -193,20 +198,49 @@ test('injects proactive public message when room is quiet', async () => {
       agentId: 't_001',
       agentHandle: 'hs300_momentum',
       agentName: 'HS300 Momentum',
+      isRunning: true,
     }),
     nowMs: () => nowValue,
     proactivePublicIntervalMs: 60_000,
+    generateAgentMessageText: async () => 'LLM proactive ping',
   })
 
   const messages = await svc.getPublicMessages('t_001', { limit: 20 })
 
   const proactive = messages.find((item) => item.sender_type === 'agent')
   assert.equal(Boolean(proactive), true)
-  assert.equal(proactive?.text.includes('HS300 Momentum:'), true)
-  assert.equal(proactive?.text.length > 16, true)
+  assert.equal(proactive?.text, 'LLM proactive ping')
 
   nowValue = 181_000
   const messagesAgain = await svc.getPublicMessages('t_001', { limit: 20 })
   const proactiveCount = messagesAgain.filter((item) => item.sender_type === 'agent').length
   assert.equal(proactiveCount, 1)
+})
+
+test('does not send agent messages when room agent is stopped', async () => {
+  const fake = createFakeStore()
+  const svc = createChatService({
+    store: fake.store,
+    resolveRoomAgent: () => ({
+      roomId: 't_001',
+      agentId: 't_001',
+      agentHandle: 'hs300_momentum',
+      agentName: 'HS300 Momentum',
+      isRunning: false,
+    }),
+    shouldAgentReply: () => true,
+    generateAgentMessageText: async () => 'LLM should not be used',
+  })
+
+  const result = await svc.postMessage({
+    roomId: 't_001',
+    userSessionId: 'usr_sess_1',
+    visibility: 'public',
+    text: '@agent hello',
+    messageType: 'public_mention_agent',
+  })
+
+  assert.equal(result.agent_reply, null)
+  const agentWrites = fake.calls.publicWrites.filter((m) => m.sender_type === 'agent')
+  assert.equal(agentWrites.length, 0)
 })

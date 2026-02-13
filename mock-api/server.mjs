@@ -15,6 +15,7 @@ import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
+import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -61,7 +62,7 @@ loadDotEnv()
 const PORT = Number(process.env.PORT || 8080)
 const BOOT_TS = Date.now()
 const STEP_MS = 8000
-const MARKET_PROVIDER = (process.env.MARKET_PROVIDER || 'mock').toLowerCase() === 'real' ? 'real' : 'mock'
+const MARKET_PROVIDER = (process.env.MARKET_PROVIDER || 'real').toLowerCase() === 'real' ? 'real' : 'mock'
 const MARKET_UPSTREAM_URL = process.env.MARKET_UPSTREAM_URL || ''
 const MARKET_UPSTREAM_API_KEY = process.env.MARKET_UPSTREAM_API_KEY || ''
 const MARKET_STREAM_POLL_MS = Math.max(300, Number(process.env.MARKET_STREAM_POLL_MS || 500))
@@ -71,8 +72,10 @@ const REPLAY_SPEED = Math.max(0.1, Number(process.env.REPLAY_SPEED || 60))
 const REPLAY_WARMUP_BARS = Math.max(1, Number(process.env.REPLAY_WARMUP_BARS || 120))
 const REPLAY_TICK_MS = Math.max(100, Number(process.env.REPLAY_TICK_MS || 250))
 const REPLAY_LOOP = String(process.env.REPLAY_LOOP || 'true').toLowerCase() !== 'false'
-const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE || 'replay')
-const LIVE_FILE_REFRESH_MS = Math.max(250, Number(process.env.LIVE_FILE_REFRESH_MS || 2000))
+const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE || 'live_file')
+const STRICT_LIVE_MODE = String(process.env.STRICT_LIVE_MODE || 'true').toLowerCase() !== 'false'
+const LIVE_FILE_REFRESH_MS = Math.max(250, Number(process.env.LIVE_FILE_REFRESH_MS || 10000))
+const LIVE_FILE_STALE_MS = Math.max(10_000, Number(process.env.LIVE_FILE_STALE_MS || 180_000))
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -95,6 +98,9 @@ const CHAT_PUBLIC_PLAIN_REPLY_RATE = (() => {
   if (!Number.isFinite(parsed)) return 0.05
   return Math.max(0, Math.min(parsed, 1))
 })()
+const CHAT_LLM_ENABLED = String(process.env.CHAT_LLM_ENABLED || String(AGENT_LLM_ENABLED)).toLowerCase() !== 'false'
+const CHAT_LLM_TIMEOUT_MS = Math.max(1000, Number(process.env.CHAT_LLM_TIMEOUT_MS || AGENT_LLM_TIMEOUT_MS))
+const CHAT_LLM_MAX_OUTPUT_TOKENS = Math.max(80, Number(process.env.CHAT_LLM_MAX_OUTPUT_TOKENS || 140))
 
 const REPLAY_PATH = path.join(
   ROOT_DIR,
@@ -132,6 +138,14 @@ const AGENT_REGISTRY_PATH = path.resolve(
   ROOT_DIR,
   process.env.AGENT_REGISTRY_PATH || path.join('data', 'agents', 'registry.json')
 )
+
+if (STRICT_LIVE_MODE && RUNTIME_DATA_MODE !== 'live_file') {
+  throw new Error('strict_live_mode_requires_runtime_data_mode_live_file')
+}
+
+if (STRICT_LIVE_MODE && MARKET_PROVIDER !== 'real') {
+  throw new Error('strict_live_mode_requires_market_provider_real')
+}
 
 const DEFAULT_TRADERS = [
   {
@@ -172,85 +186,6 @@ const CN_STOCK_NAME_BY_SYMBOL = {
   '000858.SZ': '五粮液',
 }
 
-const BASE_COMPETITION_BY_ID = {
-  t_001: {
-    total_equity: 102345.12,
-    total_pnl: 2345.12,
-    total_pnl_pct: 2.35,
-    position_count: 3,
-  },
-  t_002: {
-    total_equity: 100845.88,
-    total_pnl: 845.88,
-    total_pnl_pct: 0.85,
-    position_count: 2,
-  },
-  t_003: {
-    total_equity: 98790.44,
-    total_pnl: -1209.56,
-    total_pnl_pct: -1.21,
-    position_count: 1,
-  },
-  t_004: {
-    total_equity: 100512.63,
-    total_pnl: 512.63,
-    total_pnl_pct: 0.51,
-    position_count: 2,
-  },
-}
-
-const DECISION_SCRIPT = [
-  {
-    action: 'open_long',
-    symbol: '600519.SH',
-    price: 1510.2,
-    stop_loss: 1480,
-    take_profit: 1568,
-    confidence: 74,
-    reasoning: 'Trend and volume remain supportive; keep position sizing conservative.',
-    input_prompt: 'HS300 momentum snapshot',
-    execution_log: 'virtual fill applied at next bar open',
-  },
-  {
-    action: 'hold',
-    symbol: '300750.SZ',
-    price: 182.8,
-    confidence: 68,
-    reasoning: 'No clear downside break; hold and wait for confirmation.',
-    input_prompt: 'risk review',
-    execution_log: 'no new order emitted',
-  },
-  {
-    action: 'open_long',
-    symbol: '601318.SH',
-    price: 48.6,
-    stop_loss: 47.2,
-    take_profit: 50.9,
-    confidence: 71,
-    reasoning: 'Relative strength improving with low drawdown risk.',
-    input_prompt: 'rotation check',
-    execution_log: 'virtual order queued and filled',
-  },
-  {
-    action: 'close_long',
-    symbol: '600519.SH',
-    price: 1528.0,
-    confidence: 66,
-    reasoning: 'Target reached on schedule; lock gains and reduce concentration.',
-    input_prompt: 'take-profit rule',
-    execution_log: 'partial close executed',
-  },
-  {
-    action: 'hold',
-    symbol: '601318.SH',
-    price: 49.1,
-    confidence: 63,
-    reasoning: 'Still inside trend channel; no adjustment needed.',
-    input_prompt: 'channel monitor',
-    execution_log: 'no action',
-  },
-]
-
 function tick() {
   return Math.floor((Date.now() - BOOT_TS) / STEP_MS)
 }
@@ -273,7 +208,7 @@ function getReplaySimulationState() {
   }
 
   return {
-    step: tick(),
+    step: STRICT_LIVE_MODE ? 0 : tick(),
     normalized: 0,
     trading_day: null,
     day_index: 0,
@@ -303,12 +238,42 @@ function buildAgentAssetUrl(agentId, fileName) {
   return `/api/agents/${encodeURIComponent(safeAgentId)}/assets/${encodeURIComponent(safeFileName)}`
 }
 
+function normalizeStockPool(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const output = []
+
+  for (const item of value) {
+    const symbol = String(item || '').trim().toUpperCase()
+    if (!/^\d{6}\.(SH|SZ)$/.test(symbol)) continue
+    if (seen.has(symbol)) continue
+    seen.add(symbol)
+    output.push(symbol)
+    if (output.length >= 100) break
+  }
+
+  return output
+}
+
+function symbolsToEntries(symbols) {
+  return symbols.map((symbol) => ({
+    symbol,
+    name: CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol,
+    category: 'stock',
+  }))
+}
+
 function toTraderRecord(agent) {
   const agentId = String(agent?.agent_id || '').trim()
   const explicitAvatarUrl = String(agent?.avatar_url || '').trim()
   const explicitAvatarHdUrl = String(agent?.avatar_hd_url || '').trim()
   const avatarFile = String(agent?.avatar_file || '').trim()
   const avatarHdFile = String(agent?.avatar_hd_file || '').trim()
+  const tradingStyle = String(agent?.trading_style || '').trim().toLowerCase()
+  const riskProfile = String(agent?.risk_profile || '').trim().toLowerCase()
+  const personality = String(agent?.personality || '').trim()
+  const stylePromptCn = String(agent?.style_prompt_cn || '').trim()
+  const stockPool = normalizeStockPool(agent?.stock_pool)
 
   const avatarUrl = explicitAvatarUrl || buildAgentAssetUrl(agentId, avatarFile)
   const avatarHdUrl = explicitAvatarHdUrl || buildAgentAssetUrl(agentId, avatarHdFile)
@@ -321,6 +286,11 @@ function toTraderRecord(agent) {
     is_running: String(agent?.status || 'stopped') === 'running',
     show_in_competition: agent?.show_in_lobby !== false,
     strategy_name: String(agent?.strategy_name || '').trim(),
+    trading_style: tradingStyle || undefined,
+    risk_profile: riskProfile || undefined,
+    personality: personality || undefined,
+    style_prompt_cn: stylePromptCn || undefined,
+    stock_pool: stockPool.length ? stockPool : undefined,
     avatar_url: avatarUrl || undefined,
     avatar_hd_url: avatarHdUrl || undefined,
   }
@@ -339,24 +309,6 @@ function getRunningRuntimeTraders() {
 }
 
 function fallbackCompetitionRow(trader) {
-  const baseline = BASE_COMPETITION_BY_ID[trader.trader_id]
-  if (baseline) {
-    return {
-      trader_id: trader.trader_id,
-      trader_name: trader.trader_name,
-      ai_model: trader.ai_model,
-      exchange: 'sim',
-      total_equity: baseline.total_equity,
-      total_pnl: baseline.total_pnl,
-      total_pnl_pct: baseline.total_pnl_pct,
-      position_count: baseline.position_count,
-      margin_used_pct: 0,
-      is_running: trader.is_running,
-      avatar_url: trader.avatar_url,
-      avatar_hd_url: trader.avatar_hd_url,
-    }
-  }
-
   return {
     trader_id: trader.trader_id,
     trader_name: trader.trader_name,
@@ -429,6 +381,11 @@ function getTraderById(traderId) {
     is_running: false,
     show_in_competition: false,
     strategy_name: agent.strategy_name || '',
+    trading_style: agent.trading_style || '',
+    risk_profile: agent.risk_profile || '',
+    personality: agent.personality || '',
+    style_prompt_cn: agent.style_prompt_cn || '',
+    stock_pool: normalizeStockPool(agent.stock_pool),
     avatar_url: agent.avatar_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_file),
     avatar_hd_url: agent.avatar_hd_url || buildAgentAssetUrl(agent.agent_id, agent.avatar_hd_file),
   }))
@@ -459,6 +416,10 @@ function resolveRoomAgentForChat(roomId) {
     agentId: trader.trader_id,
     agentHandle: normalizeAgentHandle(trader.trader_name),
     agentName: trader.trader_name,
+    isRunning: trader.is_running === true,
+    personality: trader.personality || '',
+    tradingStyle: trader.trading_style || '',
+    stylePromptCn: trader.style_prompt_cn || '',
   }
 }
 
@@ -640,26 +601,28 @@ async function setKillSwitch({ active, reason = null, actor = 'unknown' }) {
 }
 
 function getStatus(traderId) {
-  const t = tick()
   const trader = getTraderById(traderId)
   const runtimeCallCount = agentRuntime?.getCallCount(trader.trader_id) || 0
-  const callCount = runtimeCallCount > 0 ? runtimeCallCount : 128 + t
+  const runtimeState = agentRuntime?.getState?.() || { cycle_ms: AGENT_RUNTIME_CYCLE_MS }
   const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
-  const secPerBar = 60 / Math.max(0.1, replaySpeed)
-  const scanIntervalSec = Math.max(1, Math.round(secPerBar * agentDecisionEveryBars))
+  const scanIntervalSec = RUNTIME_DATA_MODE === 'live_file'
+    ? Math.max(1, Math.round((Number(runtimeState.cycle_ms || AGENT_RUNTIME_CYCLE_MS) || AGENT_RUNTIME_CYCLE_MS) / 1000))
+    : Math.max(1, Math.round((60 / Math.max(0.1, replaySpeed)) * agentDecisionEveryBars))
   return {
     trader_id: trader.trader_id,
     trader_name: trader.trader_name,
     ai_model: trader.ai_model,
     is_running: !!trader.is_running,
-    start_time: new Date(Date.now() - 1000 * 60 * (95 + t)).toISOString(),
-    runtime_minutes: 95 + t,
-    call_count: callCount,
+    start_time: new Date(BOOT_TS).toISOString(),
+    runtime_minutes: Math.max(0, Math.floor((Date.now() - BOOT_TS) / 60_000)),
+    call_count: runtimeCallCount,
     initial_balance: 100000,
-    scan_interval: `${scanIntervalSec}s (~${agentDecisionEveryBars} bars)`,
+    scan_interval: RUNTIME_DATA_MODE === 'live_file'
+      ? `${scanIntervalSec}s`
+      : `${scanIntervalSec}s (~${agentDecisionEveryBars} bars)`,
     stop_until: '',
-    last_reset_time: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    ai_provider: 'mock-runtime',
+    last_reset_time: '',
+    ai_provider: llmDecider ? 'openai-runtime' : 'rule-runtime',
     strategy_type: 'ai_trading',
   }
 }
@@ -678,6 +641,10 @@ function getAccount(traderId) {
     const unrealizedProfit = Number((Number.isFinite(latestUnrealizedProfit) ? latestUnrealizedProfit : 0).toFixed(2))
     const totalPnl = Number((totalEquity - initialBalance).toFixed(2))
     const totalPnlPct = Number((((totalEquity - initialBalance) / Math.max(1, initialBalance)) * 100).toFixed(2))
+    const latestDaily = Array.isArray(snapshot?.daily_journal) ? snapshot.daily_journal[0] : null
+    const dailyPnl = latestDaily
+      ? Number((Number(latestDaily.end_balance || totalEquity) - Number(latestDaily.start_balance || totalEquity)).toFixed(2))
+      : 0
     const positionCount = Array.isArray(snapshot?.holdings)
       ? snapshot.holdings.filter((holding) => Number(holding?.shares) > 0).length
       : 0
@@ -690,34 +657,23 @@ function getAccount(traderId) {
       total_pnl: totalPnl,
       total_pnl_pct: totalPnlPct,
       initial_balance: initialBalance,
-      daily_pnl: Number((totalPnl * 0.28).toFixed(2)),
+      daily_pnl: dailyPnl,
       position_count: positionCount,
       margin_used: 0,
       margin_used_pct: 0,
     }
   }
 
-  const competition = getCompetitionData()
-  const fallbackTrader = getTraderById(traderId)
-  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0] || {
-    trader_id: fallbackTrader.trader_id,
-    total_equity: 100000,
+  return {
+    total_equity: initialBalance,
+    wallet_balance: initialBalance,
+    unrealized_profit: 0,
+    available_balance: initialBalance,
     total_pnl: 0,
     total_pnl_pct: 0,
+    initial_balance: initialBalance,
+    daily_pnl: 0,
     position_count: 0,
-  }
-  const floating = Number((Math.sin(getReplaySimulationState().step / 3) * 800).toFixed(2))
-
-  return {
-    total_equity: rank.total_equity,
-    wallet_balance: rank.total_equity - Math.max(0, floating),
-    unrealized_profit: floating,
-    available_balance: rank.total_equity * 0.92,
-    total_pnl: rank.total_pnl,
-    total_pnl_pct: rank.total_pnl_pct,
-    initial_balance: 100000,
-    daily_pnl: rank.total_pnl * 0.28,
-    position_count: rank.position_count,
     margin_used: 0,
     margin_used_pct: 0,
   }
@@ -755,101 +711,33 @@ function getPositions(traderId) {
     return holdings
   }
 
-  const t = getReplaySimulationState().step
-  const drift = Math.sin((t + 1) / 2)
-  const base = [
-    {
-      symbol: '600519.SH',
-      side: 'LONG',
-      entry_price: 1498.2,
-      mark_price: Number((1512.4 + drift * 4.5).toFixed(2)),
-      quantity: 100,
-      leverage: 1,
-      unrealized_pnl: Number((1420 + drift * 480).toFixed(2)),
-      unrealized_pnl_pct: Number((0.95 + drift * 0.32).toFixed(2)),
-      liquidation_price: 0,
-      margin_used: 0,
-    },
-    {
-      symbol: '300750.SZ',
-      side: 'LONG',
-      entry_price: 186.3,
-      mark_price: Number((182.8 - drift * 1.2).toFixed(2)),
-      quantity: 300,
-      leverage: 1,
-      unrealized_pnl: Number((-1050 - drift * 220).toFixed(2)),
-      unrealized_pnl_pct: Number((-1.88 - drift * 0.25).toFixed(2)),
-      liquidation_price: 0,
-      margin_used: 0,
-    },
-  ]
-
-  if (traderId === 't_003') return base.slice(0, 1)
-  if (traderId === 't_004') return base.slice(1)
-  return base
-}
-
-function getScriptedDecisions(limit = 5) {
-  const now = Date.now()
-  const t = tick()
-  const count = Math.max(1, Math.min(limit, Math.min(DECISION_SCRIPT.length, 2 + (t % DECISION_SCRIPT.length))))
-
-  return Array.from({ length: count }).map((_, idx) => {
-    const scriptIndex = (t + idx) % DECISION_SCRIPT.length
-    const script = DECISION_SCRIPT[scriptIndex]
-    const ts = new Date(now - idx * 1000 * 60 * 5).toISOString()
-    const cycle = 128 + t - idx
-
-    return {
-      timestamp: ts,
-      cycle_number: cycle,
-      system_prompt: 'demo',
-      input_prompt: script.input_prompt,
-      cot_trace: 'compressed-demo-rationale',
-      decision_json: JSON.stringify({ action: script.action, symbol: script.symbol }),
-      account_state: {
-        total_balance: 102345.12,
-        available_balance: 94123.4,
-        total_unrealized_profit: 370,
-        position_count: 2,
-        margin_used_pct: 0,
-      },
-      positions: [],
-      candidate_coins: ['600519.SH', '300750.SZ', '601318.SH'],
-      decisions: [
-        {
-          action: script.action,
-          symbol: script.symbol,
-          quantity: script.action === 'hold' ? 0 : 100,
-          leverage: 1,
-          price: script.price,
-          stop_loss: script.stop_loss,
-          take_profit: script.take_profit,
-          confidence: script.confidence,
-          reasoning: script.reasoning,
-          order_id: 100000 + cycle,
-          timestamp: ts,
-          success: true,
-        },
-      ],
-      execution_log: [script.execution_log],
-      success: true,
-      error_message: '',
-    }
-  })
+  return []
 }
 
 function getStatistics() {
-  const t = tick()
   const runtimeMetrics = agentRuntime?.getMetrics() || { totalCycles: 0, successfulCycles: 0, failedCycles: 0 }
-  const totalCycles = Math.max(128 + t, runtimeMetrics.totalCycles)
-  const failedCycles = Math.max(6, runtimeMetrics.failedCycles)
+  const snapshots = memoryStore?.getAllSnapshots?.() || []
+  const totalOpenPositions = snapshots.reduce((sum, snapshot) => {
+    const holdings = Array.isArray(snapshot?.holdings) ? snapshot.holdings : []
+    return sum + holdings.filter((holding) => Number(holding?.shares) > 0).length
+  }, 0)
+  const totalClosePositions = snapshots.reduce((sum, snapshot) => {
+    const sellTrades = Number(snapshot?.stats?.sell_trades || 0)
+    return sum + (Number.isFinite(sellTrades) ? Math.max(0, sellTrades) : 0)
+  }, 0)
+
+  const totalCycles = Number.isFinite(runtimeMetrics.totalCycles) ? Math.max(0, runtimeMetrics.totalCycles) : 0
+  const failedCycles = Number.isFinite(runtimeMetrics.failedCycles) ? Math.max(0, runtimeMetrics.failedCycles) : 0
+  const successfulCycles = Number.isFinite(runtimeMetrics.successfulCycles)
+    ? Math.max(0, runtimeMetrics.successfulCycles)
+    : Math.max(totalCycles - failedCycles, 0)
+
   return {
     total_cycles: totalCycles,
-    successful_cycles: Math.max(totalCycles - failedCycles, runtimeMetrics.successfulCycles),
+    successful_cycles: successfulCycles,
     failed_cycles: failedCycles,
-    total_open_positions: 37 + Math.floor(t / 2),
-    total_close_positions: 35 + Math.floor(t / 3),
+    total_open_positions: totalOpenPositions,
+    total_close_positions: totalClosePositions,
   }
 }
 
@@ -983,94 +871,179 @@ function framesToKlines(frames) {
   }))
 }
 
+function toFixedNumber(value, digits = 2) {
+  return Number((Number(value) || 0).toFixed(digits))
+}
+
+function toTimeMs(value) {
+  const ts = new Date(value || '').getTime()
+  return Number.isFinite(ts) ? ts : 0
+}
+
 function generateEquityHistory(traderId, hours = 0) {
-  const competition = getCompetitionData()
-  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0]
-  const targetPct = (rank?.total_pnl_pct ?? 0) / 100
+  const snapshot = memoryStore?.getSnapshot?.(traderId)
+  const initialBalance = Math.max(1, Number(snapshot?.stats?.initial_balance || 100000))
+  const curve = Array.isArray(snapshot?.equity_curve) ? snapshot.equity_curve : []
 
-  const points = hours > 0 ? Math.max(12, Math.min(hours * 6, 1000)) : 96
-  const now = Date.now()
-  const step = 10 * 60_000
-  const base = 100000
+  const normalized = curve
+    .map((point, idx) => {
+      const equity = toFixedNumber(point?.total_equity, 2)
+      const pnl = toFixedNumber(point?.pnl, 2)
+      const pct = toFixedNumber(point?.pnl_pct, 4)
+      return {
+        timestamp: String(point?.timestamp || new Date().toISOString()),
+        total_equity: equity,
+        pnl,
+        pnl_pct: pct,
+        total_pnl_pct: toFixedNumber(point?.total_pnl_pct, 4),
+        cycle_number: Math.max(0, Math.floor(Number(point?.cycle_number) || idx + 1)),
+      }
+    })
+    .sort((a, b) => toTimeMs(a.timestamp) - toTimeMs(b.timestamp))
 
-  return Array.from({ length: points }).map((_, idx) => {
-    const p = (idx + 1) / points
-    const wave = Math.sin(idx / 6) * 0.002
-    const equity = base * (1 + targetPct * p + wave)
-    return {
-      timestamp: new Date(now - (points - idx) * step).toISOString(),
-      total_equity: Number(equity.toFixed(2)),
-      pnl: Number((equity - base).toFixed(2)),
-      pnl_pct: Number((((equity - base) / base) * 100).toFixed(4)),
-      total_pnl_pct: Number((((equity - base) / base) * 100).toFixed(4)),
-      cycle_number: idx + 1,
+  const nowMs = Date.now()
+  const filteredByHours = Number(hours) > 0
+    ? normalized.filter((point) => toTimeMs(point.timestamp) >= nowMs - Number(hours) * 60 * 60 * 1000)
+    : normalized
+
+  const output = filteredByHours.length ? filteredByHours : normalized
+  if (output.length) {
+    return output
+  }
+
+  const latest = toFixedNumber(snapshot?.stats?.latest_total_balance || initialBalance, 2)
+  return [{
+    timestamp: new Date().toISOString(),
+    total_equity: latest,
+    pnl: toFixedNumber(latest - initialBalance, 2),
+    pnl_pct: toFixedNumber(((latest - initialBalance) / initialBalance) * 100, 4),
+    total_pnl_pct: toFixedNumber(((latest - initialBalance) / initialBalance) * 100, 4),
+    cycle_number: Math.max(0, Number(snapshot?.stats?.decisions || 0)),
+  }]
+}
+
+function buildPositionHistoryStats(closedPositions, initialBalance = 100000) {
+  const trades = Array.isArray(closedPositions) ? closedPositions : []
+  const totalTrades = trades.length
+  const wins = trades.filter((trade) => Number(trade?.realized_pnl || 0) > 0)
+  const losses = trades.filter((trade) => Number(trade?.realized_pnl || 0) < 0)
+  const grossProfit = wins.reduce((sum, trade) => sum + Number(trade.realized_pnl || 0), 0)
+  const grossLossAbs = Math.abs(losses.reduce((sum, trade) => sum + Number(trade.realized_pnl || 0), 0))
+  const totalPnl = trades.reduce((sum, trade) => sum + Number(trade?.realized_pnl || 0), 0)
+  const totalFee = trades.reduce((sum, trade) => sum + Number(trade?.fee || 0), 0)
+  const tradeReturns = trades.map((trade) => Number(trade?.realized_pnl || 0) / Math.max(1, initialBalance))
+  const mean = tradeReturns.length
+    ? tradeReturns.reduce((sum, value) => sum + value, 0) / tradeReturns.length
+    : 0
+  const variance = tradeReturns.length > 1
+    ? tradeReturns.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (tradeReturns.length - 1)
+    : 0
+  const stdDev = Math.sqrt(Math.max(0, variance))
+  const sharpe = stdDev > 0 ? (mean / stdDev) * Math.sqrt(tradeReturns.length) : 0
+
+  const sortedByExit = [...trades].sort((a, b) => toTimeMs(a?.exit_time) - toTimeMs(b?.exit_time))
+  let equity = Number(initialBalance || 100000)
+  let peak = equity
+  let maxDrawdownPct = 0
+  for (const trade of sortedByExit) {
+    equity += Number(trade?.realized_pnl || 0)
+    peak = Math.max(peak, equity)
+    const drawdown = peak > 0 ? ((peak - equity) / peak) * 100 : 0
+    maxDrawdownPct = Math.max(maxDrawdownPct, drawdown)
+  }
+
+  return {
+    total_trades: totalTrades,
+    win_trades: wins.length,
+    loss_trades: losses.length,
+    win_rate: totalTrades > 0 ? toFixedNumber((wins.length / totalTrades) * 100, 2) : 0,
+    profit_factor: grossLossAbs > 0 ? toFixedNumber(grossProfit / grossLossAbs, 2) : toFixedNumber(grossProfit > 0 ? 999 : 0, 2),
+    sharpe_ratio: toFixedNumber(sharpe, 2),
+    total_pnl: toFixedNumber(totalPnl, 2),
+    total_fee: toFixedNumber(totalFee, 2),
+    avg_win: wins.length ? toFixedNumber(grossProfit / wins.length, 2) : 0,
+    avg_loss: losses.length ? toFixedNumber(losses.reduce((sum, trade) => sum + Number(trade.realized_pnl || 0), 0) / losses.length, 2) : 0,
+    max_drawdown_pct: toFixedNumber(maxDrawdownPct, 2),
+  }
+}
+
+function buildSymbolStats(closedPositions) {
+  const map = new Map()
+  for (const trade of closedPositions || []) {
+    const symbol = String(trade?.symbol || '').trim()
+    if (!symbol) continue
+    if (!map.has(symbol)) {
+      map.set(symbol, {
+        symbol,
+        total_trades: 0,
+        win_trades: 0,
+        total_pnl: 0,
+        total_hold_mins: 0,
+      })
     }
-  })
+    const bucket = map.get(symbol)
+    const pnl = Number(trade?.realized_pnl || 0)
+    bucket.total_trades += 1
+    if (pnl > 0) bucket.win_trades += 1
+    bucket.total_pnl += pnl
+    const holdMins = Math.max(0, (toTimeMs(trade?.exit_time) - toTimeMs(trade?.entry_time)) / 60000)
+    bucket.total_hold_mins += holdMins
+  }
+
+  return Array.from(map.values())
+    .map((row) => ({
+      symbol: row.symbol,
+      total_trades: row.total_trades,
+      win_trades: row.win_trades,
+      win_rate: row.total_trades > 0 ? toFixedNumber((row.win_trades / row.total_trades) * 100, 2) : 0,
+      total_pnl: toFixedNumber(row.total_pnl, 2),
+      avg_pnl: row.total_trades > 0 ? toFixedNumber(row.total_pnl / row.total_trades, 2) : 0,
+      avg_hold_mins: row.total_trades > 0 ? toFixedNumber(row.total_hold_mins / row.total_trades, 2) : 0,
+    }))
+    .sort((a, b) => b.total_pnl - a.total_pnl)
+}
+
+function buildDirectionStats(closedPositions) {
+  const map = new Map()
+  for (const trade of closedPositions || []) {
+    const side = String(trade?.side || 'LONG').toUpperCase()
+    if (!map.has(side)) {
+      map.set(side, {
+        side,
+        trade_count: 0,
+        win_trades: 0,
+        total_pnl: 0,
+      })
+    }
+    const bucket = map.get(side)
+    const pnl = Number(trade?.realized_pnl || 0)
+    bucket.trade_count += 1
+    if (pnl > 0) bucket.win_trades += 1
+    bucket.total_pnl += pnl
+  }
+
+  return Array.from(map.values()).map((row) => ({
+    side: row.side,
+    trade_count: row.trade_count,
+    win_rate: row.trade_count > 0 ? toFixedNumber((row.win_trades / row.trade_count) * 100, 2) : 0,
+    total_pnl: toFixedNumber(row.total_pnl, 2),
+    avg_pnl: row.trade_count > 0 ? toFixedNumber(row.total_pnl / row.trade_count, 2) : 0,
+  }))
 }
 
 function getPositionHistory(traderId, limit = 100) {
-  const now = Date.now()
-  const positions = [
-    {
-      id: 1,
-      trader_id: traderId,
-      exchange_id: 'sim-cn',
-      exchange_type: 'sim',
-      symbol: '600519.SH',
-      side: 'LONG',
-      quantity: 100,
-      entry_quantity: 100,
-      entry_price: 1480,
-      entry_order_id: 'demo-entry-1',
-      entry_time: new Date(now - 1000 * 60 * 200).toISOString(),
-      exit_price: 1510,
-      exit_order_id: 'demo-exit-1',
-      exit_time: new Date(now - 1000 * 60 * 140).toISOString(),
-      realized_pnl: 3000,
-      fee: 45,
-      leverage: 1,
-      status: 'closed',
-      close_reason: 'take_profit',
-      created_at: new Date(now - 1000 * 60 * 200).toISOString(),
-      updated_at: new Date(now - 1000 * 60 * 140).toISOString(),
-    },
-  ].slice(0, Math.max(1, Math.min(limit, 1000)))
+  const snapshot = memoryStore?.getSnapshot?.(traderId)
+  const initialBalance = Number(snapshot?.stats?.initial_balance || 100000)
+  const closed = Array.isArray(snapshot?.closed_positions) ? snapshot.closed_positions : []
+  const sorted = [...closed].sort((a, b) => toTimeMs(b?.exit_time) - toTimeMs(a?.exit_time))
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.floor(limit) : 100, 1000))
+  const limited = sorted.slice(0, safeLimit)
 
   return {
-    positions,
-    stats: {
-      total_trades: 12,
-      win_trades: 8,
-      loss_trades: 4,
-      win_rate: 66.67,
-      profit_factor: 1.84,
-      sharpe_ratio: 1.2,
-      total_pnl: 8450,
-      total_fee: 390,
-      avg_win: 1560,
-      avg_loss: -890,
-      max_drawdown_pct: 4.8,
-    },
-    symbol_stats: [
-      {
-        symbol: '600519.SH',
-        total_trades: 7,
-        win_trades: 5,
-        win_rate: 71.43,
-        total_pnl: 6200,
-        avg_pnl: 885.7,
-        avg_hold_mins: 95,
-      },
-    ],
-    direction_stats: [
-      {
-        side: 'LONG',
-        trade_count: 12,
-        win_rate: 66.67,
-        total_pnl: 8450,
-        avg_pnl: 704.1,
-      },
-    ],
+    positions: limited,
+    stats: buildPositionHistoryStats(sorted, initialBalance),
+    symbol_stats: buildSymbolStats(sorted),
+    direction_stats: buildDirectionStats(sorted),
   }
 }
 
@@ -1095,17 +1068,7 @@ const chatSessionRegistry = new Map()
 const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
-const chatService = createChatService({
-  store: chatStore,
-  resolveRoomAgent: resolveRoomAgentForChat,
-  resolveLatestDecision: (roomId) => {
-    const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
-    return latest[0] || null
-  },
-  maxTextLen: CHAT_MAX_TEXT_LEN,
-  rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
-  publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
-})
+let chatService = null
 let agentDecisionEveryBars = AGENT_DECISION_EVERY_BARS
 let replayBarsSinceAgentDecision = 0
 let queuedAgentDecisionSteps = 0
@@ -1128,10 +1091,33 @@ const llmDecider = AGENT_LLM_ENABLED
     maxOutputTokens: AGENT_LLM_MAX_OUTPUT_TOKENS,
   })
   : null
+const chatLlmResponder = CHAT_LLM_ENABLED
+  ? createOpenAIChatResponder({
+    apiKey: OPENAI_API_KEY,
+    model: OPENAI_MODEL,
+    baseUrl: OPENAI_BASE_URL,
+    timeoutMs: CHAT_LLM_TIMEOUT_MS,
+    maxOutputTokens: CHAT_LLM_MAX_OUTPUT_TOKENS,
+    maxTextLen: CHAT_MAX_TEXT_LEN,
+  })
+  : null
+chatService = createChatService({
+  store: chatStore,
+  resolveRoomAgent: resolveRoomAgentForChat,
+  resolveLatestDecision: (roomId) => {
+    const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
+    return latest[0] || null
+  },
+  maxTextLen: CHAT_MAX_TEXT_LEN,
+  rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
+  publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
+  generateAgentMessageText: chatLlmResponder,
+})
 let marketDataService = createMarketDataService({
   provider: MARKET_PROVIDER,
   upstreamBaseUrl: MARKET_UPSTREAM_URL,
   upstreamApiKey: MARKET_UPSTREAM_API_KEY,
+  strictLive: STRICT_LIVE_MODE && RUNTIME_DATA_MODE === 'live_file',
   replayBatch,
   dailyHistoryBatch,
   replayFrameProvider: async ({ symbol, interval, limit }) => {
@@ -1151,6 +1137,7 @@ function syncMarketDataService() {
     liveFileFrameProvider = createLiveFileFrameProvider({
       filePath: LIVE_FRAMES_PATH,
       refreshMs: LIVE_FILE_REFRESH_MS,
+      staleAfterMs: LIVE_FILE_STALE_MS,
     })
   }
 
@@ -1158,6 +1145,7 @@ function syncMarketDataService() {
     provider: MARKET_PROVIDER,
     upstreamBaseUrl: MARKET_UPSTREAM_URL,
     upstreamApiKey: MARKET_UPSTREAM_API_KEY,
+    strictLive: STRICT_LIVE_MODE && RUNTIME_DATA_MODE === 'live_file',
     replayBatch,
     dailyHistoryBatch,
     replayFrameProvider: async ({ symbol, interval, limit }) => {
@@ -1188,6 +1176,14 @@ async function refreshAgentState({ reconcile = true } = {}) {
 
   const runtimeTraders = getRunningRuntimeTraders()
   agentRuntime?.setTraders?.(runtimeTraders)
+
+  if (agentRuntime) {
+    if (runtimeTraders.length === 0) {
+      agentRuntime.pause?.()
+    } else if (!agentRuntime.getState?.().running) {
+      agentRuntime.resume?.()
+    }
+  }
 
   return {
     available_agents: availableAgents,
@@ -1331,16 +1327,46 @@ async function loadDailyHistoryBatch() {
   }
 }
 
-function symbolList() {
+function aggregateManifestStockPool() {
+  const seen = new Set()
+  const output = []
+  for (const agent of [...registeredAgents, ...availableAgents]) {
+    const pool = normalizeStockPool(agent?.stock_pool)
+    for (const symbol of pool) {
+      if (seen.has(symbol)) continue
+      seen.add(symbol)
+      output.push(symbol)
+    }
+  }
+  return output
+}
+
+function symbolList({ traderId = '' } = {}) {
+  const wantedTraderId = String(traderId || '').trim()
+  if (wantedTraderId) {
+    const traderPool = normalizeStockPool(getTraderById(wantedTraderId)?.stock_pool)
+    if (traderPool.length) {
+      return symbolsToEntries(traderPool)
+    }
+  }
+
+  const manifestPool = aggregateManifestStockPool()
+  if (manifestPool.length) {
+    return symbolsToEntries(manifestPool)
+  }
+
   if (RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
     const symbols = liveFileFrameProvider.getSymbols('1m')
     if (symbols.length) {
-      return symbols.map((symbol) => ({
-        symbol,
-        name: CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol,
-        category: 'stock',
-      }))
+      return symbolsToEntries(symbols)
     }
+    if (STRICT_LIVE_MODE) {
+      return []
+    }
+  }
+
+  if (STRICT_LIVE_MODE) {
+    return []
   }
 
   const sourceFrames = replayBatch?.frames?.length
@@ -1356,24 +1382,41 @@ function symbolList() {
   }
 
   const set = new Set(sourceFrames.map((f) => f.instrument?.symbol).filter(Boolean))
-  return Array.from(set)
-    .sort()
-    .map((symbol) => ({
-      symbol,
-      name: CN_STOCK_NAME_BY_SYMBOL[symbol] || symbol,
-      category: 'stock',
-    }))
+  return symbolsToEntries(Array.from(set).sort())
 }
 
-function pickTraderSymbol(traderId, cycleNumber = 1) {
-  const symbols = symbolList().map((item) => item.symbol)
-  if (!symbols.length) return '600519.SH'
-  const idx = Math.abs(hashSymbol(traderId) + cycleNumber) % symbols.length
+function pickTraderSymbol(trader, cycleNumber = 1) {
+  const traderPool = normalizeStockPool(trader?.stock_pool)
+  const symbols = (traderPool.length
+    ? traderPool
+    : symbolList({ traderId: trader?.trader_id }).map((item) => item.symbol)
+  )
+  if (!symbols.length) {
+    if (STRICT_LIVE_MODE) {
+      throw new Error('no_live_symbol_pool')
+    }
+    return '600519.SH'
+  }
+  const idx = Math.abs(hashSymbol(trader?.trader_id || '') + cycleNumber) % symbols.length
   return symbols[idx]
 }
 
 async function evaluateTraderContext(trader, { cycleNumber }) {
-  const symbol = pickTraderSymbol(trader.trader_id, cycleNumber)
+  if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE && liveFileFrameProvider) {
+    const liveStatus = liveFileFrameProvider.getStatus()
+    if (liveStatus?.stale) {
+      const error = new Error('live_file_stale')
+      error.code = 'live_file_stale'
+      throw error
+    }
+    if (liveStatus?.last_error) {
+      const error = new Error('live_file_error')
+      error.code = 'live_file_error'
+      throw error
+    }
+  }
+
+  const symbol = pickTraderSymbol(trader, cycleNumber)
   const [intradayBatch, dailyBatch] = await Promise.all([
     marketDataService.getFrames({
       symbol,
@@ -1657,13 +1700,7 @@ app.get('/api/decisions/latest', (req, res) => {
   const limit = Number(req.query.limit || 5)
   const safeLimit = Number.isFinite(limit) ? limit : 5
   const runtimeDecisions = agentRuntime?.getLatestDecisions(traderId || undefined, safeLimit) || []
-
-  if (runtimeDecisions.length) {
-    res.json(ok(runtimeDecisions))
-    return
-  }
-
-  res.json(ok(getScriptedDecisions(safeLimit)))
+  res.json(ok(runtimeDecisions))
 })
 
 app.get('/api/agent/runtime/status', (_req, res) => {
@@ -1922,9 +1959,10 @@ app.get('/api/positions/history', (req, res) => {
   res.json(ok(getPositionHistory(traderId, Number.isFinite(limit) ? limit : 100)))
 })
 
-app.get('/api/symbols', (_req, res) => {
+app.get('/api/symbols', (req, res) => {
+  const traderId = String(req.query.trader_id || '').trim()
   // Historical compatibility: this endpoint is intentionally unwrapped.
-  res.json({ symbols: symbolList() })
+  res.json({ symbols: symbolList({ traderId }) })
 })
 
 app.get('/api/agent/market-context', async (req, res) => {
@@ -1995,7 +2033,9 @@ app.get('/api/market/frames', async (req, res) => {
 
     res.json(ok(payload))
   } catch (error) {
-    res.status(502).json({ success: false, error: error?.message || 'market_proxy_error' })
+    const code = String(error?.code || error?.message || '')
+    const status = code === 'live_frames_unavailable' ? 503 : 502
+    res.status(status).json({ success: false, error: error?.message || 'market_proxy_error' })
   }
 })
 
@@ -2015,7 +2055,9 @@ app.get('/api/klines', async (req, res) => {
 
     res.json(ok(payload))
   } catch (error) {
-    res.status(502).json({ success: false, error: error?.message || 'market_proxy_error' })
+    const code = String(error?.code || error?.message || '')
+    const status = code === 'live_frames_unavailable' ? 503 : 502
+    res.status(status).json({ success: false, error: error?.message || 'market_proxy_error' })
   }
 })
 
@@ -2115,6 +2157,10 @@ app.get('/api/traders/:id/config', (req, res) => {
     ai_model: trader.ai_model,
     exchange_id: trader.exchange_id,
     strategy_name: trader.strategy_name,
+    trading_style: trader.trading_style,
+    risk_profile: trader.risk_profile,
+    personality: trader.personality,
+    style_prompt_cn: trader.style_prompt_cn,
     is_running: trader.is_running,
     avatar_url: trader.avatar_url,
     avatar_hd_url: trader.avatar_hd_url,
@@ -2174,8 +2220,8 @@ agentRuntime = createInMemoryAgentRuntime({
   },
 })
 
-await refreshAgentState()
 agentRuntime.start()
+await refreshAgentState()
 
 if (killSwitchState.active) {
   replayEngine?.pause?.()
@@ -2199,13 +2245,14 @@ process.on('SIGTERM', handleShutdown)
 app.listen(PORT, () => {
   const replayInfo = replayBatch?.frames?.length
     ? `replay loaded (${replayBatch.frames.length} frames)`
-    : 'no replay found (generated mock only)'
+    : 'no replay file loaded'
   const dailyHistoryInfo = dailyHistoryBatch?.frames?.length
     ? `daily history loaded (${dailyHistoryBatch.frames.length} frames, lookback=${MARKET_DAILY_HISTORY_DAYS}d)`
     : `no daily history found at ${DAILY_HISTORY_PATH}`
   const providerInfo = MARKET_PROVIDER === 'real'
     ? `provider=real upstream=${MARKET_UPSTREAM_URL || 'not-configured'}`
     : 'provider=mock'
+  const strictLiveInfo = `strict_live_mode=${STRICT_LIVE_MODE}`
   const runtimeInfo = RUNTIME_DATA_MODE === 'live_file'
     ? `agent_runtime mode=timer cycle_ms=${AGENT_RUNTIME_CYCLE_MS}`
     : `agent_runtime mode=event-driven decision_every_bars=${agentDecisionEveryBars}`
@@ -2216,7 +2263,7 @@ app.listen(PORT, () => {
     ? `llm=openai model=${OPENAI_MODEL} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
   const replayRuntimeInfo = RUNTIME_DATA_MODE === 'live_file'
-    ? `data_mode=live_file live_frames_path=${LIVE_FRAMES_PATH} refresh_ms=${LIVE_FILE_REFRESH_MS}`
+    ? `data_mode=live_file live_frames_path=${LIVE_FRAMES_PATH} refresh_ms=${LIVE_FILE_REFRESH_MS} stale_ms=${LIVE_FILE_STALE_MS}`
     : (replayEngine?.getStatus?.()
       ? `replay_runtime speed=${replayEngine.getStatus().speed}x tick_ms=${REPLAY_TICK_MS}`
       : 'replay_runtime unavailable')
@@ -2226,6 +2273,7 @@ app.listen(PORT, () => {
   console.log(`[mock-api] ${replayInfo}`)
   console.log(`[mock-api] ${dailyHistoryInfo}`)
   console.log(`[mock-api] ${providerInfo}`)
+  console.log(`[mock-api] ${strictLiveInfo}`)
   console.log(`[mock-api] ${runtimeInfo}`)
   console.log(`[mock-api] ${controlInfo}`)
   console.log(`[mock-api] ${killSwitchInfo}`)

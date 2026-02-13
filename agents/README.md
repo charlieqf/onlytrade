@@ -18,10 +18,26 @@ OnlyTrade discovers **available agents** from subfolders under `agents/`.
   "ai_model": "qwen",
   "exchange_id": "sim-cn",
   "strategy_name": "Momentum + trend confirmation",
+  "trading_style": "momentum_trend",
+  "risk_profile": "balanced",
+  "personality": "冷静直接，偏顺势执行",
+  "style_prompt_cn": "你是动量趋势交易员，优先顺势，不做逆势抄底。",
   "avatar_file": "avatar.jpg",
   "avatar_hd_file": "avatar-hd.jpg"
 }
 ```
+
+Trading/personality fields are optional but recommended:
+
+- `trading_style`: `momentum_trend` | `mean_reversion` | `event_driven` | `macro_swing` | `balanced`
+- `risk_profile`: `conservative` | `balanced` | `aggressive`
+- `personality`: short persona text used in chat replies
+- `style_prompt_cn`: Chinese style instruction used by LLM decision mode
+
+These fields are consumed by both runtime paths:
+
+- heuristic decision engine (when LLM is disabled)
+- LLM style prompt composition (when LLM is enabled)
 
 Avatar fields are optional:
 

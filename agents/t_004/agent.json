@@ -4,6 +4,17 @@
   "ai_model": "gpt-4o-mini",
   "exchange_id": "sim-cn",
   "strategy_name": "Macro swing + volatility filters",
+  "trading_style": "macro_swing",
+  "risk_profile": "balanced",
+  "personality": "稳健克制，偏中周期，强调大局观。",
+  "style_prompt_cn": "你是宏观波段交易员，优先依据日线结构与趋势，不追逐短期噪音。",
   "avatar_file": "avatar.jpg",
-  "avatar_hd_file": "avatar-hd.jpg"
+  "avatar_hd_file": "avatar-hd.jpg",
+  "stock_pool": [
+    "600519.SH",
+    "300750.SZ",
+    "601318.SH",
+    "000001.SZ",
+    "688981.SH"
+  ]
 }

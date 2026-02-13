@@ -76,7 +76,7 @@ export function CompetitionPage() {
                   </span>
                 </h1>
                 <p className="text-xs text-zinc-400">
-                  {language === 'zh' ? '虚拟交易表现对比（仅演示）' : 'Virtual trading performance comparison (demo)'}
+                  {language === 'zh' ? '实时交易表现对比' : 'Realtime trading performance comparison'}
                 </p>
               </div>
             </div>

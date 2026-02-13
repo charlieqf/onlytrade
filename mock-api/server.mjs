@@ -1037,7 +1037,60 @@ function getPositionHistory(traderId, limit = 100) {
   const snapshot = memoryStore?.getSnapshot?.(traderId)
   const initialBalance = Number(snapshot?.stats?.initial_balance || 100000)
   const closed = Array.isArray(snapshot?.closed_positions) ? snapshot.closed_positions : []
-  const tradeEvents = Array.isArray(snapshot?.trade_events) ? snapshot.trade_events : []
+  let tradeEvents = Array.isArray(snapshot?.trade_events) ? snapshot.trade_events : []
+
+  // Backfill trade events for older snapshots (before trade_events existed).
+  // We prefer showing *something* in realtime (buys/sells) even when there are
+  // no closed positions yet.
+  if (tradeEvents.length === 0 && snapshot) {
+    const seeded = []
+    const openLots = Array.isArray(snapshot?.open_lots) ? snapshot.open_lots : []
+    for (const lot of openLots) {
+      const symbol = String(lot?.symbol || '').trim()
+      const qty = Math.max(0, Math.floor(Number(lot?.entry_qty || 0)))
+      const price = Number(lot?.entry_price || 0)
+      const ts = String(lot?.entry_time || snapshot?.updated_at || '')
+      if (!symbol || !qty || !Number.isFinite(price) || !ts) continue
+      seeded.push({
+        id: String(lot?.entry_order_id || `seed-buy-${symbol}-${ts}`),
+        trader_id: traderId,
+        cycle_number: 0,
+        ts,
+        symbol,
+        side: 'BUY',
+        quantity: qty,
+        price,
+        notional: toFixedNumber(qty * price, 2),
+        fee: 0,
+        realized_pnl: 0,
+        source: 'seed',
+      })
+    }
+
+    for (const pos of closed) {
+      const symbol = String(pos?.symbol || '').trim()
+      const qty = Math.max(0, Math.floor(Number(pos?.quantity || 0)))
+      const price = Number(pos?.exit_price || 0)
+      const ts = String(pos?.exit_time || '')
+      if (!symbol || !qty || !Number.isFinite(price) || !ts) continue
+      seeded.push({
+        id: String(pos?.exit_order_id || `seed-sell-${symbol}-${ts}`),
+        trader_id: traderId,
+        cycle_number: 0,
+        ts,
+        symbol,
+        side: 'SELL',
+        quantity: qty,
+        price,
+        notional: toFixedNumber(qty * price, 2),
+        fee: toFixedNumber(Number(pos?.fee || 0), 2),
+        realized_pnl: toFixedNumber(Number(pos?.realized_pnl || 0), 2),
+        source: 'seed',
+      })
+    }
+
+    tradeEvents = seeded
+  }
   const sorted = [...closed].sort((a, b) => toTimeMs(b?.exit_time) - toTimeMs(a?.exit_time))
   const sortedTrades = [...tradeEvents].sort((a, b) => toTimeMs(b?.ts) - toTimeMs(a?.ts))
   const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.floor(limit) : 100, 1000))

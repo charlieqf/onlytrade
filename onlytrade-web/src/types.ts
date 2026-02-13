@@ -1047,8 +1047,24 @@ export interface DirectionStats {
   avg_pnl: number;
 }
 
+export interface TradeEvent {
+  id: string;
+  trader_id: string;
+  cycle_number: number;
+  ts: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  notional: number;
+  fee: number;
+  realized_pnl: number;
+  source: string;
+}
+
 export interface PositionHistoryResponse {
   positions: HistoricalPosition[];
+  trade_events?: TradeEvent[];
   stats: TraderStats | null;
   symbol_stats: SymbolStats[];
   direction_stats: DirectionStats[];

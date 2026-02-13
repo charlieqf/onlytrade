@@ -184,6 +184,8 @@ const CN_STOCK_NAME_BY_SYMBOL = {
   '600036.SH': '招商银行',
   '300750.SZ': '宁德时代',
   '000858.SZ': '五粮液',
+  '000001.SZ': '平安银行',
+  '688981.SH': '中芯国际',
 }
 
 function tick() {
@@ -1035,12 +1037,16 @@ function getPositionHistory(traderId, limit = 100) {
   const snapshot = memoryStore?.getSnapshot?.(traderId)
   const initialBalance = Number(snapshot?.stats?.initial_balance || 100000)
   const closed = Array.isArray(snapshot?.closed_positions) ? snapshot.closed_positions : []
+  const tradeEvents = Array.isArray(snapshot?.trade_events) ? snapshot.trade_events : []
   const sorted = [...closed].sort((a, b) => toTimeMs(b?.exit_time) - toTimeMs(a?.exit_time))
+  const sortedTrades = [...tradeEvents].sort((a, b) => toTimeMs(b?.ts) - toTimeMs(a?.ts))
   const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.floor(limit) : 100, 1000))
   const limited = sorted.slice(0, safeLimit)
+  const limitedTrades = sortedTrades.slice(0, safeLimit)
 
   return {
     positions: limited,
+    trade_events: limitedTrades,
     stats: buildPositionHistoryStats(sorted, initialBalance),
     symbol_stats: buildSymbolStats(sorted),
     direction_stats: buildDirectionStats(sorted),

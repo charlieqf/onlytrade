@@ -414,6 +414,36 @@ function generateEquityHistory(traderId: string, points = 72) {
 function getPositionHistory(traderId: string): PositionHistoryResponse {
   const now = Date.now()
   return {
+    trade_events: [
+      {
+        id: 'demo-buy-1',
+        trader_id: traderId,
+        cycle_number: 12,
+        ts: new Date(now - 1000 * 60 * 210).toISOString(),
+        symbol: '600519.SH',
+        side: 'BUY',
+        quantity: 100,
+        price: 1480,
+        notional: 148000,
+        fee: 45,
+        realized_pnl: 0,
+        source: 'llm.openai',
+      },
+      {
+        id: 'demo-sell-1',
+        trader_id: traderId,
+        cycle_number: 19,
+        ts: new Date(now - 1000 * 60 * 140).toISOString(),
+        symbol: '600519.SH',
+        side: 'SELL',
+        quantity: 100,
+        price: 1510,
+        notional: 151000,
+        fee: 45,
+        realized_pnl: 3000,
+        source: 'llm.openai',
+      },
+    ],
     positions: [
       {
         id: 1,

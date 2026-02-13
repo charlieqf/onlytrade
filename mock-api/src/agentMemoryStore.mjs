@@ -86,6 +86,7 @@ function defaultSnapshot(trader, commissionRate) {
     holdings: [],
     open_lots: [],
     closed_positions: [],
+    trade_events: [],
     equity_curve: [
       {
         timestamp: nowIso,
@@ -264,6 +265,25 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
     const actionPrice = round(Math.max(0, toNumber(actionPayload?.price, 0)), 4)
     const filledQuantity = Math.max(0, Math.floor(toNumber(actionPayload?.filled_quantity ?? actionPayload?.quantity, 0)))
     const actionOrderId = String(actionPayload?.order_id || `order-${toNumber(decision?.cycle_number, 0)}`)
+
+    const prevTradeEvents = Array.isArray(prev.trade_events) ? prev.trade_events : []
+    const tradeEvents = [...prevTradeEvents]
+    if ((isExecutedBuy || isExecutedSell) && actionSymbol && filledQuantity > 0 && actionPrice > 0) {
+      tradeEvents.unshift({
+        id: actionOrderId,
+        trader_id: traderId,
+        cycle_number: toNumber(decision?.cycle_number, 0),
+        ts: decisionTimestamp,
+        symbol: actionSymbol,
+        side: isExecutedBuy ? 'BUY' : 'SELL',
+        quantity: filledQuantity,
+        price: actionPrice,
+        notional: round(filledQuantity * actionPrice, 2),
+        fee: round(Math.max(0, decisionFee), 2),
+        realized_pnl: isExecutedSell && Number.isFinite(realizedPnl) ? round(realizedPnl, 2) : 0,
+        source: decision?.decision_source || 'rule.heuristic',
+      })
+    }
 
     let openLots = normalizeOpenLots(prev.open_lots, decisionTimestamp)
     if (!openLots.length && Array.isArray(prev.holdings)) {
@@ -470,6 +490,7 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
       holdings: normalizeHoldings(positions, netTotalBalance),
       open_lots: openLots,
       closed_positions: closedPositions,
+      trade_events: tradeEvents.slice(0, 5000),
       equity_curve: equityCurve,
       recent_actions: [
         {

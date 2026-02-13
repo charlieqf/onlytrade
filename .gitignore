@@ -20,6 +20,15 @@ yarn-error.log*
 data/agent-memory/*.json
 data/runtime/*.json
 
+# local chat persistence (append-only JSONL)
+data/chat/
+
+# local avatar source files (do not commit)
+/us1.jpg
+/us2.jpg
+/agent3.jpg
+/agent4.jpg
+
 # OS
 .DS_Store
 Thumbs.db

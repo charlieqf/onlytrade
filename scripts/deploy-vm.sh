@@ -8,7 +8,7 @@ SETUP_PYTHON_VENV="${ONLYTRADE_SETUP_PYTHON_VENV:-0}"
 VENV_PATH="${ONLYTRADE_VENV_PATH:-.venv}"
 REQUIREMENTS_PATH="${ONLYTRADE_REQUIREMENTS_PATH:-requirements.txt}"
 
-PM2_API_NAME="${ONLYTRADE_PM2_API_NAME:-onlytrade-mock-api}"
+PM2_API_NAME="${ONLYTRADE_PM2_API_NAME:-onlytrade-runtime-api}"
 PM2_WEB_NAME="${ONLYTRADE_PM2_WEB_NAME:-onlytrade-web}"
 SYSTEMD_API_SERVICE="${ONLYTRADE_SYSTEMD_API_SERVICE:-}"
 SYSTEMD_WEB_SERVICE="${ONLYTRADE_SYSTEMD_WEB_SERVICE:-}"
@@ -78,15 +78,20 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
+BACKEND_DIR="runtime-api"
+if [ ! -d "$BACKEND_DIR" ]; then
+  BACKEND_DIR="mock-api"
+fi
+
 echo "[deploy] Installing backend deps"
-npm ci --prefix mock-api
+npm ci --prefix "$BACKEND_DIR"
 
 echo "[deploy] Installing frontend deps"
 npm ci --prefix onlytrade-web
 
 if [ "$RUN_TESTS" = "1" ]; then
   echo "[deploy] Running backend tests"
-  npm test --prefix mock-api
+  npm test --prefix "$BACKEND_DIR"
 
   echo "[deploy] Running frontend tests"
   npm run test --prefix onlytrade-web -- --run

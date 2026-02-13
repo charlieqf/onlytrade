@@ -231,7 +231,7 @@ Manual QA:
 1. Deploy code to VM (`git push`, VM `git pull --ff-only`).
 2. Backup existing `data/agent-memory` and generated assets.
 3. Run migration script to seed `data/agents`.
-4. Restart `mock-api`; verify `GET /api/agents`.
+4. Restart `runtime-api` (or the `mock-api` shim); verify `GET /api/agents`.
 5. Validate UI create/edit/delete/prompt save.
 
 ## Acceptance Criteria

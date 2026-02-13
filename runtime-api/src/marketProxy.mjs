@@ -197,7 +197,7 @@ export function normalizePayloadToFrames(payload, context) {
   return dedupeAndSortFrames(mapped)
 }
 
-export function generateMockFrames({ symbol, interval, limit, mode = 'mock', provider = 'mock-api-generated' }) {
+export function generateMockFrames({ symbol, interval, limit, mode = 'mock', provider = 'runtime-api-generated' }) {
   const seed = hashSymbol(symbol)
   const base = 80 + (seed % 1500)
   const step = intervalMs(interval)
@@ -407,13 +407,13 @@ export function createMarketDataService({
       schema_version: 'market.frames.v1',
       market: 'CN-A',
       mode: 'mock',
-      provider: 'mock-api-generated',
+      provider: 'runtime-api-generated',
       frames: generateMockFrames({
         symbol,
         interval,
         limit: maxItems,
         mode: 'mock',
-        provider: 'mock-api-generated',
+        provider: 'runtime-api-generated',
       }),
     }
   }

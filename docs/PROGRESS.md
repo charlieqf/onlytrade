@@ -11,7 +11,7 @@ This file is the living progress tracker. Update it as work lands.
 - Milestone 2 started: mock-live demo mode scaffolded via `VITE_DEMO_MODE=mock-live`
 - Core frontend pass complete: app shell now centered on `/lobby`, `/room`, `/leaderboard` with Ask/Fuel + simulation-rule UI
 - UI-complete assessment added: `docs/UI_COMPLETE_CHECKLIST.md`
-- Realtime data proxy scaffolded in `mock-api/` with adapter mode switch (`MARKET_PROVIDER`), canonical frame normalization, and SSE endpoint (`/api/market/stream`)
+- Realtime data proxy scaffolded in `runtime-api/` with adapter mode switch (`MARKET_PROVIDER`), canonical frame normalization, and SSE endpoint (`/api/market/stream`)
 - Added 90-day daily (`1d`) history updater for agent context warmup (`scripts/update-cn-daily-history.mjs`)
 - Added agent context endpoint + feature snapshots (`/api/agent/market-context`) backed by intraday + 90-day daily bars
 - Added mock in-memory agent decision loop feeding `/api/decisions/latest` on a configurable cycle
@@ -28,7 +28,7 @@ This file is the living progress tracker. Update it as work lands.
 - Agent trigger cadence default updated to 10 replay bars (10-minute market-time reasoning cadence at `1m` bars)
 - Added optional OpenAI `gpt-4o-mini` decision path with automatic fallback to heuristic rules
 - Agent memory JSON upgraded to `agent.memory.v2` with meta/config/daily journal sections
-- Mock API now auto-loads env from `mock-api/.env.local` (or `.env`) for local secret management
+- Runtime API now auto-loads env from `runtime-api/.env.local` (or `.env`) with compatibility fallback to `mock-api/.env.local`
 - Added dev `factory-reset` endpoint + runtime reset hooks for repeatable full replay test reruns
 - Added per-trade commission deduction (buy/sell) with fee tracking in agent memory stats
 - Hardened LLM decision parsing with strict JSON shape validation + fallback
@@ -83,16 +83,16 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Document A-share realtime retrieval architecture (`docs/A_SHARE_REALTIME_RETRIEVAL.md`)
 - [x] Prepare replay pack tooling for yesterday CN-A bars (`scripts/fetch-cn-replay.mjs`)
 - [x] Prepare rolling 90-day `1d` CN-A history and daily append workflow (`scripts/update-cn-daily-history.mjs`)
-- [x] Minimal API service returning fixtures/replay (`mock-api/`)
+- [x] Minimal API service returning fixtures/replay (`runtime-api/`, with `mock-api/` shim)
 - [x] Realtime stock data proxy scaffold (upstream adapter + fallback + canonical normalization + SSE)
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)
 - [ ] Agent runtime (1-3 personas) emitting actions + thought summaries
-- [x] Agent-ready market context payload contract and mock endpoint (`docs/AGENT_MARKET_CONTEXT.md`, `mock-api`)
+- [x] Agent-ready market context payload contract and runtime endpoint (`docs/AGENT_MARKET_CONTEXT.md`, `runtime-api`)
 
 ### Testing
 - [x] Unit tests (Vitest) in `onlytrade-web/src/**/*.test.*`
-- [x] Unit tests for market proxy normalization/dedupe/fallback in `mock-api/test/marketProxy.test.mjs`
+- [x] Unit tests for market proxy normalization/dedupe/fallback in `runtime-api/test/marketProxy.test.mjs`
 - [x] Add integration/E2E structure (Playwright recommended)
 - [ ] Add one smoke test: lobby renders and navigation works
 

@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Define the file contracts used by the AKShare collector/converter pipeline and the mock-api live-file provider.
+Define the file contracts used by the AKShare collector/converter pipeline and the runtime-api live-file provider.
+
+Compatibility note: `mock-api/` may exist as a shim entrypoint on some VMs, but the real code lives in `runtime-api/`.
 
 ## Raw minute stream
 
@@ -50,7 +52,7 @@ Schema:
 - Path: `data/live/onlytrade/frames.1m.json`
 - Format: `market.frames.v1`
 - Producer: `scripts/akshare/converter.py`
-- Consumer: `mock-api/src/liveFileFrameProvider.mjs`
+- Consumer: `runtime-api/src/liveFileFrameProvider.mjs`
 
 Schema:
 

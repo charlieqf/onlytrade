@@ -14,7 +14,10 @@ load_control_token_from_env_file() {
     return
   fi
 
-  local env_file="$REPO_ROOT/mock-api/.env.local"
+  local env_file="$REPO_ROOT/runtime-api/.env.local"
+  if [ ! -f "$env_file" ]; then
+    env_file="$REPO_ROOT/mock-api/.env.local"
+  fi
   if [ ! -f "$env_file" ]; then
     return
   fi
@@ -85,7 +88,7 @@ Env vars:
 
 Token behavior:
   - If ONLYTRADE_CONTROL_TOKEN is not set, script attempts to read CONTROL_API_TOKEN
-    from mock-api/.env.local.
+    from runtime-api/.env.local (fallback: mock-api/.env.local).
 EOF
 }
 

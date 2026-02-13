@@ -79,13 +79,18 @@ Example cron (Asia/Shanghai close + buffer):
 15 16 * * 1-5 cd /path/to/onlytrade && /usr/bin/node scripts/update-cn-daily-history.mjs >> logs/daily-history.log 2>&1
 ```
 
-### Run Thin Mock Backend
+### Run Runtime Backend
 
 ```bash
-cd mock-api
+cd runtime-api
 npm install
 npm run dev
 ```
+
+Compatibility:
+
+- `mock-api/` still exists as a shim entrypoint so existing VM layouts that run
+  `node mock-api/server.mjs` continue working.
 
 Then run frontend in live mode:
 
@@ -109,7 +114,7 @@ Related docs:
 - `docs/runbooks/agent-registry-ops.md`
 - `agents/README.md`
 
-Agent data context endpoint (mock-api):
+Agent data context endpoint (runtime-api):
 
 ```bash
 curl "http://localhost:8080/api/agent/market-context?symbol=600519.SH&intraday_interval=1m&intraday_limit=180&daily_limit=90"
@@ -177,7 +182,7 @@ Pipeline:
    - `data/live/akshare/raw_quotes.json`
 2. `scripts/akshare/converter.py` converts to canonical frames:
    - `data/live/onlytrade/frames.1m.json`
-3. `mock-api` in `RUNTIME_DATA_MODE=live_file` reads canonical file via hot-refresh provider.
+3. `runtime-api` in `RUNTIME_DATA_MODE=live_file` reads canonical file via hot-refresh provider.
 
 Run one cycle:
 
@@ -205,7 +210,7 @@ bash scripts/onlytrade-ops.sh akshare-run-once --symbols 600519,300750,601318,00
 bash scripts/onlytrade-ops.sh akshare-status
 ```
 
-Enable backend live-file mode (before starting `mock-api`):
+Enable backend live-file mode (before starting `runtime-api`):
 
 ```bash
 RUNTIME_DATA_MODE=live_file
@@ -248,7 +253,7 @@ bash scripts/deploy-vm.sh --branch main
 The deploy script performs:
 
 - `git fetch/checkout/pull --ff-only`
-- `npm ci` for `mock-api` and `onlytrade-web`
+- `npm ci` for `runtime-api` and `onlytrade-web`
 - tests + frontend build (can be skipped)
 - optional PM2/systemd restarts
 - API health checks
@@ -299,7 +304,7 @@ Optional secure control token (recommended):
 export ONLYTRADE_CONTROL_TOKEN="your-strong-token"
 ```
 
-If not exported, the script will try reading `CONTROL_API_TOKEN` from `mock-api/.env.local`.
+If not exported, the script will try reading `CONTROL_API_TOKEN` from `runtime-api/.env.local` (fallback: `mock-api/.env.local`).
 
 From local terminal, you can run the same ops via SSH (`ssh -i` under the hood):
 

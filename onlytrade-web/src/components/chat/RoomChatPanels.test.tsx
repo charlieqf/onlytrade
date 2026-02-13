@@ -6,20 +6,44 @@ import { RoomPrivateChatPanel } from './RoomPrivateChatPanel'
 
 vi.mock('../../lib/api', () => ({
   api: {
-    getRoomPublicMessages: vi.fn(async () => []),
-    getRoomPrivateMessages: vi.fn(async () => []),
+    getRoomPublicMessages: vi.fn(async () => [
+      {
+        id: 'm_pub_1',
+        room_id: 't_001',
+        user_session_id: 'usr_sess_1',
+        sender_type: 'user',
+        sender_name: 'TraderFox',
+        visibility: 'public',
+        message_type: 'public_plain',
+        text: 'hello room',
+        created_ts_ms: 1700000000000,
+      },
+    ]),
+    getRoomPrivateMessages: vi.fn(async () => [
+      {
+        id: 'm_priv_1',
+        room_id: 't_001',
+        user_session_id: 'usr_sess_1',
+        sender_type: 'agent',
+        sender_name: 'HS300 Momentum',
+        visibility: 'private',
+        message_type: 'private_agent_dm',
+        text: 'private reply',
+        created_ts_ms: 1700000001000,
+      },
+    ]),
     postRoomMessage: vi.fn(async () => ({ message: null, agent_reply: null })),
   },
 }))
 
 describe('room chat panels', () => {
   it('renders public and private channel labels', async () => {
-    render(<RoomPublicChatPanel roomId="t_001" userSessionId="usr_sess_1" />)
+    render(<RoomPublicChatPanel roomId="t_001" userSessionId="usr_sess_1" userNickname="TraderFox" />)
     expect(screen.getByText(/^Public$/i)).toBeInTheDocument()
-    await screen.findByText(/No public messages yet\./i)
+    await screen.findByText('TraderFox')
 
-    render(<RoomPrivateChatPanel roomId="t_001" userSessionId="usr_sess_1" />)
+    render(<RoomPrivateChatPanel roomId="t_001" userSessionId="usr_sess_1" userNickname="TraderFox" />)
     expect(screen.getByText(/^Private$/i)).toBeInTheDocument()
-    await screen.findByText(/No private messages yet\./i)
+    await screen.findByText('HS300 Momentum')
   })
 })

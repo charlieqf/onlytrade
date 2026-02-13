@@ -293,6 +293,7 @@ export interface ChatMessage {
   room_id: string
   user_session_id: string
   sender_type: 'user' | 'agent'
+  sender_name: string
   visibility: ChatVisibility
   message_type: ChatMessageType
   text: string
@@ -301,10 +302,12 @@ export interface ChatMessage {
 
 export interface ChatSessionBootstrapResult {
   user_session_id: string
+  user_nickname: string
 }
 
 export interface ChatPostPayload {
   user_session_id: string
+  user_nickname?: string
   visibility: ChatVisibility
   message_type: ChatMessageType
   text: string

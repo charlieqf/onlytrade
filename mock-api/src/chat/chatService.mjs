@@ -1,4 +1,8 @@
-import { buildAgentReply, shouldAgentReply as defaultShouldAgentReply } from './chatAgentResponder.mjs'
+import {
+  buildAgentReply,
+  buildProactiveAgentMessage,
+  shouldAgentReply as defaultShouldAgentReply,
+} from './chatAgentResponder.mjs'
 import { validateMessageType } from './chatContract.mjs'
 
 const MENTION_TOKEN_RE = /@([a-zA-Z0-9_]+)/g
@@ -26,6 +30,38 @@ function parseMentions(text) {
 
 function sanitizeText(value) {
   return String(value || '').trim()
+}
+
+function sanitizeNickname(value) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!text) return ''
+  return text.slice(0, 24)
+}
+
+function dayKeyInTimeZone(tsMs, timeZone = 'Asia/Shanghai') {
+  const dtf = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  return dtf.format(new Date(tsMs))
+}
+
+function filterTodayMessages(messages, nowMs, timeZone = 'Asia/Shanghai') {
+  const today = dayKeyInTimeZone(nowMs, timeZone)
+  return messages.filter((item) => {
+    const ts = Number(item?.created_ts_ms)
+    if (!Number.isFinite(ts)) return false
+    return dayKeyInTimeZone(ts, timeZone) === today
+  })
+}
+
+function fallbackNicknameFromSessionId(userSessionId) {
+  const token = String(userSessionId || '').replace(/[^a-zA-Z0-9]/g, '')
+  const tail = token.slice(-4).toUpperCase()
+  if (!tail) return 'User'
+  return `User-${tail}`
 }
 
 function buildMessageId(nowMs) {
@@ -93,6 +129,8 @@ export function createChatService({
   maxTextLen = Number(process.env.CHAT_MAX_TEXT_LEN || 600),
   rateLimitPerMin = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 20),
   publicPlainReplyRate = Number(process.env.CHAT_PUBLIC_PLAIN_REPLY_RATE || 0.05),
+  proactivePublicIntervalMs = Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 90_000),
+  chatContextTimeZone = process.env.CHAT_CONTEXT_TIMEZONE || 'Asia/Shanghai',
   shouldAgentReply = defaultShouldAgentReply,
 } = {}) {
   if (!store) {
@@ -107,6 +145,8 @@ export function createChatService({
   const safePublicReplyRate = Number.isFinite(Number(publicPlainReplyRate))
     ? Math.max(0, Math.min(Number(publicPlainReplyRate), 1))
     : 0.05
+  const safeProactivePublicIntervalMs = Math.max(10_000, Number(proactivePublicIntervalMs) || 90_000)
+  const proactiveStateByRoom = new Map()
 
   function ensureRoomAgent(roomId) {
     const roomAgent = resolveRoomAgent(roomId)
@@ -125,9 +165,48 @@ export function createChatService({
     return roomAgent
   }
 
+  async function readTodayContext(roomId, userSessionId, visibility) {
+    if (visibility === 'private') {
+      const privateMessages = await store.readPrivate(roomId, userSessionId, 500, null)
+      return filterTodayMessages(privateMessages, nowMs(), chatContextTimeZone)
+    }
+
+    const publicMessages = await store.readPublic(roomId, 500, null)
+    return filterTodayMessages(publicMessages, nowMs(), chatContextTimeZone)
+  }
+
+  async function maybeEmitProactivePublicMessage(roomId, roomAgent) {
+    const now = nowMs()
+    const lastProactiveTs = Number(proactiveStateByRoom.get(roomId) || 0)
+    if (now - lastProactiveTs < safeProactivePublicIntervalMs) {
+      return
+    }
+
+    const publicMessages = await store.readPublic(roomId, 500, null)
+    const todayMessages = filterTodayMessages(publicMessages, now, chatContextTimeZone)
+    const lastMessage = todayMessages[todayMessages.length - 1]
+    const lastMessageTs = Number(lastMessage?.created_ts_ms)
+
+    if (Number.isFinite(lastMessageTs) && now - lastMessageTs < safeProactivePublicIntervalMs) {
+      return
+    }
+
+    const proactiveMessage = buildProactiveAgentMessage({
+      roomAgent,
+      roomId,
+      latestDecision: resolveLatestDecision(roomId),
+      historyContext: todayMessages,
+      nowMs: now,
+    })
+
+    await store.appendPublic(roomId, proactiveMessage)
+    proactiveStateByRoom.set(roomId, now)
+  }
+
   async function postMessage({
     roomId,
     userSessionId,
+    userNickname,
     visibility,
     text,
     messageType,
@@ -136,6 +215,7 @@ export function createChatService({
     const safeUserSessionId = String(userSessionId || '').trim()
     const safeVisibility = normalizeVisibility(visibility)
     const safeText = sanitizeText(text)
+    const safeUserNickname = sanitizeNickname(userNickname) || fallbackNicknameFromSessionId(safeUserSessionId)
     const safeMessageType = String(messageType || '').trim()
 
     if (!safeRoomId) {
@@ -166,6 +246,7 @@ export function createChatService({
       room_id: safeRoomId,
       user_session_id: safeUserSessionId,
       sender_type: 'user',
+      sender_name: safeUserNickname,
       visibility: safeVisibility,
       message_type: safeMessageType,
       text: safeText,
@@ -185,6 +266,7 @@ export function createChatService({
         roomAgent,
         inboundMessage: userMessage,
         latestDecision: resolveLatestDecision(safeRoomId),
+        historyContext: await readTodayContext(safeRoomId, safeUserSessionId, safeVisibility),
         nowMs: nowReply,
       })
 
@@ -207,7 +289,10 @@ export function createChatService({
       throw chatError('invalid_room_id', 400)
     }
 
-    ensureRoomAgent(safeRoomId)
+    const roomAgent = ensureRoomAgent(safeRoomId)
+    if (beforeTsMs == null) {
+      await maybeEmitProactivePublicMessage(safeRoomId, roomAgent)
+    }
     return store.readPublic(safeRoomId, limit, beforeTsMs)
   }
 

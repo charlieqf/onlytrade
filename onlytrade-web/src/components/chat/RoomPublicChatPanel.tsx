@@ -6,6 +6,7 @@ import type { ChatMessage, ChatMessageType } from '../../types'
 interface RoomPublicChatPanelProps {
   roomId: string
   userSessionId: string
+  userNickname: string
 }
 
 function formatMessageTime(tsMs: number) {
@@ -14,10 +15,12 @@ function formatMessageTime(tsMs: number) {
 }
 
 function senderLabel(message: ChatMessage) {
+  const fromPayload = String(message.sender_name || '').trim()
+  if (fromPayload) return fromPayload
   return message.sender_type === 'agent' ? 'Agent' : 'You'
 }
 
-export function RoomPublicChatPanel({ roomId, userSessionId }: RoomPublicChatPanelProps) {
+export function RoomPublicChatPanel({ roomId, userSessionId, userNickname }: RoomPublicChatPanelProps) {
   const [text, setText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -43,6 +46,7 @@ export function RoomPublicChatPanel({ roomId, userSessionId }: RoomPublicChatPan
     try {
       await api.postRoomMessage(roomId, {
         user_session_id: userSessionId,
+        user_nickname: userNickname,
         visibility: 'public',
         message_type: messageType,
         text: payloadText,

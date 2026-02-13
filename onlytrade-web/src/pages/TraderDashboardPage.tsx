@@ -85,7 +85,12 @@ export function TraderDashboardPage({
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
     const [chatTab, setChatTab] = useState<'public' | 'private'>('public')
-    const { userSessionId, isLoading: chatSessionLoading, error: chatSessionError } = useUserSessionId()
+    const {
+        userSessionId,
+        userNickname,
+        isLoading: chatSessionLoading,
+        error: chatSessionError,
+    } = useUserSessionId()
 
     // Current positions pagination
     const [positionsPageSize, setPositionsPageSize] = useState<number>(20)
@@ -571,7 +576,7 @@ export function TraderDashboardPage({
                                 </div>
                                 <div className="text-[11px] text-nofx-text-muted text-right">
                                     <div>{selectedTrader.trader_id}</div>
-                                    {userSessionId && <div>{userSessionId.slice(0, 16)}...</div>}
+                                    {userNickname && <div>{userNickname}</div>}
                                 </div>
                             </div>
 
@@ -600,12 +605,20 @@ export function TraderDashboardPage({
                                 <div className="text-xs text-nofx-red">Failed to bootstrap chat session.</div>
                             )}
 
-                            {!chatSessionLoading && !chatSessionError && userSessionId && (
+                            {!chatSessionLoading && !chatSessionError && userSessionId && userNickname && (
                                 <>
                                     {chatTab === 'public' ? (
-                                        <RoomPublicChatPanel roomId={selectedTrader.trader_id} userSessionId={userSessionId} />
+                                        <RoomPublicChatPanel
+                                            roomId={selectedTrader.trader_id}
+                                            userSessionId={userSessionId}
+                                            userNickname={userNickname}
+                                        />
                                     ) : (
-                                        <RoomPrivateChatPanel roomId={selectedTrader.trader_id} userSessionId={userSessionId} />
+                                        <RoomPrivateChatPanel
+                                            roomId={selectedTrader.trader_id}
+                                            userSessionId={userSessionId}
+                                            userNickname={userNickname}
+                                        />
                                     )}
                                 </>
                             )}

@@ -386,6 +386,18 @@ function createUserSessionId() {
   return `usr_sess_${token}`
 }
 
+function sanitizeUserNickname(value) {
+  const nickname = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!nickname) return ''
+  return nickname.slice(0, 24)
+}
+
+function createDefaultUserNickname(userSessionId) {
+  const suffix = String(userSessionId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()
+  if (!suffix) return 'User'
+  return `User-${suffix}`
+}
+
 function parseChatLimit(limitRaw, fallback = 20) {
   const parsed = Number(limitRaw)
   if (!Number.isFinite(parsed)) return fallback
@@ -405,6 +417,35 @@ function chatErrorStatus(error) {
   if (error?.code === 'room_not_found') return 404
   if (error?.code === 'rate_limited') return 429
   return 400
+}
+
+function resolveNicknameForSession(userSessionId, preferredNickname = '') {
+  const safeSessionId = String(userSessionId || '').trim()
+  const requestedNickname = sanitizeUserNickname(preferredNickname)
+  if (!safeSessionId) {
+    return requestedNickname || 'User'
+  }
+  const existing = chatSessionRegistry.get(safeSessionId)
+
+  if (requestedNickname) {
+    const record = {
+      user_nickname: requestedNickname,
+      updated_ts_ms: Date.now(),
+    }
+    chatSessionRegistry.set(safeSessionId, record)
+    return requestedNickname
+  }
+
+  if (existing?.user_nickname) {
+    return existing.user_nickname
+  }
+
+  const fallback = createDefaultUserNickname(safeSessionId)
+  chatSessionRegistry.set(safeSessionId, {
+    user_nickname: fallback,
+    updated_ts_ms: Date.now(),
+  })
+  return fallback
 }
 
 function derivedDecisionCycleMs() {
@@ -947,6 +988,7 @@ const memoryStore = createAgentMemoryStore({
   traders: TRADERS,
   commissionRate: AGENT_COMMISSION_RATE,
 })
+const chatSessionRegistry = new Map()
 const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
@@ -1291,9 +1333,19 @@ app.get('/api/top-traders', (_req, res) => {
   res.json(ok(top))
 })
 
-app.post('/api/chat/session/bootstrap', (_req, res) => {
+app.post('/api/chat/session/bootstrap', (req, res) => {
+  const userSessionId = createUserSessionId()
+  const requestedNickname = sanitizeUserNickname(req.body?.user_nickname)
+  const userNickname = requestedNickname || createDefaultUserNickname(userSessionId)
+
+  chatSessionRegistry.set(userSessionId, {
+    user_nickname: userNickname,
+    updated_ts_ms: Date.now(),
+  })
+
   res.json(ok({
-    user_session_id: createUserSessionId(),
+    user_session_id: userSessionId,
+    user_nickname: userNickname,
   }))
 })
 
@@ -1335,6 +1387,7 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
   try {
     const roomId = String(req.params.roomId || '').trim()
     const userSessionId = String(req.body?.user_session_id || '').trim()
+    const userNickname = resolveNicknameForSession(userSessionId, req.body?.user_nickname)
     const visibility = String(req.body?.visibility || '').trim()
     const messageType = String(req.body?.message_type || '').trim()
     const text = String(req.body?.text || '')
@@ -1342,6 +1395,7 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
     const result = await chatService.postMessage({
       roomId,
       userSessionId,
+      userNickname,
       visibility,
       messageType,
       text,

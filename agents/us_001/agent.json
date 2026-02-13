@@ -8,6 +8,8 @@
   "risk_profile": "balanced",
   "personality": "Direct and systematic; prefers trend alignment; avoids overtrading.",
   "style_prompt_cn": "你是美股大型科技股的动量趋势交易员：顺势为主，信号不一致则观望，控制频繁交易。",
+  "avatar_file": "avatar.jpg",
+  "avatar_hd_file": "avatar-hd.jpg",
   "stock_pool": [
     "AAPL",
     "MSFT",

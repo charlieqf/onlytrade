@@ -8,6 +8,8 @@
   "risk_profile": "conservative",
   "personality": "Patient and cautious; buys dips selectively; scales in; avoids chasing.",
   "style_prompt_cn": "你是美股均值回归交易员：优先在回撤后参与，避免追涨，强调分批与风控。",
+  "avatar_file": "avatar.jpg",
+  "avatar_hd_file": "avatar-hd.jpg",
   "stock_pool": [
     "AAPL",
     "MSFT",

@@ -268,7 +268,8 @@ function buildAgentAssetUrl(agentId, fileName) {
   const safeFileName = String(fileName || '').trim()
   if (!safeAgentId || !safeFileName) return null
   if (!isSafeAssetFileName(safeFileName)) return null
-  return `/api/agents/${encodeURIComponent(safeAgentId)}/assets/${encodeURIComponent(safeFileName)}`
+  // Cache-bust assets across deploys/restarts so avatar updates show up immediately.
+  return `/api/agents/${encodeURIComponent(safeAgentId)}/assets/${encodeURIComponent(safeFileName)}?v=${BOOT_TS}`
 }
 
 function normalizeStockPool(value, exchangeId = '') {

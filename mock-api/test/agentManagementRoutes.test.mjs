@@ -112,8 +112,8 @@ test('agent management routes drive registry-backed trader and competition paylo
   assert.equal(tradersAfterRegisterRes.ok, true)
   assert.equal(tradersAfterRegisterBody.data.length, 1)
   assert.equal(tradersAfterRegisterBody.data[0].trader_id, 't_001')
-  assert.equal(tradersAfterRegisterBody.data[0].avatar_url, '/api/agents/t_001/assets/avatar.jpg')
-  assert.equal(tradersAfterRegisterBody.data[0].avatar_hd_url, '/api/agents/t_001/assets/avatar-hd.jpg')
+  assert.match(tradersAfterRegisterBody.data[0].avatar_url, /^\/api\/agents\/t_001\/assets\/avatar\.jpg\?v=\d+$/)
+  assert.match(tradersAfterRegisterBody.data[0].avatar_hd_url, /^\/api\/agents\/t_001\/assets\/avatar-hd\.jpg\?v=\d+$/)
   assert.equal(tradersAfterRegisterBody.data[0].trading_style, 'momentum_trend')
   assert.equal(tradersAfterRegisterBody.data[0].risk_profile, 'balanced')
   assert.equal(tradersAfterRegisterBody.data[0].personality, '冷静直接，偏顺势执行。')
@@ -143,7 +143,7 @@ test('agent management routes drive registry-backed trader and competition paylo
   assert.equal(competitionAfterRegisterBody.data.traders.length, 1)
   assert.equal(competitionAfterRegisterBody.data.traders[0].trader_id, 't_001')
   assert.equal(competitionAfterRegisterBody.data.traders[0].is_running, false)
-  assert.equal(competitionAfterRegisterBody.data.traders[0].avatar_url, '/api/agents/t_001/assets/avatar.jpg')
+  assert.match(competitionAfterRegisterBody.data.traders[0].avatar_url, /^\/api\/agents\/t_001\/assets\/avatar\.jpg\?v=\d+$/)
 
   const startRes = await fetch(`${baseUrl}/api/agents/t_001/start`, {
     method: 'POST',

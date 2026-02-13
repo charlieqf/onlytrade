@@ -337,6 +337,7 @@ function PositionRow({ position }: { position: HistoricalPosition }) {
 export function PositionHistory({ traderId }: PositionHistoryProps) {
   const { language } = useLanguage()
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [positions, setPositions] = useState<HistoricalPosition[]>([])
   const [tradeEvents, setTradeEvents] = useState<TradeEvent[]>([])
@@ -356,10 +357,15 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
 
   useEffect(() => {
     let cancelled = false
+    let hasLoadedOnce = false
 
     const fetchData = async () => {
       try {
-        setLoading(true)
+        if (!hasLoadedOnce) {
+          setLoading(true)
+        } else {
+          setRefreshing(true)
+        }
         setError(null)
         // Fetch more data than needed to support filtering, but respect pageSize for initial load
         const data = await api.getPositionHistory(traderId, Math.max(200, pageSize * 5))
@@ -369,12 +375,14 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
         setStats(data.stats)
         setSymbolStats(data.symbol_stats || [])
         setDirectionStats(data.direction_stats || [])
+        hasLoadedOnce = true
       } catch (err) {
         if (cancelled) return
         setError(err instanceof Error ? err.message : 'Failed to load history')
       } finally {
         if (cancelled) return
         setLoading(false)
+        setRefreshing(false)
       }
     }
 
@@ -518,8 +526,15 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
           border: '1px solid #2B3139',
         }}
       >
-        <div className="text-sm font-semibold" style={{ color: '#EAECEF' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold" style={{ color: '#EAECEF' }}>
           {language === 'zh' ? '成交记录（实时）' : 'Transaction History (Realtime)'}
+          </div>
+          {refreshing && (
+            <div className="text-[11px] font-mono" style={{ color: '#848E9C' }}>
+              {language === 'zh' ? '刷新中…' : 'Refreshing...'}
+            </div>
+          )}
         </div>
         <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
           {language === 'zh'

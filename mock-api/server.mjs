@@ -14,6 +14,7 @@ import { createAgentRegistryStore } from './src/agentRegistryStore.mjs'
 import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
 import { getCnAMarketSessionStatus } from './src/cnMarketSession.mjs'
+import { createDecisionLogStore, dayKeyInTimeZone } from './src/decisionLogStore.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
 import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
@@ -1248,6 +1249,10 @@ const chatSessionRegistry = new Map()
 const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
+const decisionLogStore = createDecisionLogStore({
+  baseDir: path.join(ROOT_DIR, 'data', 'decisions'),
+  timeZone: 'Asia/Shanghai',
+})
 let chatService = null
 let agentDecisionEveryBars = AGENT_DECISION_EVERY_BARS
 let replayBarsSinceAgentDecision = 0
@@ -1909,7 +1914,90 @@ app.get('/api/decisions/latest', (req, res) => {
   const limit = Number(req.query.limit || 5)
   const safeLimit = Number.isFinite(limit) ? limit : 5
   const runtimeDecisions = agentRuntime?.getLatestDecisions(traderId || undefined, safeLimit) || []
-  res.json(ok(runtimeDecisions))
+
+  if (!traderId) {
+    res.json(ok(runtimeDecisions))
+    return
+  }
+
+  Promise.resolve()
+    .then(async () => {
+      const logged = await decisionLogStore.listLatest({ traderId, limit: safeLimit })
+      const items = []
+
+      for (const row of runtimeDecisions) {
+        if (row && typeof row === 'object') items.push(row)
+      }
+      for (const row of logged) {
+        if (row && typeof row === 'object') items.push(row)
+      }
+
+      // Fallback: synthesize a minimal decision list from persisted recent_actions.
+      if (items.length === 0) {
+        const snapshot = memoryStore?.getSnapshot?.(traderId) || null
+        const recent = Array.isArray(snapshot?.recent_actions) ? snapshot.recent_actions : []
+        const todayKey = dayKeyInTimeZone(Date.now(), 'Asia/Shanghai')
+        const filtered = recent.filter((action) => {
+          const ts = Date.parse(String(action?.ts || ''))
+          if (!Number.isFinite(ts)) return false
+          return dayKeyInTimeZone(ts, 'Asia/Shanghai') === todayKey
+        })
+
+        const accountState = {
+          total_balance: Number(snapshot?.stats?.latest_total_balance ?? 100000),
+          available_balance: Number(snapshot?.stats?.latest_available_balance ?? 100000),
+          total_unrealized_profit: Number(snapshot?.stats?.latest_unrealized_profit ?? 0),
+          position_count: Array.isArray(snapshot?.holdings) ? snapshot.holdings.filter((h) => Number(h?.shares) > 0).length : 0,
+          margin_used_pct: 0,
+        }
+
+        for (const act of filtered.slice(0, safeLimit)) {
+          const action = String(act?.action || 'hold').toLowerCase()
+          const symbol = act?.symbol ? String(act.symbol) : ''
+          const tsIso = String(act?.ts || new Date().toISOString())
+          const price = Number(act?.price || 0)
+          items.push({
+            timestamp: tsIso,
+            cycle_number: Number(act?.cycle_number || 0),
+            system_prompt: '',
+            input_prompt: '',
+            cot_trace: '',
+            decision_json: JSON.stringify({ action, symbol, price }),
+            account_state: accountState,
+            positions: [],
+            candidate_coins: [],
+            decisions: [
+              {
+                action,
+                symbol,
+                price,
+                order_id: 0,
+                timestamp: tsIso,
+                success: true,
+              },
+            ],
+            execution_log: [],
+            success: true,
+          })
+        }
+      }
+
+      // De-dupe by timestamp+cycle_number+decision_json
+      const seen = new Set()
+      const deduped = []
+      for (const row of items) {
+        const key = `${row?.timestamp || ''}|${row?.cycle_number || 0}|${row?.decision_json || ''}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        deduped.push(row)
+      }
+
+      deduped.sort((a, b) => (Date.parse(b?.timestamp || '') || 0) - (Date.parse(a?.timestamp || '') || 0))
+      res.json(ok(deduped.slice(0, safeLimit)))
+    })
+    .catch(() => {
+      res.json(ok(runtimeDecisions))
+    })
 })
 
 app.get('/api/agent/runtime/status', (_req, res) => {
@@ -2427,6 +2515,12 @@ agentRuntime = createInMemoryAgentRuntime({
       positions,
       replayStatus,
     })
+
+    try {
+      await decisionLogStore.appendDecision({ traderId: trader.trader_id, decision })
+    } catch {
+      // keep runtime robust: failure to persist decisions must not break trading loop
+    }
   },
 })
 

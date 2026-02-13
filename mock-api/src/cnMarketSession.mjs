@@ -78,7 +78,7 @@ export function getCnAMarketSessionStatus(nowMs = Date.now()) {
   }
 
   // Weekend gate
-  if (weekday >= 5) {
+  if (weekday === 0 || weekday === 6) {
     out.reason = 'weekend'
     return out
   }

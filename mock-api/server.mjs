@@ -1153,6 +1153,23 @@ function getPositionHistory(traderId, limit = 100) {
   const closed = Array.isArray(snapshot?.closed_positions) ? snapshot.closed_positions : []
   let tradeEvents = Array.isArray(snapshot?.trade_events) ? snapshot.trade_events : []
 
+  const commissionRate = Number(snapshot?.config?.commission_rate ?? AGENT_COMMISSION_RATE)
+  const safeCommissionRate = Number.isFinite(commissionRate) ? Math.max(0, commissionRate) : 0
+  const defaultCashAfter = toFixedNumber(Number(snapshot?.stats?.latest_available_balance ?? initialBalance), 2)
+  const defaultEquityAfter = toFixedNumber(Number(snapshot?.stats?.latest_total_balance ?? initialBalance), 2)
+  const holdings = Array.isArray(snapshot?.holdings) ? snapshot.holdings : []
+  const holdingBySymbol = new Map(
+    holdings
+      .map((row) => ({
+        symbol: String(row?.symbol || '').trim(),
+        shares: Number(row?.shares ?? 0),
+        avg_cost: Number(row?.avg_cost ?? 0),
+        mark_price: Number(row?.mark_price ?? 0),
+      }))
+      .filter((row) => row.symbol)
+      .map((row) => [row.symbol, row])
+  )
+
   // Backfill trade events for older snapshots (before trade_events existed).
   // We prefer showing *something* in realtime (buys/sells) even when there are
   // no closed positions yet.
@@ -1165,6 +1182,13 @@ function getPositionHistory(traderId, limit = 100) {
       const price = Number(lot?.entry_price || 0)
       const ts = String(lot?.entry_time || snapshot?.updated_at || '')
       if (!symbol || !qty || !Number.isFinite(price) || !ts) continue
+
+      const notional = toFixedNumber(qty * price, 2)
+      const holding = holdingBySymbol.get(symbol)
+      const feeFromLot = Number(lot?.entry_fee_remaining ?? 0)
+      const computedFee = safeCommissionRate > 0 ? toFixedNumber(Number(notional) * safeCommissionRate, 2) : 0
+      const fee = Number.isFinite(feeFromLot) && feeFromLot > 0 ? toFixedNumber(feeFromLot, 2) : computedFee
+
       seeded.push({
         id: String(lot?.entry_order_id || `seed-buy-${symbol}-${ts}`),
         trader_id: traderId,
@@ -1174,9 +1198,20 @@ function getPositionHistory(traderId, limit = 100) {
         side: 'BUY',
         quantity: qty,
         price,
-        notional: toFixedNumber(qty * price, 2),
-        fee: 0,
+        notional,
+        fee,
         realized_pnl: 0,
+        cash_after: defaultCashAfter,
+        total_equity_after: defaultEquityAfter,
+        position_after_qty: Number.isFinite(Number(holding?.shares)) && Number(holding?.shares) > 0
+          ? Math.floor(Number(holding.shares))
+          : qty,
+        position_after_avg_cost: Number.isFinite(Number(holding?.avg_cost)) && Number(holding?.avg_cost) > 0
+          ? toFixedNumber(Number(holding.avg_cost), 4)
+          : toFixedNumber(price, 4),
+        position_after_mark: Number.isFinite(Number(holding?.mark_price)) && Number(holding?.mark_price) > 0
+          ? toFixedNumber(Number(holding.mark_price), 4)
+          : toFixedNumber(price, 4),
         source: 'seed',
       })
     }
@@ -1187,6 +1222,13 @@ function getPositionHistory(traderId, limit = 100) {
       const price = Number(pos?.exit_price || 0)
       const ts = String(pos?.exit_time || '')
       if (!symbol || !qty || !Number.isFinite(price) || !ts) continue
+
+      const notional = toFixedNumber(qty * price, 2)
+      const holding = holdingBySymbol.get(symbol)
+      const explicitFee = Number(pos?.fee ?? 0)
+      const computedFee = safeCommissionRate > 0 ? toFixedNumber(Number(notional) * safeCommissionRate, 2) : 0
+      const fee = Number.isFinite(explicitFee) && explicitFee > 0 ? toFixedNumber(explicitFee, 2) : computedFee
+
       seeded.push({
         id: String(pos?.exit_order_id || `seed-sell-${symbol}-${ts}`),
         trader_id: traderId,
@@ -1196,14 +1238,62 @@ function getPositionHistory(traderId, limit = 100) {
         side: 'SELL',
         quantity: qty,
         price,
-        notional: toFixedNumber(qty * price, 2),
-        fee: toFixedNumber(Number(pos?.fee || 0), 2),
+        notional,
+        fee,
         realized_pnl: toFixedNumber(Number(pos?.realized_pnl || 0), 2),
+        cash_after: defaultCashAfter,
+        total_equity_after: defaultEquityAfter,
+        position_after_qty: Number.isFinite(Number(holding?.shares))
+          ? Math.max(0, Math.floor(Number(holding.shares)))
+          : 0,
+        position_after_avg_cost: Number.isFinite(Number(holding?.avg_cost)) && Number(holding?.avg_cost) > 0
+          ? toFixedNumber(Number(holding.avg_cost), 4)
+          : 0,
+        position_after_mark: Number.isFinite(Number(holding?.mark_price)) && Number(holding?.mark_price) > 0
+          ? toFixedNumber(Number(holding.mark_price), 4)
+          : toFixedNumber(price, 4),
         source: 'seed',
       })
     }
 
     tradeEvents = seeded
+  }
+
+  // Ensure older events still show post-trade snapshot columns.
+  if (snapshot && tradeEvents.length) {
+    tradeEvents = tradeEvents.map((evt) => {
+      if (!evt || typeof evt !== 'object') return evt
+      const symbol = String(evt?.symbol || '').trim()
+      const holding = symbol ? holdingBySymbol.get(symbol) : null
+      const next = { ...evt }
+
+      if (next.cash_after == null) next.cash_after = defaultCashAfter
+      if (next.total_equity_after == null) next.total_equity_after = defaultEquityAfter
+
+      if (next.position_after_qty == null) {
+        if (Number.isFinite(Number(holding?.shares))) {
+          next.position_after_qty = Math.max(0, Math.floor(Number(holding.shares)))
+        }
+      }
+      if (next.position_after_avg_cost == null) {
+        if (Number.isFinite(Number(holding?.avg_cost)) && Number(holding.avg_cost) > 0) {
+          next.position_after_avg_cost = toFixedNumber(Number(holding.avg_cost), 4)
+        }
+      }
+      if (next.position_after_mark == null) {
+        if (Number.isFinite(Number(holding?.mark_price)) && Number(holding.mark_price) > 0) {
+          next.position_after_mark = toFixedNumber(Number(holding.mark_price), 4)
+        }
+      }
+
+      // Normalize fee display to avoid -0.00.
+      const fee = Number(next.fee ?? 0)
+      if (Number.isFinite(fee)) {
+        next.fee = toFixedNumber(Math.abs(fee), 2)
+      }
+
+      return next
+    })
   }
   const sorted = [...closed].sort((a, b) => toTimeMs(b?.exit_time) - toTimeMs(a?.exit_time))
   const sortedTrades = [...tradeEvents].sort((a, b) => toTimeMs(b?.ts) - toTimeMs(a?.ts))

@@ -596,7 +596,7 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
                     {formatPrice(evt.price)}
                   </td>
                   <td className="py-3 px-4 text-right text-sm" style={{ color: '#848E9C' }}>
-                    -{formatNumber(Number(evt.fee || 0))}
+                    {formatNumber(Math.abs(Number(evt.fee || 0)))}
                   </td>
                   <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
                     {Number.isFinite(Number(evt.position_after_qty)) ? formatQuantity(Number(evt.position_after_qty)) : '-'}

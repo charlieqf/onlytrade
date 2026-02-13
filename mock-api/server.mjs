@@ -13,6 +13,7 @@ import { createOpenAIAgentDecider } from './src/agentLlmDecision.mjs'
 import { createAgentRegistryStore } from './src/agentRegistryStore.mjs'
 import { resolveRuntimeDataMode } from './src/runtimeDataMode.mjs'
 import { createLiveFileFrameProvider } from './src/liveFileFrameProvider.mjs'
+import { getCnAMarketSessionStatus } from './src/cnMarketSession.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
 import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
@@ -76,6 +77,12 @@ const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE |
 const STRICT_LIVE_MODE = String(process.env.STRICT_LIVE_MODE || 'true').toLowerCase() !== 'false'
 const LIVE_FILE_REFRESH_MS = Math.max(250, Number(process.env.LIVE_FILE_REFRESH_MS || 10000))
 const LIVE_FILE_STALE_MS = Math.max(10_000, Number(process.env.LIVE_FILE_STALE_MS || 180_000))
+const AGENT_SESSION_GUARD_ENABLED = String(
+  process.env.AGENT_SESSION_GUARD_ENABLED || (RUNTIME_DATA_MODE === 'live_file' ? 'true' : 'false')
+).toLowerCase() !== 'false'
+const AGENT_SESSION_GUARD_AUTO_RESUME = String(process.env.AGENT_SESSION_GUARD_AUTO_RESUME || 'true').toLowerCase() !== 'false'
+const AGENT_SESSION_GUARD_CHECK_MS = Math.max(5_000, Number(process.env.AGENT_SESSION_GUARD_CHECK_MS || 30_000))
+const AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA = String(process.env.AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || 'true').toLowerCase() !== 'false'
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -508,6 +515,98 @@ function derivedDecisionCycleMs() {
   }
   const replaySpeed = replayEngine?.getStatus?.().speed || REPLAY_SPEED
   return Math.max(1000, Math.round((60_000 * agentDecisionEveryBars) / Math.max(0.1, replaySpeed)))
+}
+
+function getAgentSessionGuardSnapshot(nowMs = Date.now()) {
+  const enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
+  const session = enabled ? getCnAMarketSessionStatus(nowMs) : null
+  const liveStatus = enabled && liveFileFrameProvider ? liveFileFrameProvider.getStatus() : null
+  const liveFreshOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!liveStatus?.stale && !liveStatus?.last_error && (liveStatus?.frame_count || 0) > 0)
+
+  return {
+    enabled,
+    auto_resume: !!AGENT_SESSION_GUARD_AUTO_RESUME,
+    now_ms: nowMs,
+    session,
+    live_file: liveStatus,
+    live_fresh_ok: liveFreshOk,
+    auto_paused: !!agentSessionGuardState.auto_paused,
+    auto_paused_at_ms: agentSessionGuardState.auto_paused_at_ms,
+    last_check_ms: agentSessionGuardState.last_check_ms,
+  }
+}
+
+function enforceAgentSessionGuard({ reason = 'timer' } = {}) {
+  const snapshot = getAgentSessionGuardSnapshot(Date.now())
+  if (!snapshot.enabled || !agentRuntime) {
+    return { changed: false, snapshot }
+  }
+
+  agentSessionGuardState.last_check_ms = snapshot.now_ms
+  agentSessionGuardState.last_session = snapshot.session
+  agentSessionGuardState.last_live_status = snapshot.live_file
+
+  if (killSwitchState.active) {
+    return { changed: false, snapshot }
+  }
+
+  const isOpen = !!snapshot.session?.is_open
+  const runtimeState = agentRuntime.getState()
+  const runningTraders = getRunningRuntimeTraders()
+  const hasRunningTraders = runningTraders.length > 0
+
+  // Outside session: pause if the runtime is running.
+  if (!isOpen) {
+    if (runtimeState.running) {
+      agentRuntime.pause()
+      agentSessionGuardState.auto_paused = true
+      agentSessionGuardState.auto_paused_at_ms = snapshot.now_ms
+      return { changed: true, snapshot: { ...snapshot, reason } }
+    }
+    return { changed: false, snapshot: { ...snapshot, reason } }
+  }
+
+  // In session: optionally resume, but only if we paused it.
+  if (!snapshot.auto_resume) {
+    return { changed: false, snapshot: { ...snapshot, reason } }
+  }
+
+  if (!runtimeState.running && agentSessionGuardState.auto_paused && hasRunningTraders && snapshot.live_fresh_ok) {
+    agentRuntime.resume()
+    agentSessionGuardState.auto_paused = false
+    agentSessionGuardState.auto_paused_at_ms = null
+    return { changed: true, snapshot: { ...snapshot, reason } }
+  }
+
+  return { changed: false, snapshot: { ...snapshot, reason } }
+}
+
+function getAgentSessionGuardPublicSnapshot(nowMs = Date.now()) {
+  const snapshot = getAgentSessionGuardSnapshot(nowMs)
+  if (!snapshot.enabled) {
+    return {
+      enabled: false,
+    }
+  }
+
+  const live = snapshot.live_file
+  const livePublic = live ? {
+    stale: !!live.stale,
+    last_load_ts_ms: live.last_load_ts_ms,
+    last_mtime_ms: live.last_mtime_ms,
+    last_error: live.last_error,
+    frame_count: live.frame_count,
+  } : null
+
+  return {
+    enabled: true,
+    auto_resume: snapshot.auto_resume,
+    require_fresh_live_data: !!AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA,
+    auto_paused: snapshot.auto_paused,
+    auto_paused_at_ms: snapshot.auto_paused_at_ms,
+    session: snapshot.session,
+    live_file: livePublic,
+  }
 }
 
 function secureTokenEquals(expected, provided) {
@@ -1112,6 +1211,14 @@ let agentRuntime = null
 let replayEngine = null
 let replayEngineTimer = null
 let liveFileFrameProvider = null
+let agentSessionGuardTimer = null
+let agentSessionGuardState = {
+  auto_paused: false,
+  auto_paused_at_ms: null,
+  last_check_ms: null,
+  last_session: null,
+  last_live_status: null,
+}
 let availableAgents = []
 let registeredAgents = []
 const agentRegistryStore = createAgentRegistryStore({
@@ -1239,6 +1346,27 @@ async function refreshAgentState({ reconcile = true } = {}) {
   if (agentRuntime) {
     if (runtimeTraders.length === 0) {
       agentRuntime.pause?.()
+      agentSessionGuardState.auto_paused = false
+      agentSessionGuardState.auto_paused_at_ms = null
+    } else if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
+      const session = getCnAMarketSessionStatus(Date.now())
+      const liveStatus = liveFileFrameProvider?.getStatus?.() || null
+      const liveOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!!liveStatus && !liveStatus.stale && !liveStatus.last_error && (liveStatus.frame_count || 0) > 0)
+      if (!session.is_open) {
+        if (agentRuntime.getState?.().running) {
+          agentRuntime.pause?.()
+          agentSessionGuardState.auto_paused = true
+          agentSessionGuardState.auto_paused_at_ms = Date.now()
+          agentSessionGuardState.last_session = session
+          agentSessionGuardState.last_live_status = liveStatus
+        }
+      } else if (!agentRuntime.getState?.().running && liveOk) {
+        agentRuntime.resume?.()
+        agentSessionGuardState.auto_paused = false
+        agentSessionGuardState.auto_paused_at_ms = null
+        agentSessionGuardState.last_session = session
+        agentSessionGuardState.last_live_status = liveStatus
+      }
     } else if (!agentRuntime.getState?.().running) {
       agentRuntime.resume?.()
     }
@@ -1781,6 +1909,7 @@ app.get('/api/agent/runtime/status', (_req, res) => {
     cycle_ms: derivedDecisionCycleMs(),
     metrics,
     decision_every_bars: agentDecisionEveryBars,
+    market_session_guard: getAgentSessionGuardPublicSnapshot(),
     kill_switch: killSwitchPublicState(),
     llm: {
       enabled: !!llmDecider,
@@ -2290,8 +2419,19 @@ if (killSwitchState.active) {
   agentDispatchInFlight = false
 }
 
+if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
+  enforceAgentSessionGuard({ reason: 'boot' })
+  agentSessionGuardTimer = setInterval(() => {
+    enforceAgentSessionGuard({ reason: 'interval' })
+  }, AGENT_SESSION_GUARD_CHECK_MS)
+}
+
 function handleShutdown() {
   agentRuntime?.stop()
+  if (agentSessionGuardTimer) {
+    clearInterval(agentSessionGuardTimer)
+    agentSessionGuardTimer = null
+  }
   if (replayEngineTimer) {
     clearInterval(replayEngineTimer)
     replayEngineTimer = null

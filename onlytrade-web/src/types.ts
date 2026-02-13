@@ -1059,6 +1059,11 @@ export interface TradeEvent {
   notional: number;
   fee: number;
   realized_pnl: number;
+  cash_after?: number;
+  total_equity_after?: number;
+  position_after_qty?: number;
+  position_after_avg_cost?: number;
+  position_after_mark?: number;
   source: string;
 }
 

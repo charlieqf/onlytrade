@@ -269,6 +269,13 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
     const prevTradeEvents = Array.isArray(prev.trade_events) ? prev.trade_events : []
     const tradeEvents = [...prevTradeEvents]
     if ((isExecutedBuy || isExecutedSell) && actionSymbol && filledQuantity > 0 && actionPrice > 0) {
+      const nextPosition = Array.isArray(positions)
+        ? positions.find((position) => String(position?.symbol || '').trim() === actionSymbol)
+        : null
+      const positionAfterQty = Math.max(0, Math.floor(toNumber(nextPosition?.quantity, 0)))
+      const avgCostAfter = round(toNumber(nextPosition?.entry_price, 0), 4)
+      const markPriceAfter = round(toNumber(nextPosition?.mark_price, actionPrice), 4)
+
       tradeEvents.unshift({
         id: actionOrderId,
         trader_id: traderId,
@@ -281,6 +288,11 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
         notional: round(filledQuantity * actionPrice, 2),
         fee: round(Math.max(0, decisionFee), 2),
         realized_pnl: isExecutedSell && Number.isFinite(realizedPnl) ? round(realizedPnl, 2) : 0,
+        cash_after: netAvailableBalance,
+        total_equity_after: netTotalBalance,
+        position_after_qty: positionAfterQty,
+        position_after_avg_cost: avgCostAfter,
+        position_after_mark: markPriceAfter,
         source: decision?.decision_source || 'rule.heuristic',
       })
     }

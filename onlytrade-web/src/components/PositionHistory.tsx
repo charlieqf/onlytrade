@@ -355,26 +355,41 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
+    let cancelled = false
+
     const fetchData = async () => {
       try {
         setLoading(true)
         setError(null)
         // Fetch more data than needed to support filtering, but respect pageSize for initial load
         const data = await api.getPositionHistory(traderId, Math.max(200, pageSize * 5))
+        if (cancelled) return
         setPositions(data.positions || [])
         setTradeEvents(Array.isArray(data.trade_events) ? data.trade_events : [])
         setStats(data.stats)
         setSymbolStats(data.symbol_stats || [])
         setDirectionStats(data.direction_stats || [])
       } catch (err) {
+        if (cancelled) return
         setError(err instanceof Error ? err.message : 'Failed to load history')
       } finally {
+        if (cancelled) return
         setLoading(false)
       }
     }
 
     if (traderId) {
       fetchData()
+    }
+
+    const interval = setInterval(() => {
+      if (!traderId) return
+      fetchData()
+    }, 5000)
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
     }
   }, [traderId, pageSize])
 
@@ -494,93 +509,98 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
     )
   }
 
-  if (positions.length === 0) {
-    if (tradeEvents.length > 0) {
-      return (
-        <div className="space-y-4">
-          <div
-            className="rounded-lg p-4"
-            style={{
-              background: 'linear-gradient(135deg, #1E2329 0%, #181C21 100%)',
-              border: '1px solid #2B3139',
-            }}
-          >
-            <div className="text-sm font-semibold" style={{ color: '#EAECEF' }}>
-              {language === 'zh' ? '成交记录（实时）' : 'Transaction History (Realtime)'}
-            </div>
-            <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
-              {language === 'zh'
-                ? '当前还没有已平仓记录（Position History），但这里会显示每笔买卖成交。'
-                : 'No closed positions yet; executed buys/sells will appear here.'}
-            </div>
-          </div>
-
-          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #2B3139' }}>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr style={{ background: 'rgba(30, 35, 41, 0.8)' }}>
-                    <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '时间' : 'Time'}
-                    </th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '方向' : 'Side'}
-                    </th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '标的' : 'Symbol'}
-                    </th>
-                    <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '数量' : 'Qty'}
-                    </th>
-                    <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '价格' : 'Price'}
-                    </th>
-                    <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '手续费' : 'Fee'}
-                    </th>
-                    <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
-                      {language === 'zh' ? '已实现PnL' : 'Realized'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tradeEvents.slice(0, 200).map((evt) => (
-                    <tr key={evt.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <td className="py-3 px-4 text-left text-xs" style={{ color: '#848E9C' }}>
-                        {formatDate(evt.ts)}
-                      </td>
-                      <td
-                        className="py-3 px-4 text-left text-sm font-semibold"
-                        style={{ color: evt.side === 'BUY' ? '#0ECB81' : '#F6465D' }}
-                      >
-                        {evt.side}
-                      </td>
-                      <td className="py-3 px-4 text-left text-sm" style={{ color: '#EAECEF' }}>
-                        {evt.symbol}
-                      </td>
-                      <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
-                        {formatQuantity(evt.quantity)}
-                      </td>
-                      <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
-                        {formatPrice(evt.price)}
-                      </td>
-                      <td className="py-3 px-4 text-right text-sm" style={{ color: '#848E9C' }}>
-                        -{formatNumber(Number(evt.fee || 0))}
-                      </td>
-                      <td
-                        className="py-3 px-4 text-right text-sm"
-                        style={{ color: (evt.realized_pnl || 0) >= 0 ? '#0ECB81' : '#F6465D' }}
-                      >
-                        {((evt.realized_pnl || 0) >= 0 ? '+' : '') + formatNumber(Number(evt.realized_pnl || 0))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+  const transactionSection = tradeEvents.length > 0 ? (
+    <div className="space-y-3">
+      <div
+        className="rounded-lg p-4"
+        style={{
+          background: 'linear-gradient(135deg, #1E2329 0%, #181C21 100%)',
+          border: '1px solid #2B3139',
+        }}
+      >
+        <div className="text-sm font-semibold" style={{ color: '#EAECEF' }}>
+          {language === 'zh' ? '成交记录（实时）' : 'Transaction History (Realtime)'}
         </div>
-      )
+        <div className="text-xs mt-1" style={{ color: '#848E9C' }}>
+          {language === 'zh'
+            ? '每笔买卖成交都会记录在这里，并显示成交后仓位/现金变化。'
+            : 'Every executed buy/sell is recorded here with post-trade position/cash.'}
+        </div>
+      </div>
+
+      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #2B3139' }}>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr style={{ background: 'rgba(30, 35, 41, 0.8)' }}>
+                <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '时间' : 'Time'}
+                </th>
+                <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '方向' : 'Side'}
+                </th>
+                <th className="py-3 px-4 text-left text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '标的' : 'Symbol'}
+                </th>
+                <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '数量' : 'Qty'}
+                </th>
+                <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '价格' : 'Price'}
+                </th>
+                <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '手续费' : 'Fee'}
+                </th>
+                <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '成交后持仓' : 'Pos After'}
+                </th>
+                <th className="py-3 px-4 text-right text-xs font-semibold" style={{ color: '#848E9C' }}>
+                  {language === 'zh' ? '成交后现金' : 'Cash After'}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tradeEvents.slice(0, 200).map((evt) => (
+                <tr key={evt.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <td className="py-3 px-4 text-left text-xs" style={{ color: '#848E9C' }}>
+                    {formatDate(evt.ts)}
+                  </td>
+                  <td
+                    className="py-3 px-4 text-left text-sm font-semibold"
+                    style={{ color: evt.side === 'BUY' ? '#0ECB81' : '#F6465D' }}
+                  >
+                    {evt.side}
+                  </td>
+                  <td className="py-3 px-4 text-left text-sm" style={{ color: '#EAECEF' }}>
+                    {evt.symbol}
+                  </td>
+                  <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
+                    {formatQuantity(evt.quantity)}
+                  </td>
+                  <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
+                    {formatPrice(evt.price)}
+                  </td>
+                  <td className="py-3 px-4 text-right text-sm" style={{ color: '#848E9C' }}>
+                    -{formatNumber(Number(evt.fee || 0))}
+                  </td>
+                  <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
+                    {Number.isFinite(Number(evt.position_after_qty)) ? formatQuantity(Number(evt.position_after_qty)) : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-right text-sm" style={{ color: '#EAECEF' }}>
+                    {Number.isFinite(Number(evt.cash_after)) ? formatNumber(Number(evt.cash_after)) : '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  ) : null
+
+  if (positions.length === 0) {
+    if (transactionSection) {
+      return <div className="space-y-6">{transactionSection}</div>
     }
 
     return (
@@ -604,6 +624,7 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
 
   return (
     <div className="space-y-6">
+      {transactionSection}
       {/* Overall Stats - Row 1: Core Metrics */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">

@@ -172,7 +172,7 @@ test('agent reply uses today chat history context', async () => {
     messageType: 'public_mention_agent',
   })
 
-  assert.equal(result.agent_reply?.text, 'LLM history size=2')
+  assert.equal(result.agent_reply?.text, '@TraderFox LLM history size=2')
 })
 
 test('injects proactive public message when room is quiet', async () => {

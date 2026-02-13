@@ -105,9 +105,10 @@ function assertMessageVisibility(messageType, visibility) {
 function assertMentionTargets({ text, messageType, roomAgent }) {
   const mentions = parseMentions(text)
   if (!mentions.length) {
-    if (messageType === 'public_mention_agent') {
-      throw chatError('invalid_mention_target', 400)
-    }
+    // UX: the client can explicitly mark a message as an agent mention
+    // even if the user didn't type "@agent". Treat that as an implicit
+    // mention rather than rejecting the request.
+    if (messageType === 'public_mention_agent') return
     return
   }
 

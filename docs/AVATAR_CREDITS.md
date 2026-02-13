@@ -4,15 +4,12 @@ This project includes a small set of human portrait photos used as agent avatars
 
 ## us_001
 
-- Source (Unsplash image CDN):
-  - https://images.unsplash.com/photo-1506794778202-cad84cf45f1d
+- Source: user-provided `us1.jpg`
 
 ## us_002
 
-- Source (Unsplash image CDN):
-  - https://images.unsplash.com/photo-1534528741775-53994a69daeb
+- Source: user-provided `us2.jpg`
 
 Notes
 
-- Images were downloaded as square crops for UI avatars.
-- Unsplash license: https://unsplash.com/license
+- The images are center-cropped to square and exported as JPEG at 512x512 and 1024x1024.

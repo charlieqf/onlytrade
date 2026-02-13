@@ -38,7 +38,14 @@ vi.mock('../../lib/api', () => ({
 
 describe('room chat panels', () => {
   it('renders public and private channel labels', async () => {
-    render(<RoomPublicChatPanel roomId="t_001" userSessionId="usr_sess_1" userNickname="TraderFox" />)
+    render(
+      <RoomPublicChatPanel
+        roomId="t_001"
+        roomAgentName="HS300 Momentum"
+        userSessionId="usr_sess_1"
+        userNickname="TraderFox"
+      />
+    )
     expect(screen.getByText(/^Public$/i)).toBeInTheDocument()
     await screen.findByText('TraderFox')
 

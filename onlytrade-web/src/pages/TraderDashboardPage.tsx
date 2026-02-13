@@ -612,6 +612,7 @@ export function TraderDashboardPage({
                                     {chatTab === 'public' ? (
                                         <RoomPublicChatPanel
                                             roomId={selectedTrader.trader_id}
+                                            roomAgentName={selectedTrader.trader_name}
                                             userSessionId={userSessionId}
                                             userNickname={userNickname}
                                         />

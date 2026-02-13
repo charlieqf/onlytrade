@@ -35,6 +35,9 @@ export function buildAgentReply({
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
 
+  const inboundSenderName = String(inboundMessage?.sender_name || '').trim()
+  const mentionPrefix = inboundSenderName ? `@${inboundSenderName} ` : ''
+
   return {
     id: `msg_agent_${messageTs}_${Math.random().toString(36).slice(2, 8)}`,
     room_id: String(inboundMessage?.room_id || ''),
@@ -43,7 +46,10 @@ export function buildAgentReply({
     sender_name: agentName,
     visibility: inboundMessage?.visibility === 'private' ? 'private' : 'public',
     message_type: String(inboundMessage?.message_type || 'public_plain'),
-    text: sanitizeGeneratedText(text, `${agentName}：收到。`),
+    text: sanitizeGeneratedText(
+      `${mentionPrefix}${sanitizeGeneratedText(text, `${agentName}：收到。`)}`,
+      `${agentName}：收到。`
+    ),
     created_ts_ms: messageTs,
   }
 }

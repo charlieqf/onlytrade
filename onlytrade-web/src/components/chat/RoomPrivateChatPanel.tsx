@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { api } from '../../lib/api'
 import type { ChatMessage } from '../../types'
@@ -23,6 +23,7 @@ function senderLabel(message: ChatMessage) {
 export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: RoomPrivateChatPanelProps) {
   const [text, setText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   const { data, error, isLoading, mutate } = useSWR(
     roomId && userSessionId ? ['room-private-chat', roomId, userSessionId] : null,
@@ -37,6 +38,12 @@ export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: Ro
     if (!Array.isArray(data)) return []
     return [...data].sort((a, b) => Number(a.created_ts_ms) - Number(b.created_ts_ms))
   }, [data])
+
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [messages.length])
 
   async function submitPrivate() {
     const payloadText = text.trim()
@@ -65,7 +72,7 @@ export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: Ro
         <span className="text-[11px] text-nofx-text-muted">{messages.length} messages</span>
       </div>
 
-      <div className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2">
+      <div ref={scrollContainerRef} className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2">
         {isLoading && <div className="text-xs text-nofx-text-muted">Loading private timeline...</div>}
         {error && <div className="text-xs text-nofx-red">Failed to load private timeline.</div>}
         {!isLoading && !error && messages.length === 0 && (

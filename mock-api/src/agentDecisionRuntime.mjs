@@ -249,17 +249,70 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     riskProfile: normalizeRiskProfile(trader),
   }
 
-  const action = String(llmDecision?.action || decideAction(context, traderProfile)).toLowerCase()
   const symbol = context?.symbol || '600519.SH'
   const price = latestPrice(context)
+  const lotSize = Math.max(1, Math.floor(toSafeNumber(context?.constraints?.lot_size, 100)))
+
+  const flatEntryEnabled = String(context?.runtime_config?.flat_entry_enabled || '').trim()
+    ? String(context.runtime_config.flat_entry_enabled).toLowerCase() === 'true'
+    : (String(process.env.AGENT_FLAT_ENTRY_ENABLED || 'false').toLowerCase() === 'true')
+  const flatEntryMinCycles = Math.max(1, Math.floor(toSafeNumber(
+    context?.runtime_config?.flat_entry_min_cycles,
+    toSafeNumber(process.env.AGENT_FLAT_ENTRY_MIN_CYCLES, 6)
+  )))
+  const flatEntryLots = Math.max(1, Math.floor(toSafeNumber(
+    context?.runtime_config?.flat_entry_lots,
+    toSafeNumber(process.env.AGENT_FLAT_ENTRY_LOTS, 1)
+  )))
+  const flatEntryMaxRsi = clamp(
+    toSafeNumber(context?.runtime_config?.flat_entry_max_rsi, toSafeNumber(process.env.AGENT_FLAT_ENTRY_MAX_RSI, 70)),
+    50,
+    85
+  )
+
+  const holdings = Array.isArray(context?.memory_state?.holdings) ? context.memory_state.holdings : []
+  const hasAnyHoldings = holdings.some((holding) => toSafeNumber(holding?.shares, 0) > 0)
+  const isFlat = !hasAnyHoldings && toSafeNumber(context?.position_state?.shares, 0) <= 0
+  const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
+  const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
+  const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
+  const bearishTrend = sma20 > 0 && sma60 > 0 && sma20 < sma60
+
+  const originalAction = String(llmDecision?.action || decideAction(context, traderProfile)).toLowerCase()
+  let action = originalAction
+  // Guardrail: never attempt to sell when flat in this virtual long-only market.
+  if (action === 'sell' && isFlat) {
+    action = 'hold'
+  }
+
+  // Anti-stall: when fully in cash for too long, open a small starter position.
+  // This reduces "empty portfolio" situations where agents never enter.
+  const forcedFlatEntry = (
+    flatEntryEnabled
+    && isFlat
+    && action === 'hold'
+    && Number.isFinite(Number(cycleNumber))
+    && Number(cycleNumber) >= flatEntryMinCycles
+    && !bearishTrend
+    && rsi14 <= flatEntryMaxRsi
+  )
+
+  if (forcedFlatEntry) {
+    action = 'buy'
+  }
+
   const confidence = Number.isFinite(Number(llmDecision?.confidence))
     ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
     : confidenceFromContext(context, action, traderProfile)
-  const lotSize = Math.max(1, Math.floor(toSafeNumber(context?.constraints?.lot_size, 100)))
   const quantity = Number.isFinite(Number(llmDecision?.quantity))
     ? Math.max(0, Math.floor(Number(llmDecision.quantity)))
     : baseQuantityFromProfile(action, lotSize, confidence, traderProfile)
-  const requestedQuantity = action === 'hold' ? 0 : toLotQuantity(quantity, lotSize)
+  const forcedFlatEntryQuantity = action === 'buy' && isFlat && flatEntryEnabled && Number(cycleNumber) >= flatEntryMinCycles
+    ? lotSize * flatEntryLots
+    : null
+  const requestedQuantity = action === 'hold'
+    ? 0
+    : toLotQuantity(forcedFlatEntryQuantity ?? quantity, lotSize)
   const commissionRate = Math.max(0, toSafeNumber(context?.runtime_config?.commission_rate, 0.0003))
 
   let cashCny = Math.max(0, toSafeNumber(context?.position_state?.cash_cny, 0))
@@ -329,7 +382,12 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const totalUnrealizedProfit = portfolio.reduce((acc, position) => acc + position.unrealized_pnl, 0)
   const totalBalance = round(cashCny + marketValue, 2)
 
-  const reasoning = llmDecision?.reasoning || buildReasoning(action, context, traderProfile)
+  let reasoning = llmDecision?.reasoning || buildReasoning(action, context, traderProfile)
+  if (forcedFlatEntry) {
+    reasoning = `flat-entry (in cash too long) -> starter buy ${lotSize * flatEntryLots} shares. ${reasoning}`
+  } else if (originalAction === 'sell' && action === 'hold' && isFlat) {
+    reasoning = `guardrail: ignore sell while flat (no shares). ${reasoning}`
+  }
   const decisionSource = llmDecision?.source === 'openai' ? 'llm.openai' : 'rule.heuristic'
   const systemPrompt = llmDecision?.system_prompt
     || (llmDecision?.model ? `agent.market_context.v1+${llmDecision.model}` : 'agent.market_context.rule_engine.v1')

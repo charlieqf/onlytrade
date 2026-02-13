@@ -517,10 +517,14 @@ function derivedDecisionCycleMs() {
   return Math.max(1000, Math.round((60_000 * agentDecisionEveryBars) / Math.max(0.1, replaySpeed)))
 }
 
-function getAgentSessionGuardSnapshot(nowMs = Date.now()) {
+function getAgentSessionGuardSnapshot(nowMs = Date.now(), { liveStatusOverride = undefined } = {}) {
   const enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
   const session = enabled ? getCnAMarketSessionStatus(nowMs) : null
-  const liveStatus = enabled && liveFileFrameProvider ? liveFileFrameProvider.getStatus() : null
+  const liveStatus = enabled
+    ? (liveStatusOverride !== undefined
+      ? liveStatusOverride
+      : (liveFileFrameProvider ? liveFileFrameProvider.getStatus() : null))
+    : null
   const liveFreshOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!liveStatus?.stale && !liveStatus?.last_error && (liveStatus?.frame_count || 0) > 0)
 
   return {
@@ -536,8 +540,18 @@ function getAgentSessionGuardSnapshot(nowMs = Date.now()) {
   }
 }
 
-function enforceAgentSessionGuard({ reason = 'timer' } = {}) {
-  const snapshot = getAgentSessionGuardSnapshot(Date.now())
+async function enforceAgentSessionGuard({ reason = 'timer' } = {}) {
+  let refreshedLiveStatus = undefined
+  if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file' && liveFileFrameProvider) {
+    try {
+      await liveFileFrameProvider.refresh(false)
+    } catch {
+      // keep guard robust; stale status will block auto-resume
+    }
+    refreshedLiveStatus = liveFileFrameProvider.getStatus()
+  }
+
+  const snapshot = getAgentSessionGuardSnapshot(Date.now(), { liveStatusOverride: refreshedLiveStatus })
   if (!snapshot.enabled || !agentRuntime) {
     return { changed: false, snapshot }
   }
@@ -1350,7 +1364,15 @@ async function refreshAgentState({ reconcile = true } = {}) {
       agentSessionGuardState.auto_paused_at_ms = null
     } else if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
       const session = getCnAMarketSessionStatus(Date.now())
-      const liveStatus = liveFileFrameProvider?.getStatus?.() || null
+      let liveStatus = liveFileFrameProvider?.getStatus?.() || null
+      if (liveFileFrameProvider?.refresh) {
+        try {
+          await liveFileFrameProvider.refresh(false)
+          liveStatus = liveFileFrameProvider.getStatus()
+        } catch {
+          // If refresh fails, keep the existing status and avoid auto-resume.
+        }
+      }
       const liveOk = !AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || (!!liveStatus && !liveStatus.stale && !liveStatus.last_error && (liveStatus.frame_count || 0) > 0)
       if (!session.is_open) {
         if (agentRuntime.getState?.().running) {
@@ -1667,7 +1689,7 @@ const app = express()
 app.use(express.json())
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'onlytrade-mock-api', uptime_s: Math.round((Date.now() - BOOT_TS) / 1000) })
+  res.json({ ok: true, service: 'opentrade-mock-api', uptime_s: Math.round((Date.now() - BOOT_TS) / 1000) })
 })
 
 app.get('/api/config', (_req, res) => {
@@ -2420,9 +2442,9 @@ if (killSwitchState.active) {
 }
 
 if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
-  enforceAgentSessionGuard({ reason: 'boot' })
+  enforceAgentSessionGuard({ reason: 'boot' }).catch(() => {})
   agentSessionGuardTimer = setInterval(() => {
-    enforceAgentSessionGuard({ reason: 'interval' })
+    enforceAgentSessionGuard({ reason: 'interval' }).catch(() => {})
   }, AGENT_SESSION_GUARD_CHECK_MS)
 }
 

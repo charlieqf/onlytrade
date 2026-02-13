@@ -5,7 +5,7 @@ export const OFFICIAL_LINKS = {
 } as const
 
 export const BRAND_INFO = {
-  name: 'OnlyTrade',
+  name: 'OpenTrade',
   tagline: 'Virtual A-Share AI trading rooms',
   version: '0.1.0',
   social: {

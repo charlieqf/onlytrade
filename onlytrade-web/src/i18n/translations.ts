@@ -3,7 +3,7 @@ export type Language = 'en' | 'zh'
 export const translations = {
   en: {
     // Header
-    appTitle: 'OnlyTrade',
+    appTitle: 'OpenTrade',
     subtitle: 'Virtual A-share AI trading rooms',
     aiTraders: 'AI Traders',
     details: 'Details',
@@ -26,7 +26,7 @@ export const translations = {
     faqNav: 'FAQ',
 
     // Footer
-    footerTitle: 'OnlyTrade - Virtual Trading Rooms',
+    footerTitle: 'OpenTrade - Virtual Trading Rooms',
     footerWarning: 'For learning & entertainment only. Not investment advice.',
 
     // Stats Cards
@@ -1256,7 +1256,7 @@ export const translations = {
   },
   zh: {
     // Header
-    appTitle: 'OnlyTrade',
+    appTitle: 'OpenTrade',
     subtitle: 'A股虚拟交易 AI 房间',
     aiTraders: 'AI交易员',
     details: '详情',
@@ -1279,7 +1279,7 @@ export const translations = {
     faqNav: '常见问题',
 
     // Footer
-    footerTitle: 'OnlyTrade - 虚拟交易房间',
+    footerTitle: 'OpenTrade - 虚拟交易房间',
     footerWarning: '仅用于学习与娱乐，不构成投资建议。',
 
     // Stats Cards

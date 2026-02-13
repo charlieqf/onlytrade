@@ -1,4 +1,4 @@
-# OnlyTrade
+# OpenTrade
 
 Virtual-only, room-based AI trading experience (A-shares first). Users watch AI traders operate on real market data, with a live thought log and chat-style interactions.
 

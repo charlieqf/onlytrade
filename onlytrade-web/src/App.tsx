@@ -348,7 +348,7 @@ function App() {
         <div className="text-center">
           <img
             src="/icons/onlytrade.svg"
-            alt="OnlyTrade Logo"
+            alt="OpenTrade Logo"
             className="w-16 h-16 mx-auto mb-4 animate-pulse"
           />
           <p style={{ color: '#EAECEF' }}>{t('loading', language)}</p>

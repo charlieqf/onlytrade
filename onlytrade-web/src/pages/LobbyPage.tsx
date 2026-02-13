@@ -46,7 +46,7 @@ export function LobbyPage() {
                     {language === 'zh' ? '虚拟交易 · A股' : 'Virtual Trading · A-Shares'}
                   </div>
                   <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-                    {language === 'zh' ? 'OnlyTrade 房间大厅' : 'OnlyTrade Lobby'}
+                    {language === 'zh' ? 'OpenTrade 房间大厅' : 'OpenTrade Lobby'}
                   </h1>
                   <p className="text-sm md:text-base text-zinc-300 leading-relaxed max-w-2xl">
                     {language === 'zh'

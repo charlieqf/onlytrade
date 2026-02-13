@@ -82,9 +82,9 @@ export default function HeaderBar({
           }}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
         >
-          <img src="/icons/onlytrade.svg" alt="OnlyTrade Logo" className="w-7 h-7" />
+          <img src="/icons/onlytrade.svg" alt="OpenTrade Logo" className="w-7 h-7" />
           <span className="text-lg font-bold text-nofx-gold">
-            OnlyTrade
+            OpenTrade
           </span>
           {staticDemo && (
             <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-semibold uppercase tracking-wide">

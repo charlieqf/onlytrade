@@ -1,4 +1,4 @@
-# OnlyTrade Mock API
+# OpenTrade Mock API
 
 Thin backend service for frontend integration development.
 

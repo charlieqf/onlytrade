@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://onlytrade.dev/schemas/market.bar.v1.schema.json",
-  "title": "OnlyTrade Market Bar Frame v1",
+  "title": "OpenTrade Market Bar Frame v1",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -1,6 +1,6 @@
-# OnlyTrade Web
+# OpenTrade Web
 
-OnlyTrade is a virtual-trading, room-based UI (A-shares first). This frontend is forked from the NOFX web UI and is licensed under AGPL-3.0.
+OpenTrade is a virtual-trading, room-based UI (A-shares first). This frontend is forked from the NOFX web UI and is licensed under AGPL-3.0.
 
 ## 技术栈
 

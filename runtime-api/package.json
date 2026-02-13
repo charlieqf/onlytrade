@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "test": "node --test --test-concurrency=1"
+    "test": "node scripts/run-tests.mjs"
   },
   "keywords": [],
   "author": "",

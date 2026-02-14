@@ -1,0 +1,12 @@
+# Run every minute; scripts enforce America/New_York regular-session window.
+# This avoids cron timezone/DST complexity on hosts.
+
+# US live frames (symbols) -> runtime-api reads LIVE_FRAMES_PATH_US (default: data/live/us/frames.us.json)
+* * * * 1-5 /usr/bin/node /opt/onlytrade/scripts/alpaca_us/run_cycle_if_market_open.mjs --canonical-path "/opt/onlytrade/data/live/us/frames.us.json" >> /var/log/onlytrade/alpaca_us_frames.log 2>&1
+
+# US market overview (benchmarks + sector ETFs) -> runtime-api reads MARKET_OVERVIEW_PATH_US
+* * * * 1-5 /usr/bin/node /opt/onlytrade/scripts/alpaca_us/run_market_overview_if_market_open.mjs --canonical-path "/opt/onlytrade/data/live/onlytrade/market_overview.us.json" >> /var/log/onlytrade/alpaca_us_overview.log 2>&1
+
+# US news digest (best-effort, may be empty if account lacks access)
+# Run hourly; change to daily if preferred.
+0 * * * 1-5 /usr/bin/node /opt/onlytrade/scripts/alpaca_us/run_news_digest_cycle.mjs --canonical-path "/opt/onlytrade/data/live/onlytrade/news_digest.us.json" >> /var/log/onlytrade/alpaca_us_news.log 2>&1

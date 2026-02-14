@@ -1,7 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildAgentReply, buildProactiveAgentMessage, shouldAgentReply } from '../src/chat/chatAgentResponder.mjs'
+import {
+  buildAgentReply,
+  buildNarrationAgentMessage,
+  buildProactiveAgentMessage,
+  shouldAgentReply,
+} from '../src/chat/chatAgentResponder.mjs'
 
 test('agent reply policy by message type', () => {
   assert.equal(shouldAgentReply({ messageType: 'public_mention_agent' }), true)
@@ -20,6 +25,7 @@ test('proactive message uses provided llm text', () => {
   })
 
   assert.equal(message.text, 'LLM proactive text')
+  assert.equal(message.agent_message_kind, 'proactive')
 })
 
 test('agent reply uses provided llm text', () => {
@@ -40,4 +46,21 @@ test('agent reply uses provided llm text', () => {
   })
 
   assert.equal(message.text, 'LLM reply text')
+  assert.equal(message.agent_message_kind, 'reply')
+})
+
+test('narration message caps to two sentences and strips markdown', () => {
+  const message = buildNarrationAgentMessage({
+    roomAgent: {
+      agentName: 'HS300 Momentum',
+    },
+    roomId: 't_001',
+    text: '**第一句**。第二句！第三句？',
+    nowMs: 9_000,
+    maxChars: 200,
+    maxSentences: 2,
+  })
+
+  assert.equal(message.agent_message_kind, 'narration')
+  assert.equal(message.text, '第一句。第二句！')
 })

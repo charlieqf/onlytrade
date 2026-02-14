@@ -242,6 +242,8 @@ function sortByCycleDesc(a, b) {
   return toSafeNumber(b?.cycle_number, 0) - toSafeNumber(a?.cycle_number, 0)
 }
 
+import { buildViewerReasoningStepsCn } from './reasoningChain.mjs'
+
 export function createDecisionFromContext({ trader, cycleNumber, context, timestampIso }) {
   const llmDecision = context?.llm_decision || null
   const traderProfile = {
@@ -451,6 +453,12 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     execution_log: [executionLog],
     success: decisionSuccess,
     error_message: decisionSuccess ? '' : executionError,
+  }
+
+  try {
+    decision.reasoning_steps_cn = buildViewerReasoningStepsCn({ trader, context, decision })
+  } catch {
+    decision.reasoning_steps_cn = []
   }
 
   return decision

@@ -103,6 +103,7 @@ export interface DecisionRecord {
   system_prompt: string
   input_prompt: string
   cot_trace: string
+  reasoning_steps_cn?: string[]
   decision_json: string
   account_state: AccountSnapshot
   positions: any[]
@@ -162,6 +163,46 @@ export interface AgentRuntimeStatus extends AgentRuntimeState {
     max_output_tokens?: number | null
   }
   traders: AgentRuntimeTraderCall[]
+}
+
+export interface RoomStreamPacket {
+  schema_version: string
+  room_id: string
+  ts_ms: number
+  trader: {
+    trader_id: string
+    trader_name: string
+    exchange_id?: string
+    is_running: boolean
+  }
+  room_context?: {
+    data_readiness?: any
+    market_overview_brief?: string
+    news_digest_titles?: string[]
+    symbol_brief?: any
+  }
+  status: SystemStatus
+  account: AccountInfo
+  positions: Position[]
+  decisions_latest: DecisionRecord[]
+  decision_latest: DecisionRecord | null
+  decision_audit_preview?: any
+  decision_meta?: any
+  market_overview?: {
+    source_kind: string | null
+    brief: string
+    status: any
+  }
+  news_digest?: {
+    source_kind: string | null
+    titles: string[]
+    status: any
+  }
+  files?: any
+  runtime?: {
+    state: AgentRuntimeState | null
+    metrics: AgentRuntimeMetrics | null
+  }
 }
 
 export interface AgentKillSwitchResult {

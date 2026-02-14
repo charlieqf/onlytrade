@@ -223,7 +223,12 @@ function ActionCard({ action, language, onSymbolClick }: { action: DecisionActio
 export function DecisionCard({ decision, language, onSymbolClick }: DecisionCardProps) {
   const [showSystemPrompt, setShowSystemPrompt] = useState(false)
   const [showInputPrompt, setShowInputPrompt] = useState(false)
+  const [showCommentary, setShowCommentary] = useState(false)
   const [showCoT, setShowCoT] = useState(false)
+
+  const commentarySteps = Array.isArray(decision.reasoning_steps_cn)
+    ? decision.reasoning_steps_cn
+    : []
 
   // Copy text to clipboard
   const copyToClipboard = async (text: string, label: string) => {
@@ -417,6 +422,43 @@ export function DecisionCard({ decision, language, onSymbolClick }: DecisionCard
         )}
 
         {/* AI Thinking */}
+        {/* Streamer Commentary */}
+        {commentarySteps.length > 0 && (
+          <div>
+            <button
+              onClick={() => setShowCommentary(!showCommentary)}
+              className="flex items-center gap-2 text-sm transition-colors w-full justify-between p-2 rounded hover:bg-white/5"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">🗣️</span>
+                <span className="font-semibold" style={{ color: '#0ECB81' }}>
+                  {t('aiCommentary', language)}
+                </span>
+              </div>
+              <span
+                className="text-xs px-2 py-0.5 rounded"
+                style={{ background: 'rgba(14, 203, 129, 0.12)', color: '#0ECB81' }}
+              >
+                {showCommentary ? t('collapse', language) : t('expand', language)}
+              </span>
+            </button>
+            {showCommentary && (
+              <div
+                className="mt-2 rounded-lg p-4 text-sm whitespace-pre-wrap max-h-96 overflow-y-auto space-y-2"
+                style={{
+                  background: '#0B0E11',
+                  border: '1px solid rgba(14, 203, 129, 0.25)',
+                  color: '#EAECEF',
+                }}
+              >
+                {commentarySteps.map((line, idx) => (
+                  <div key={`${idx}-${line}`}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {decision.cot_trace && (
           <div>
             <button

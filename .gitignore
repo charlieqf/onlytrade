@@ -20,8 +20,15 @@ yarn-error.log*
 data/agent-memory/*.json
 data/runtime/*.json
 
+# live data outputs (generated)
+data/live/
+
 # local chat persistence (append-only JSONL)
 data/chat/
+
+# test artifacts
+runtime-api/test/tmp-audit-store/
+runtime-api/test/tmp-live-json/
 
 # local avatar source files (do not commit)
 /us1.jpg
@@ -32,6 +39,10 @@ data/chat/
 # OS
 .DS_Store
 Thumbs.db
+
+# python
+__pycache__/
+*.pyc
 
 # vendored research
 third_party/

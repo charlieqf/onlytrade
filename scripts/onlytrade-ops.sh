@@ -64,8 +64,15 @@ Commands:
                                    Clean start for 3-day run
   akshare-run-once [--symbols CSV] Execute AKShare collect+convert one cycle
   akshare-status                  Show canonical AKShare file status
+  market-overview-us-run-once      Build US market_overview.us.json once
+  market-overview-us-if-open       Build US market_overview.us.json if market open
+  market-overview-cn-run-once      Build CN-A market_overview.cn-a.json once
+  market-overview-cn-if-open       Build CN-A market_overview.cn-a.json if market open
+  news-digest-us-run-once          Build US news_digest.us.json once (best-effort)
+  news-digest-cn-run-once          Build CN-A news_digest.cn-a.json once (best-effort)
+  overview-status                  Show overview + digest file statuses
   chat-status <room_id> [user_session_id]
-                                 Show chat file status for room/private
+                                  Show chat file status for room/private
   chat-tail-public <room_id>     Tail room public chat JSONL
   chat-tail-private <room_id> <user_session_id>
                                   Tail room private chat JSONL
@@ -292,6 +299,47 @@ PY
 
   echo "[ops] ERROR: python/python3 not found for akshare-status" >&2
   exit 1
+}
+
+overview_status() {
+  echo "[ops] runtime overview status"
+  curl_get "/api/agent/runtime/status" | json_pretty
+}
+
+market_overview_us_run_once() {
+  node "$REPO_ROOT/scripts/alpaca_us/run_market_overview_cycle.mjs" --canonical-path "data/live/onlytrade/market_overview.us.json"
+}
+
+market_overview_us_if_open() {
+  node "$REPO_ROOT/scripts/alpaca_us/run_market_overview_if_market_open.mjs" --canonical-path "data/live/onlytrade/market_overview.us.json"
+}
+
+market_overview_cn_run_once() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_market_overview_cycle.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+    return
+  fi
+  python "$REPO_ROOT/scripts/akshare/run_market_overview_cycle.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+}
+
+market_overview_cn_if_open() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_market_overview_if_market_open.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+    return
+  fi
+  python "$REPO_ROOT/scripts/akshare/run_market_overview_if_market_open.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+}
+
+news_digest_us_run_once() {
+  node "$REPO_ROOT/scripts/alpaca_us/run_news_digest_cycle.mjs" --canonical-path "data/live/onlytrade/news_digest.us.json"
+}
+
+news_digest_cn_run_once() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+    return
+  fi
+  python "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
 }
 
 chat_public_file() {
@@ -568,6 +616,27 @@ main() {
       ;;
     akshare-status)
       akshare_status
+      ;;
+    market-overview-us-run-once)
+      market_overview_us_run_once
+      ;;
+    market-overview-us-if-open)
+      market_overview_us_if_open
+      ;;
+    market-overview-cn-run-once)
+      market_overview_cn_run_once
+      ;;
+    market-overview-cn-if-open)
+      market_overview_cn_if_open
+      ;;
+    news-digest-us-run-once)
+      news_digest_us_run_once
+      ;;
+    news-digest-cn-run-once)
+      news_digest_cn_run_once
+      ;;
+    overview-status)
+      overview_status
       ;;
     chat-status)
       local room_id="${1:-}"

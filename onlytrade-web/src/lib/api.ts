@@ -44,6 +44,7 @@ import type {
   ChatPostResult,
   ChatHistoryResult,
   ChatSessionBootstrapResult,
+  RoomStreamPacket,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -454,6 +455,16 @@ export const api = {
     )
     if (!result.success) throw new Error('获取最新决策失败')
     return result.data!
+  },
+
+  async getRoomStreamPacket(roomId: string, decisionLimit: number = 5): Promise<RoomStreamPacket> {
+    const safeRoomId = String(roomId || '').trim()
+    if (!safeRoomId) throw new Error('room_id_required')
+    const limit = Math.max(1, Math.min(Number(decisionLimit) || 5, 20))
+    const url = `${API_BASE}/rooms/${encodeURIComponent(safeRoomId)}/stream-packet?decision_limit=${encodeURIComponent(String(limit))}`
+    const result = await httpClient.get<RoomStreamPacket>(url)
+    if (!result.success || !result.data) throw new Error('获取房间聚合数据失败')
+    return result.data
   },
 
   async getAgentRuntimeStatus(): Promise<AgentRuntimeStatus> {

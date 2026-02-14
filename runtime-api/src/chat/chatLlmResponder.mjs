@@ -34,7 +34,9 @@ function buildSystemPrompt({ roomAgent, kind }) {
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
   const kindRule = kind === 'proactive'
     ? 'You are writing a proactive public room message to keep engagement healthy.'
-    : 'You are writing a direct reply to a user message in the room.'
+    : (kind === 'narration'
+      ? 'You are narrating your latest trading decision to the room like a livestream host.'
+      : 'You are writing a direct reply to a user message in the room.')
   const style = styleHint(roomAgent)
 
   return [
@@ -46,7 +48,13 @@ function buildSystemPrompt({ roomAgent, kind }) {
   ].filter(Boolean).join(' ')
 }
 
-function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, historyContext }) {
+function toSafeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null
+}
+
+function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, historyContext, roomContext }) {
+  const latest = latestDecision?.decisions?.[0] || null
+  const ctx = toSafeObject(roomContext)
   const payload = {
     kind,
     room_id: roomAgent?.roomId || inboundMessage?.room_id || '',
@@ -57,8 +65,29 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
         text: inboundMessage?.text,
       }
       : null,
-    latest_symbol: latestDecision?.decisions?.[0]?.symbol || null,
-    latest_action: latestDecision?.decisions?.[0]?.action || null,
+    latest_decision: latest
+      ? {
+        symbol: latest?.symbol || null,
+        action: latest?.action || null,
+        confidence: latest?.confidence ?? null,
+        quantity: latest?.quantity ?? null,
+        price: latest?.price ?? null,
+        reasoning: typeof latest?.reasoning === 'string' ? latest.reasoning.slice(0, 120) : null,
+        success: latest?.success ?? null,
+      }
+      : null,
+    room_context: ctx
+      ? {
+        data_readiness: ctx.data_readiness || null,
+        market_overview_brief: typeof ctx.market_overview_brief === 'string'
+          ? ctx.market_overview_brief.slice(0, 240)
+          : null,
+        news_digest_titles: Array.isArray(ctx.news_digest_titles)
+          ? ctx.news_digest_titles.map((t) => String(t || '').slice(0, 80)).filter(Boolean).slice(0, 6)
+          : [],
+        symbol_brief: ctx.symbol_brief || null,
+      }
+      : null,
     history_tail: Array.isArray(historyContext)
       ? historyContext.slice(-8).map((item) => ({
         sender_type: item?.sender_type,
@@ -87,6 +116,7 @@ export function createOpenAIChatResponder({
     inboundMessage,
     latestDecision,
     historyContext,
+    roomContext,
   } = {}) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 7000))
@@ -112,6 +142,7 @@ export function createOpenAIChatResponder({
                 inboundMessage,
                 latestDecision,
                 historyContext,
+                roomContext,
               }),
             },
           ],

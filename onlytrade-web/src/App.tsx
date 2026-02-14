@@ -20,14 +20,11 @@ import { isStaticDemoMode } from './demo/staticDemo'
 
 import { OFFICIAL_LINKS } from './constants/branding'
 import type {
-  SystemStatus,
-  AccountInfo,
-  Position,
-  DecisionRecord,
   TraderInfo,
   AgentRuntimeStatus,
   AgentRuntimeControlAction,
   ReplayRuntimeStatus,
+  RoomStreamPacket,
 } from './types'
 
 type Page =
@@ -172,54 +169,23 @@ function App() {
     }
   }, [traders, selectedTraderId, selectedTraderSlug])
 
-  // 如果在trader页面，获取该trader的数据
-  const { data: status, mutate: mutateStatus } = useSWR<SystemStatus>(
+  // Room atomic stream packet (status/account/positions/decisions/context)
+  const { data: streamPacket, mutate: mutateStreamPacket } = useSWR<RoomStreamPacket>(
     currentPage === 'room' && selectedTraderId
-      ? `status-${selectedTraderId}`
+      ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
       : null,
-    () => api.getStatus(selectedTraderId),
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 2000,
-    }
-  )
-
-  const { data: account, mutate: mutateAccount } = useSWR<AccountInfo>(
-    currentPage === 'room' && selectedTraderId
-      ? `account-${selectedTraderId}`
-      : null,
-    () => api.getAccount(selectedTraderId),
-    {
-      refreshInterval: 10000,
-      revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 3000,
-    }
-  )
-
-  const { data: positions, mutate: mutatePositions } = useSWR<Position[]>(
-    currentPage === 'room' && selectedTraderId
-      ? `positions-${selectedTraderId}`
-      : null,
-    () => api.getPositions(selectedTraderId),
-    {
-      refreshInterval: 10000,
-      revalidateOnFocus: false, // 禁用聚焦时重新验证，减少请求
-      dedupingInterval: 3000,
-    }
-  )
-
-  const { data: decisions, mutate: mutateDecisions } = useSWR<DecisionRecord[]>(
-    currentPage === 'room' && selectedTraderId
-      ? `decisions/latest-${selectedTraderId}-${decisionsLimit}`
-      : null,
-    () => api.getLatestDecisions(selectedTraderId, decisionsLimit),
+    () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
     {
       refreshInterval: 5000,
       revalidateOnFocus: false,
-      dedupingInterval: 2000,
+      dedupingInterval: 1500,
     }
   )
+
+  const status = streamPacket?.status
+  const account = streamPacket?.account
+  const positions = streamPacket?.positions
+  const decisions = streamPacket?.decisions_latest
 
   const { data: runtimeStatus, mutate: mutateRuntimeStatus } = useSWR<AgentRuntimeStatus>(
     runtimeControlsEnabled && hasRuntimeAccess
@@ -265,11 +231,10 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateStatus(),
-        mutateDecisions(),
+        mutateStreamPacket(),
       ])
     },
-    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStatus, mutateDecisions]
+    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStreamPacket]
   )
 
   const handleFactoryReset = useCallback(
@@ -280,20 +245,14 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateStatus(),
-        mutateAccount(),
-        mutatePositions(),
-        mutateDecisions(),
+        mutateStreamPacket(),
       ])
     },
     [
       runtimeControlsEnabled,
       mutateRuntimeStatus,
       mutateReplayRuntimeStatus,
-      mutateStatus,
-      mutateAccount,
-      mutatePositions,
-      mutateDecisions,
+      mutateStreamPacket,
     ]
   )
 
@@ -305,16 +264,14 @@ function App() {
       await Promise.all([
         mutateRuntimeStatus(),
         mutateReplayRuntimeStatus(),
-        mutateStatus(),
-        mutateDecisions(),
+        mutateStreamPacket(),
       ])
     },
     [
       runtimeControlsEnabled,
       mutateRuntimeStatus,
       mutateReplayRuntimeStatus,
-      mutateStatus,
-      mutateDecisions,
+      mutateStreamPacket,
     ]
   )
 
@@ -405,6 +362,7 @@ function App() {
                   account={account}
                   positions={positions}
                   decisions={decisions}
+                  streamPacket={streamPacket}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
                   lastUpdate={lastUpdate}

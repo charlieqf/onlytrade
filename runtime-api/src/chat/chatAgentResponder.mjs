@@ -4,10 +4,59 @@ function clampThreshold(value, fallback = 0.05) {
   return Math.max(0, Math.min(parsed, 1))
 }
 
-function sanitizeGeneratedText(value, fallback = '') {
+function stripMarkdown(value) {
+  const text = String(value || '')
+  if (!text) return ''
+
+  // Remove fenced code blocks and inline code first.
+  let cleaned = text.replace(/```[\s\S]*?```/g, ' ')
+  cleaned = cleaned.replace(/`[^`]*`/g, ' ')
+
+  // Drop common markdown tokens. Keep content, remove decoration.
+  cleaned = cleaned
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/_(.*?)_/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}[-*+]\s+/gm, '')
+    .replace(/^\s{0,3}\d+\.\s+/gm, '')
+
+  return cleaned
+}
+
+function capSentences(value, maxSentences = 2) {
   const text = String(value || '').trim()
-  if (!text) return fallback
-  return text.slice(0, 1200)
+  if (!text) return ''
+  const cap = Math.max(1, Math.floor(Number(maxSentences) || 2))
+
+  const out = []
+  let buffer = ''
+  for (const ch of text) {
+    buffer += ch
+    if (/[。！？!?]/.test(ch)) {
+      const sentence = buffer.trim()
+      if (sentence) out.push(sentence)
+      buffer = ''
+      if (out.length >= cap) break
+    }
+  }
+  if (out.length < cap && buffer.trim()) {
+    out.push(buffer.trim())
+  }
+
+  return out.join('')
+}
+
+function sanitizeGeneratedText(value, fallback = '', { maxChars = 120, maxSentences = 2 } = {}) {
+  const raw = String(value || '').trim()
+  if (!raw) return fallback
+
+  const flattened = stripMarkdown(raw).replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
+  const sentenceCapped = capSentences(flattened, maxSentences)
+  const maxLen = Math.max(24, Math.floor(Number(maxChars) || 120))
+  const trimmed = sentenceCapped.slice(0, maxLen).trim()
+  return trimmed || fallback
 }
 
 export function shouldAgentReply({
@@ -30,6 +79,8 @@ export function buildAgentReply({
   inboundMessage,
   text,
   nowMs = Date.now(),
+  maxChars = 120,
+  maxSentences = 2,
 } = {}) {
   const safeNowMs = Number(nowMs)
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
@@ -46,9 +97,11 @@ export function buildAgentReply({
     sender_name: agentName,
     visibility: inboundMessage?.visibility === 'private' ? 'private' : 'public',
     message_type: String(inboundMessage?.message_type || 'public_plain'),
+    agent_message_kind: 'reply',
     text: sanitizeGeneratedText(
-      `${mentionPrefix}${sanitizeGeneratedText(text, `${agentName}：收到。`)}`,
-      `${agentName}：收到。`
+      `${mentionPrefix}${sanitizeGeneratedText(text, `${agentName}：收到。`, { maxChars, maxSentences })}`,
+      `${agentName}：收到。`,
+      { maxChars, maxSentences }
     ),
     created_ts_ms: messageTs,
   }
@@ -59,6 +112,8 @@ export function buildProactiveAgentMessage({
   roomId,
   text,
   nowMs = Date.now(),
+  maxChars = 120,
+  maxSentences = 2,
 } = {}) {
   const safeNowMs = Number(nowMs)
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
@@ -72,7 +127,34 @@ export function buildProactiveAgentMessage({
     sender_name: agentName,
     visibility: 'public',
     message_type: 'public_plain',
-    text: sanitizeGeneratedText(text, `${agentName}：收到。`),
+    agent_message_kind: 'proactive',
+    text: sanitizeGeneratedText(text, `${agentName}：收到。`, { maxChars, maxSentences }),
+    created_ts_ms: messageTs,
+  }
+}
+
+export function buildNarrationAgentMessage({
+  roomAgent,
+  roomId,
+  text,
+  nowMs = Date.now(),
+  maxChars = 120,
+  maxSentences = 2,
+} = {}) {
+  const safeNowMs = Number(nowMs)
+  const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
+  const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+
+  return {
+    id: `msg_agent_${messageTs}_${Math.random().toString(36).slice(2, 8)}`,
+    room_id: String(roomId || ''),
+    user_session_id: 'room_broadcast',
+    sender_type: 'agent',
+    sender_name: agentName,
+    visibility: 'public',
+    message_type: 'public_plain',
+    agent_message_kind: 'narration',
+    text: sanitizeGeneratedText(text, `${agentName}：收到。`, { maxChars, maxSentences }),
     created_ts_ms: messageTs,
   }
 }

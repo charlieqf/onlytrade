@@ -41,3 +41,32 @@ export async function fetchAlpacaBars({
   const bars = payload?.bars && typeof payload.bars === 'object' ? payload.bars : {}
   return bars
 }
+
+export async function fetchAlpacaNews({
+  symbols,
+  limit = 20,
+  baseUrl = 'https://data.alpaca.markets',
+} = {}) {
+  const keyId = requireEnv('APCA_API_KEY_ID')
+  const secret = requireEnv('APCA_API_SECRET_KEY')
+  const symbolList = Array.isArray(symbols) ? symbols : []
+
+  const url = new URL('/v1beta1/news', baseUrl)
+  if (symbolList.length) {
+    url.searchParams.set('symbols', symbolList.join(','))
+  }
+  url.searchParams.set('limit', String(Math.max(1, Math.min(Number(limit) || 20, 50))))
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      'APCA-API-KEY-ID': keyId,
+      'APCA-API-SECRET-KEY': secret,
+    },
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    throw new Error(`alpaca_news_http_${response.status}:${text.slice(0, 200)}`)
+  }
+
+  return JSON.parse(text)
+}

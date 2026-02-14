@@ -46,6 +46,9 @@ test('createDecisionFromContext emits buy when intraday momentum and daily trend
   assert.equal(decision.decisions[0].action, 'buy')
   assert.equal(decision.decisions[0].symbol, '600519.SH')
   assert.equal(decision.decisions[0].quantity, 100)
+  assert.equal(Array.isArray(decision.reasoning_steps_cn), true)
+  assert.equal(decision.reasoning_steps_cn.length >= 2, true)
+  assert.equal(decision.reasoning_steps_cn.length <= 4, true)
 })
 
 test('createDecisionFromContext emits sell when overbought or negative momentum', () => {

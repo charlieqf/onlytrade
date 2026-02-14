@@ -38,6 +38,14 @@ function sanitizeNickname(value) {
   return text.slice(0, 24)
 }
 
+function normalizeForDedupe(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[，,。.!！?？:：;；~`'"“”‘’\-_=+()\[\]{}<>\/\\]/g, '')
+    .trim()
+}
+
 function isRoomAgentRunning(roomAgent) {
   return roomAgent?.isRunning === true || roomAgent?.is_running === true
 }
@@ -129,12 +137,15 @@ export function createChatService({
   store,
   resolveRoomAgent,
   resolveLatestDecision = () => null,
+  resolveRoomContext = () => null,
   nowMs = () => Date.now(),
   random = () => Math.random(),
   maxTextLen = Number(process.env.CHAT_MAX_TEXT_LEN || 600),
+  agentMaxChars = Number(process.env.CHAT_AGENT_MAX_CHARS || 120),
+  agentMaxSentences = Number(process.env.CHAT_AGENT_MAX_SENTENCES || 2),
   rateLimitPerMin = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 20),
   publicPlainReplyRate = Number(process.env.CHAT_PUBLIC_PLAIN_REPLY_RATE || 0.05),
-  proactivePublicIntervalMs = Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 90_000),
+  proactivePublicIntervalMs = Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000),
   chatContextTimeZone = process.env.CHAT_CONTEXT_TIMEZONE || 'Asia/Shanghai',
   shouldAgentReply = defaultShouldAgentReply,
   generateAgentMessageText = null,
@@ -148,11 +159,23 @@ export function createChatService({
 
   const limiter = buildRateLimiter(rateLimitPerMin)
   const safeMaxTextLen = Math.max(1, Number(maxTextLen) || 600)
+  const safeAgentMaxChars = Math.max(24, Math.min(800, Math.floor(Number(agentMaxChars) || 120)))
+  const safeAgentMaxSentences = Math.max(1, Math.min(4, Math.floor(Number(agentMaxSentences) || 2)))
   const safePublicReplyRate = Number.isFinite(Number(publicPlainReplyRate))
     ? Math.max(0, Math.min(Number(publicPlainReplyRate), 1))
     : 0.05
   const safeProactivePublicIntervalMs = Math.max(10_000, Number(proactivePublicIntervalMs) || 90_000)
   const proactiveStateByRoom = new Map()
+  const proactiveInFlightByRoom = new Map()
+
+  async function resolveRoomContextSafe(roomId) {
+    try {
+      if (typeof resolveRoomContext !== 'function') return null
+      return await Promise.resolve(resolveRoomContext(roomId))
+    } catch {
+      return null
+    }
+  }
 
   async function generateAgentText(payload) {
     if (typeof generateAgentMessageText !== 'function') return ''
@@ -160,7 +183,9 @@ export function createChatService({
       const raw = await generateAgentMessageText(payload)
       const text = sanitizeText(raw)
       if (!text) return ''
-      return text.slice(0, safeMaxTextLen)
+      // Bound by both global chat limits and streamer-style constraints.
+      const capped = text.slice(0, safeMaxTextLen)
+      return capped
     } catch {
       return ''
     }
@@ -198,42 +223,66 @@ export function createChatService({
       return
     }
 
+    if (proactiveInFlightByRoom.get(roomId) === true) {
+      return
+    }
+
     const now = nowMs()
     const lastProactiveTs = Number(proactiveStateByRoom.get(roomId) || 0)
     if (now - lastProactiveTs < safeProactivePublicIntervalMs) {
       return
     }
 
-    const publicMessages = await store.readPublic(roomId, 500, null)
-    const todayMessages = filterTodayMessages(publicMessages, now, chatContextTimeZone)
-    const lastMessage = todayMessages[todayMessages.length - 1]
-    const lastMessageTs = Number(lastMessage?.created_ts_ms)
+    proactiveInFlightByRoom.set(roomId, true)
+    try {
+      const publicMessages = await store.readPublic(roomId, 500, null)
+      const todayMessages = filterTodayMessages(publicMessages, now, chatContextTimeZone)
+      const lastMessage = todayMessages[todayMessages.length - 1]
+      const lastMessageTs = Number(lastMessage?.created_ts_ms)
 
-    if (Number.isFinite(lastMessageTs) && now - lastMessageTs < safeProactivePublicIntervalMs) {
-      return
+      if (Number.isFinite(lastMessageTs) && now - lastMessageTs < safeProactivePublicIntervalMs) {
+        return
+      }
+
+      const generatedText = await generateAgentText({
+        kind: 'proactive',
+        roomAgent,
+        roomId,
+        roomContext: await resolveRoomContextSafe(roomId),
+        latestDecision: resolveLatestDecision(roomId),
+        historyContext: todayMessages,
+        nowMs: now,
+      })
+      if (!generatedText) {
+        return
+      }
+
+      // Basic dedupe: avoid repeating similar proactive lines.
+      const candidateKey = normalizeForDedupe(generatedText)
+      const recentProactives = todayMessages
+        .filter((item) => item?.sender_type === 'agent' && item?.agent_message_kind === 'proactive')
+        .slice(-8)
+      for (const msg of recentProactives) {
+        if (normalizeForDedupe(msg?.text) === candidateKey) {
+          proactiveStateByRoom.set(roomId, now)
+          return
+        }
+      }
+
+      const proactiveMessage = buildProactiveAgentMessage({
+        roomAgent,
+        roomId,
+        text: generatedText,
+        nowMs: now,
+        maxChars: safeAgentMaxChars,
+        maxSentences: safeAgentMaxSentences,
+      })
+
+      await store.appendPublic(roomId, proactiveMessage)
+      proactiveStateByRoom.set(roomId, now)
+    } finally {
+      proactiveInFlightByRoom.set(roomId, false)
     }
-
-    const generatedText = await generateAgentText({
-      kind: 'proactive',
-      roomAgent,
-      roomId,
-      latestDecision: resolveLatestDecision(roomId),
-      historyContext: todayMessages,
-      nowMs: now,
-    })
-    if (!generatedText) {
-      return
-    }
-
-    const proactiveMessage = buildProactiveAgentMessage({
-      roomAgent,
-      roomId,
-      text: generatedText,
-      nowMs: now,
-    })
-
-    await store.appendPublic(roomId, proactiveMessage)
-    proactiveStateByRoom.set(roomId, now)
   }
 
   async function postMessage({
@@ -302,18 +351,21 @@ export function createChatService({
         kind: 'reply',
         roomAgent,
         roomId: safeRoomId,
+        roomContext: await resolveRoomContextSafe(safeRoomId),
         inboundMessage: userMessage,
         latestDecision: resolveLatestDecision(safeRoomId),
         historyContext,
         nowMs: now,
       })
       if (generatedText) {
-      const nowReply = nowMs()
+        const nowReply = nowMs()
         agentReply = buildAgentReply({
           roomAgent,
           inboundMessage: userMessage,
           text: generatedText,
           nowMs: nowReply,
+          maxChars: safeAgentMaxChars,
+          maxSentences: safeAgentMaxSentences,
         })
 
         if (safeVisibility === 'private') {

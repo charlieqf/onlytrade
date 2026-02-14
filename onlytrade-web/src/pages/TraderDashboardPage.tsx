@@ -16,6 +16,7 @@ import type {
     Position,
     DecisionRecord,
     TraderInfo,
+    RoomStreamPacket,
 } from '../types'
 
 // --- Helper Functions ---
@@ -60,6 +61,7 @@ interface TraderDashboardPageProps {
     account?: AccountInfo
     positions?: Position[]
     decisions?: DecisionRecord[]
+    streamPacket?: RoomStreamPacket
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
     lastUpdate: string
@@ -72,6 +74,7 @@ export function TraderDashboardPage({
     account,
     positions,
     decisions,
+    streamPacket,
     decisionsLimit,
     onDecisionsLimitChange,
     lastUpdate,
@@ -120,6 +123,99 @@ export function TraderDashboardPage({
 
         return t('aiDecisionsWillAppear', language)
     })()
+
+    const fuel = (() => {
+        const readiness = (streamPacket as any)?.room_context?.data_readiness
+            || (streamPacket as any)?.room_context?.dataReadiness
+            || (streamPacket as any)?.decision_meta?.data_readiness
+            || null
+        const level = String(readiness?.level || '').toUpperCase() || 'OK'
+        const reasons = Array.isArray(readiness?.reasons) ? readiness.reasons.map((r: any) => String(r || '')).filter(Boolean) : []
+
+        const readinessMetrics = readiness?.metrics || null
+        const readinessAsOf = readiness?.as_of_ts_ms ?? null
+        const readinessNow = readiness?.now_ts_ms ?? null
+
+        const sessionGate = (streamPacket as any)?.decision_meta?.session_gate || null
+
+        const overviewBrief = String((streamPacket as any)?.market_overview?.brief || (streamPacket as any)?.room_context?.market_overview_brief || '').trim()
+        const overviewSource = (streamPacket as any)?.market_overview?.source_kind || null
+        const overviewStatus = (streamPacket as any)?.market_overview?.status || null
+
+        const newsTitles = Array.isArray((streamPacket as any)?.news_digest?.titles)
+            ? (streamPacket as any).news_digest.titles
+            : (Array.isArray((streamPacket as any)?.room_context?.news_digest_titles)
+                ? (streamPacket as any).room_context.news_digest_titles
+                : [])
+        const newsSource = (streamPacket as any)?.news_digest?.source_kind || null
+        const newsStatus = (streamPacket as any)?.news_digest?.status || null
+
+        const staleOverview = !!overviewStatus?.stale
+        const staleNews = !!newsStatus?.stale
+
+        return {
+            level,
+            reasons,
+            readinessMetrics,
+            readinessAsOf,
+            readinessNow,
+            sessionGate,
+            overviewBrief,
+            overviewSource,
+            overviewStatus,
+            staleOverview,
+            newsTitles,
+            newsSource,
+            newsStatus,
+            staleNews,
+        }
+    })()
+
+    const [showFuelDetails, setShowFuelDetails] = useState<boolean>(false)
+    const [showStreamPacketJson, setShowStreamPacketJson] = useState<boolean>(false)
+    const [copiedKey, setCopiedKey] = useState<string>('')
+
+    const formatTs = (ts: any) => {
+        const n = Number(ts)
+        if (!Number.isFinite(n) || n <= 0) return '--'
+        try {
+            return new Date(n).toLocaleTimeString()
+        } catch {
+            return String(n)
+        }
+    }
+
+    const safeJson = (value: any, maxLen: number = 2500) => {
+        try {
+            const text = JSON.stringify(value, null, 2)
+            if (!text) return ''
+            return text.length > maxLen ? `${text.slice(0, maxLen)}\n... (truncated)` : text
+        } catch {
+            return ''
+        }
+    }
+
+    const stringifyJson = (value: any) => {
+        try {
+            return JSON.stringify(value, null, 2)
+        } catch {
+            return ''
+        }
+    }
+
+    const copyToClipboard = async (text: string, key: string) => {
+        const payload = String(text || '')
+        if (!payload) return
+        try {
+            await navigator.clipboard.writeText(payload)
+            setCopiedKey(key)
+            window.setTimeout(() => {
+                setCopiedKey((prev) => (prev === key ? '' : prev))
+            }, 1200)
+        } catch (err) {
+            console.error('Failed to copy:', err)
+        }
+    }
     const [selectedChartSymbol, setSelectedChartSymbol] = useState<string | undefined>(undefined)
     const [chartUpdateKey, setChartUpdateKey] = useState<number>(0)
     const chartSectionRef = useRef<HTMLDivElement>(null)
@@ -676,6 +772,211 @@ export function TraderDashboardPage({
                                 <li>{language === 'zh' ? '成交按下一根K线开盘价 + 固定滑点。' : 'Fills use next-bar open + fixed slippage.'}</li>
                                 <li>{language === 'zh' ? 'A股约束：100股一手，T+1。' : 'A-share constraints: 100-share lots, T+1.'}</li>
                             </ul>
+                        </div>
+
+                        <div className="nofx-glass p-5 border border-white/5 rounded-lg">
+                            <div className="flex items-center justify-between gap-4 mb-3">
+                                <div>
+                                    <div className="text-lg font-bold text-nofx-text-main">
+                                        {language === 'zh' ? '燃料面板' : 'Fuel Panel'}
+                                    </div>
+                                    <div className="text-xs text-nofx-text-muted mt-1">
+                                        {language === 'zh'
+                                            ? '用于主播式解说：数据就绪 + 市场概览 + 消息面。'
+                                            : 'For streamer-style context: readiness + overview + headlines.'}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowFuelDetails((v) => !v)}
+                                        className="text-[11px] px-2 py-1 rounded font-semibold transition-colors border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                    >
+                                        {showFuelDetails
+                                            ? (language === 'zh' ? '收起' : 'Collapse')
+                                            : (language === 'zh' ? '详情' : 'Details')}
+                                    </button>
+
+                                    <div
+                                        className="text-[11px] px-2 py-1 rounded font-mono"
+                                        style={{
+                                            background: fuel.level === 'ERROR'
+                                                ? 'rgba(246, 70, 93, 0.15)'
+                                                : (fuel.level === 'WARN'
+                                                    ? 'rgba(240, 185, 11, 0.15)'
+                                                    : 'rgba(14, 203, 129, 0.12)'),
+                                            color: fuel.level === 'ERROR'
+                                                ? '#F6465D'
+                                                : (fuel.level === 'WARN' ? '#F0B90B' : '#0ECB81'),
+                                            border: `1px solid ${fuel.level === 'ERROR'
+                                                ? 'rgba(246, 70, 93, 0.35)'
+                                                : (fuel.level === 'WARN'
+                                                    ? 'rgba(240, 185, 11, 0.35)'
+                                                    : 'rgba(14, 203, 129, 0.3)')}`
+                                        }}
+                                        title={fuel.reasons.length ? fuel.reasons.join(', ') : ''}
+                                    >
+                                        {language === 'zh' ? '数据' : 'DATA'}:{fuel.level}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {fuel.reasons.length > 0 && (
+                                <div className="text-xs text-nofx-text-muted mb-3">
+                                    {language === 'zh' ? '原因：' : 'Reasons: '}
+                                    <span className="font-mono">{fuel.reasons.slice(0, 4).join(' / ')}</span>
+                                </div>
+                            )}
+
+                            {showFuelDetails && (
+                                <div
+                                    className="mb-3 rounded-lg p-3 text-[11px] font-mono whitespace-pre-wrap"
+                                    style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+                                >
+                                    <div className="opacity-80">
+                                        packet_ts: {formatTs((streamPacket as any)?.ts_ms)}
+                                    </div>
+                                    <div className="opacity-80">
+                                        readiness_as_of: {formatTs(fuel.readinessAsOf)} | readiness_now: {formatTs(fuel.readinessNow)}
+                                    </div>
+                                    {fuel.readinessMetrics && (
+                                        <div className="opacity-80">
+                                            frames: intraday={String((fuel.readinessMetrics as any)?.intraday_frames ?? '--')} daily={String((fuel.readinessMetrics as any)?.daily_frames ?? '--')}
+                                        </div>
+                                    )}
+                                    {fuel.sessionGate && (
+                                        <div className="opacity-80">
+                                            session_gate: level={String((fuel.sessionGate as any)?.level || '--')} reasons={Array.isArray((fuel.sessionGate as any)?.reasons)
+                                                ? (fuel.sessionGate as any).reasons.join(',')
+                                                : '--'}
+                                        </div>
+                                    )}
+
+                                    <div className="mt-2 flex items-center justify-between gap-3">
+                                        <div className="opacity-70">readiness.reasons</div>
+                                        <button
+                                            type="button"
+                                            onClick={() => copyToClipboard(
+                                                fuel.reasons.join('\n') || stringifyJson((streamPacket as any)?.room_context?.data_readiness),
+                                                'fuel.reasons'
+                                            )}
+                                            className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                        >
+                                            {copiedKey === 'fuel.reasons'
+                                                ? (language === 'zh' ? '已复制' : 'Copied')
+                                                : (language === 'zh' ? '复制' : 'Copy')}
+                                        </button>
+                                    </div>
+
+                                    <div className="opacity-80">
+                                        overview_file: {String((fuel.overviewStatus as any)?.file_path || '--')} | last_load={formatTs((fuel.overviewStatus as any)?.last_load_ts_ms)} | err={String((fuel.overviewStatus as any)?.last_error || '') || 'none'}
+                                    </div>
+                                    <div className="opacity-80">
+                                        news_file: {String((fuel.newsStatus as any)?.file_path || '--')} | last_load={formatTs((fuel.newsStatus as any)?.last_load_ts_ms)} | err={String((fuel.newsStatus as any)?.last_error || '') || 'none'}
+                                    </div>
+
+                                    <div className="mt-2 flex items-center justify-between gap-3">
+                                        <div className="opacity-70">file_status</div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const overviewLine = `overview_file: ${String((fuel.overviewStatus as any)?.file_path || '--')} | last_load=${formatTs((fuel.overviewStatus as any)?.last_load_ts_ms)} | err=${String((fuel.overviewStatus as any)?.last_error || '') || 'none'}`
+                                                const newsLine = `news_file: ${String((fuel.newsStatus as any)?.file_path || '--')} | last_load=${formatTs((fuel.newsStatus as any)?.last_load_ts_ms)} | err=${String((fuel.newsStatus as any)?.last_error || '') || 'none'}`
+                                                copyToClipboard(`${overviewLine}\n${newsLine}`, 'fuel.files')
+                                            }}
+                                            className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                        >
+                                            {copiedKey === 'fuel.files'
+                                                ? (language === 'zh' ? '已复制' : 'Copied')
+                                                : (language === 'zh' ? '复制' : 'Copy')}
+                                        </button>
+                                    </div>
+
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="opacity-70">decision_audit_preview.json</div>
+                                            <button
+                                                type="button"
+                                                onClick={() => copyToClipboard(stringifyJson((streamPacket as any)?.decision_audit_preview), 'fuel.audit')}
+                                                className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                            >
+                                                {copiedKey === 'fuel.audit'
+                                                    ? (language === 'zh' ? '已复制' : 'Copied')
+                                                    : (language === 'zh' ? '复制' : 'Copy')}
+                                            </button>
+                                        </div>
+                                        <div className="mt-2 opacity-90">{safeJson((streamPacket as any)?.decision_audit_preview)}</div>
+                                    </div>
+
+                                    <div className="mt-2 flex items-center justify-between">
+                                        <div className="opacity-70">stream_packet.json</div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => copyToClipboard(stringifyJson(streamPacket), 'fuel.packet')}
+                                                className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                            >
+                                                {copiedKey === 'fuel.packet'
+                                                    ? (language === 'zh' ? '已复制' : 'Copied')
+                                                    : (language === 'zh' ? '复制' : 'Copy')}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowStreamPacketJson((v) => !v)}
+                                                className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                                            >
+                                                {showStreamPacketJson
+                                                    ? (language === 'zh' ? '收起' : 'Collapse')
+                                                    : (language === 'zh' ? '展开' : 'Expand')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {showStreamPacketJson && (
+                                        <div className="mt-2 opacity-90">{safeJson(streamPacket)}</div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="space-y-3 text-sm">
+                                <div>
+                                    <div className="text-xs text-nofx-text-muted mb-1">
+                                        {language === 'zh' ? '市场概览' : 'Market Overview'}
+                                        {fuel.overviewSource && (
+                                            <span className="ml-2 text-[10px] font-mono opacity-70">
+                                                src={String(fuel.overviewSource)}{fuel.staleOverview ? ':stale' : ''}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-sm text-nofx-text-main leading-snug">
+                                        {fuel.overviewBrief || (language === 'zh' ? '暂无概览（将自动回退观察池）。' : 'No overview yet (will fall back to proxy watchlist).')}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="text-xs text-nofx-text-muted mb-1">
+                                        {language === 'zh' ? '消息面' : 'Headlines'}
+                                        {fuel.newsSource && (
+                                            <span className="ml-2 text-[10px] font-mono opacity-70">
+                                                src={String(fuel.newsSource)}{fuel.staleNews ? ':stale' : ''}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {fuel.newsTitles.length > 0 ? (
+                                        <div className="text-sm text-nofx-text-main leading-snug space-y-1">
+                                            {fuel.newsTitles.slice(0, 3).map((title: any, idx: number) => (
+                                                <div key={`${idx}-${title}`} className="opacity-95">
+                                                    · {String(title)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-nofx-text-muted opacity-70">
+                                            {language === 'zh' ? '暂无新闻摘要。' : 'No digest available.'}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
 
                         <div

@@ -21,9 +21,13 @@ import {
   isUsTicker,
 } from './src/marketSpec.mjs'
 import { createDecisionLogStore, dayKeyInTimeZone } from './src/decisionLogStore.mjs'
+import { createDecisionAuditStore } from './src/decisionAuditStore.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
 import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
+import { buildNarrationAgentMessage } from './src/chat/chatAgentResponder.mjs'
+import { createLiveJsonFileProvider } from './src/liveJsonFileProvider.mjs'
+import { evaluateDataReadiness } from './src/dataReadiness.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -116,9 +120,44 @@ const CHAT_PUBLIC_PLAIN_REPLY_RATE = (() => {
   if (!Number.isFinite(parsed)) return 0.05
   return Math.max(0, Math.min(parsed, 1))
 })()
+const CHAT_AGENT_MAX_CHARS = Math.max(24, Math.min(800, Math.floor(Number(process.env.CHAT_AGENT_MAX_CHARS || 120))))
+const CHAT_AGENT_MAX_SENTENCES = Math.max(1, Math.min(4, Math.floor(Number(process.env.CHAT_AGENT_MAX_SENTENCES || 2))))
+const CHAT_DECISION_NARRATION_ENABLED = String(process.env.CHAT_DECISION_NARRATION_ENABLED || 'true').toLowerCase() !== 'false'
+const CHAT_DECISION_NARRATION_USE_LLM = String(process.env.CHAT_DECISION_NARRATION_USE_LLM || 'false').toLowerCase() === 'true'
+const CHAT_DECISION_NARRATION_MIN_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.CHAT_DECISION_NARRATION_MIN_INTERVAL_MS || 60_000)
+)
 const CHAT_LLM_ENABLED = String(process.env.CHAT_LLM_ENABLED || String(AGENT_LLM_ENABLED)).toLowerCase() !== 'false'
 const CHAT_LLM_TIMEOUT_MS = Math.max(1000, Number(process.env.CHAT_LLM_TIMEOUT_MS || AGENT_LLM_TIMEOUT_MS))
 const CHAT_LLM_MAX_OUTPUT_TOKENS = Math.max(80, Number(process.env.CHAT_LLM_MAX_OUTPUT_TOKENS || 140))
+
+const MARKET_OVERVIEW_PATH_CN = path.resolve(
+  ROOT_DIR,
+  process.env.MARKET_OVERVIEW_PATH_CN || path.join('data', 'live', 'onlytrade', 'market_overview.cn-a.json')
+)
+const MARKET_OVERVIEW_PATH_US = path.resolve(
+  ROOT_DIR,
+  process.env.MARKET_OVERVIEW_PATH_US || path.join('data', 'live', 'onlytrade', 'market_overview.us.json')
+)
+const MARKET_OVERVIEW_REFRESH_MS = Math.max(500, Number(process.env.MARKET_OVERVIEW_REFRESH_MS || 15000))
+const MARKET_OVERVIEW_STALE_MS = Math.max(10_000, Number(process.env.MARKET_OVERVIEW_STALE_MS || 180_000))
+
+const NEWS_DIGEST_PATH_CN = path.resolve(
+  ROOT_DIR,
+  process.env.NEWS_DIGEST_PATH_CN || path.join('data', 'live', 'onlytrade', 'news_digest.cn-a.json')
+)
+const NEWS_DIGEST_PATH_US = path.resolve(
+  ROOT_DIR,
+  process.env.NEWS_DIGEST_PATH_US || path.join('data', 'live', 'onlytrade', 'news_digest.us.json')
+)
+const NEWS_DIGEST_REFRESH_MS = Math.max(2_000, Number(process.env.NEWS_DIGEST_REFRESH_MS || 60_000))
+const NEWS_DIGEST_STALE_MS = Math.max(60_000, Number(process.env.NEWS_DIGEST_STALE_MS || 12 * 60 * 60 * 1000))
+
+const DATA_READINESS_MIN_INTRADAY_FRAMES = Math.max(10, Number(process.env.DATA_READINESS_MIN_INTRADAY_FRAMES || 21))
+const DATA_READINESS_MIN_DAILY_FRAMES = Math.max(20, Number(process.env.DATA_READINESS_MIN_DAILY_FRAMES || 61))
+const DATA_READINESS_FRESH_WARN_MS = Math.max(10_000, Number(process.env.DATA_READINESS_FRESH_WARN_MS || 150_000))
+const DATA_READINESS_FRESH_ERROR_MS = Math.max(20_000, Number(process.env.DATA_READINESS_FRESH_ERROR_MS || 330_000))
 
 const REPLAY_PATH = path.join(
   ROOT_DIR,
@@ -468,6 +507,12 @@ function resolveRoomAgentForChat(roomId) {
     tradingStyle: trader.trading_style || '',
     stylePromptCn: trader.style_prompt_cn || '',
   }
+}
+
+function getRegisteredTraderStrict(traderId) {
+  const wanted = String(traderId || '').trim()
+  if (!wanted) return null
+  return getRegisteredTraders().find((row) => row.trader_id === wanted) || null
 }
 
 function createUserSessionId() {
@@ -1343,8 +1388,34 @@ const chatSessionRegistry = new Map()
 const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
+const lastDecisionMetaByTraderId = new Map()
+const marketOverviewProviderCn = createLiveJsonFileProvider({
+  filePath: MARKET_OVERVIEW_PATH_CN,
+  refreshMs: MARKET_OVERVIEW_REFRESH_MS,
+  staleAfterMs: MARKET_OVERVIEW_STALE_MS,
+})
+const marketOverviewProviderUs = createLiveJsonFileProvider({
+  filePath: MARKET_OVERVIEW_PATH_US,
+  refreshMs: MARKET_OVERVIEW_REFRESH_MS,
+  staleAfterMs: MARKET_OVERVIEW_STALE_MS,
+})
+const newsDigestProviderCn = createLiveJsonFileProvider({
+  filePath: NEWS_DIGEST_PATH_CN,
+  refreshMs: NEWS_DIGEST_REFRESH_MS,
+  staleAfterMs: NEWS_DIGEST_STALE_MS,
+})
+const newsDigestProviderUs = createLiveJsonFileProvider({
+  filePath: NEWS_DIGEST_PATH_US,
+  refreshMs: NEWS_DIGEST_REFRESH_MS,
+  staleAfterMs: NEWS_DIGEST_STALE_MS,
+})
+const chatNarrationStateByRoom = new Map()
 const decisionLogStore = createDecisionLogStore({
   baseDir: path.join(ROOT_DIR, 'data', 'decisions'),
+  timeZone: 'Asia/Shanghai',
+})
+const decisionAuditStore = createDecisionAuditStore({
+  baseDir: path.join(ROOT_DIR, 'data', 'audit', 'decision_audit'),
   timeZone: 'Asia/Shanghai',
 })
 let chatService = null
@@ -1380,6 +1451,292 @@ const chatLlmResponder = CHAT_LLM_ENABLED
     maxTextLen: CHAT_MAX_TEXT_LEN,
   })
   : null
+
+function toSafeNumber(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function round(value, digits = 4) {
+  if (!Number.isFinite(value)) return null
+  const scale = 10 ** digits
+  return Math.round(value * scale) / scale
+}
+
+function sortedFrames(frames) {
+  return [...(frames || [])].sort((a, b) => toSafeNumber(a?.window?.start_ts_ms, 0) - toSafeNumber(b?.window?.start_ts_ms, 0))
+}
+
+function computeReturn(frames, lookback) {
+  const series = sortedFrames(frames)
+  const n = Math.max(0, Math.floor(toSafeNumber(lookback, 0)))
+  if (series.length <= n) return null
+  const latest = toSafeNumber(series[series.length - 1]?.bar?.close, NaN)
+  const base = toSafeNumber(series[series.length - 1 - n]?.bar?.close, NaN)
+  if (!Number.isFinite(latest) || !Number.isFinite(base) || base === 0) return null
+  return round(latest / base - 1, 6)
+}
+
+function summarizeProxyWatchlist(proxy) {
+  const rows = Array.isArray(proxy?.sample?.rows) ? proxy.sample.rows : []
+  if (!rows.length) return ''
+  const ret5 = rows.map((r) => Number(r?.ret_5)).filter(Number.isFinite)
+  const ret20 = rows.map((r) => Number(r?.ret_20)).filter(Number.isFinite)
+  const avg5 = ret5.length ? round(ret5.reduce((a, b) => a + b, 0) / ret5.length, 6) : null
+  const avg20 = ret20.length ? round(ret20.reduce((a, b) => a + b, 0) / ret20.length, 6) : null
+  const adv = ret5.filter((v) => v > 0).length
+  const dec = ret5.filter((v) => v < 0).length
+  const bits = []
+  if (avg5 != null) bits.push(`5m均值${(avg5 * 100).toFixed(2)}%`)
+  if (avg20 != null) bits.push(`20m均值${(avg20 * 100).toFixed(2)}%`)
+  bits.push(`样本${rows.length}只（涨${adv}/跌${dec}）`)
+  return bits.join('，')
+}
+
+function summarizeMarketOverviewPayload(payload, marketId) {
+  if (!payload || typeof payload !== 'object') return ''
+  if (typeof payload.summary === 'string' && payload.summary.trim()) {
+    return payload.summary.trim().slice(0, 240)
+  }
+
+  const benchmarks = Array.isArray(payload.benchmarks) ? payload.benchmarks : []
+  const sectors = Array.isArray(payload.sectors)
+    ? payload.sectors
+    : (Array.isArray(payload.industries) ? payload.industries : [])
+
+  const bits = []
+  if (benchmarks.length) {
+    const top = [...benchmarks]
+      .map((row) => ({
+        symbol: String(row?.symbol || row?.ticker || '').trim(),
+        ret_20: Number(row?.ret_20),
+        ret_5: Number(row?.ret_5),
+      }))
+      .filter((row) => row.symbol)
+      .sort((a, b) => (Number.isFinite(b.ret_20) ? b.ret_20 : (Number.isFinite(b.ret_5) ? b.ret_5 : 0))
+        - (Number.isFinite(a.ret_20) ? a.ret_20 : (Number.isFinite(a.ret_5) ? a.ret_5 : 0)))
+      .slice(0, 3)
+
+    if (top.length) {
+      const formatted = top.map((row) => {
+        const v = Number.isFinite(row.ret_20) ? row.ret_20 : row.ret_5
+        const pct = Number.isFinite(v) ? `${(v * 100).toFixed(2)}%` : ''
+        return pct ? `${row.symbol}${v >= 0 ? '+' : ''}${pct}` : row.symbol
+      }).join(' / ')
+      bits.push(formatted)
+    }
+  }
+
+  if (sectors.length) {
+    const norm = sectors
+      .map((row) => ({
+        name: String(row?.name || row?.sector || row?.industry || '').trim(),
+        ret_20: Number(row?.ret_20),
+        ret_5: Number(row?.ret_5),
+      }))
+      .filter((row) => row.name)
+    const leaders = [...norm]
+      .sort((a, b) => (Number.isFinite(b.ret_20) ? b.ret_20 : b.ret_5) - (Number.isFinite(a.ret_20) ? a.ret_20 : a.ret_5))
+      .slice(0, 2)
+    const laggards = [...norm]
+      .sort((a, b) => (Number.isFinite(a.ret_20) ? a.ret_20 : a.ret_5) - (Number.isFinite(b.ret_20) ? b.ret_20 : b.ret_5))
+      .slice(0, 2)
+
+    if (leaders.length) {
+      bits.push(`强势：${leaders.map((r) => r.name).join('、')}`)
+    }
+    if (laggards.length) {
+      bits.push(`偏弱：${laggards.map((r) => r.name).join('、')}`)
+    }
+  }
+
+  const prefix = marketId === 'US' ? '美股' : 'A股'
+  const out = bits.filter(Boolean).join('；')
+  return out ? `${prefix}概览：${out}`.slice(0, 240) : ''
+}
+
+function extractNewsTitles(payload) {
+  if (!payload || typeof payload !== 'object') return []
+  const raw = Array.isArray(payload.headlines)
+    ? payload.headlines
+    : (Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.news) ? payload.news : []))
+  const titles = []
+  for (const item of raw) {
+    const title = String(item?.title || item?.headline || item?.text || '').trim()
+    if (!title) continue
+    titles.push(title)
+    if (titles.length >= 6) break
+  }
+  return titles
+}
+
+const proxyOverviewCacheByMarket = new Map()
+const proxyOverviewInFlightByMarket = new Map()
+
+async function getProxyWatchlistOverview(marketId) {
+  const market = marketId === 'US' ? 'US' : 'CN-A'
+  const now = Date.now()
+  const cached = proxyOverviewCacheByMarket.get(market)
+  if (cached && now - toSafeNumber(cached.cached_at_ms, 0) < 30_000) {
+    return cached
+  }
+
+  if (proxyOverviewInFlightByMarket.get(market)) {
+    return proxyOverviewInFlightByMarket.get(market)
+  }
+
+  const promise = Promise.resolve().then(async () => {
+    const exchangeId = market === 'US' ? 'sim-us' : 'sim-cn'
+    const candidates = symbolList({ exchangeId }).map((item) => item.symbol).filter(Boolean)
+    const sampleSymbols = candidates.slice(0, 8)
+    const rows = []
+    for (const symbol of sampleSymbols) {
+      try {
+        const batch = await marketDataService.getFrames({ symbol, interval: '1m', limit: 25 })
+        const frames = Array.isArray(batch?.frames) ? batch.frames : []
+        rows.push({
+          symbol,
+          ret_5: computeReturn(frames, 5),
+          ret_20: computeReturn(frames, 20),
+          last_bar_ts_ms: toSafeNumber(frames[frames.length - 1]?.event_ts_ms, null),
+        })
+      } catch {
+        rows.push({ symbol, ret_5: null, ret_20: null, last_bar_ts_ms: null })
+      }
+    }
+
+    const payload = {
+      schema_version: 'market.overview.proxy_watchlist.v1',
+      market,
+      source_kind: 'proxy_watchlist',
+      as_of_ts_ms: now,
+      sample: {
+        symbol_count: sampleSymbols.length,
+        symbols: sampleSymbols,
+        rows,
+      },
+    }
+
+    const record = {
+      payload,
+      cached_at_ms: now,
+    }
+    proxyOverviewCacheByMarket.set(market, record)
+    return record
+  }).finally(() => {
+    proxyOverviewInFlightByMarket.delete(market)
+  })
+
+  proxyOverviewInFlightByMarket.set(market, promise)
+  return promise
+}
+
+async function getMarketOverviewSnapshot(marketId) {
+  const market = marketId === 'US' ? 'US' : 'CN-A'
+  const provider = market === 'US' ? marketOverviewProviderUs : marketOverviewProviderCn
+  const payload = await provider.getPayload({ forceRefresh: false })
+  const status = provider.getStatus()
+
+  if (payload && status && status.stale === false && !status.last_error) {
+    return {
+      source_kind: 'benchmark',
+      market,
+      payload,
+      status,
+      brief: summarizeMarketOverviewPayload(payload, market),
+    }
+  }
+
+  const proxy = await getProxyWatchlistOverview(market)
+  const proxyPayload = proxy?.payload || null
+  const brief = summarizeProxyWatchlist(proxyPayload)
+
+  return {
+    source_kind: 'proxy_watchlist',
+    market,
+    payload: proxyPayload,
+    status,
+    brief: brief ? `${market === 'US' ? '美股' : 'A股'}观察池：${brief}` : '',
+  }
+}
+
+async function getNewsDigestSnapshot(marketId) {
+  const market = marketId === 'US' ? 'US' : 'CN-A'
+  const provider = market === 'US' ? newsDigestProviderUs : newsDigestProviderCn
+  const payload = await provider.getPayload({ forceRefresh: false })
+  const status = provider.getStatus()
+  const titles = extractNewsTitles(payload)
+
+  return {
+    source_kind: payload ? 'digest_file' : 'empty',
+    market,
+    titles,
+    status,
+  }
+}
+
+function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) {
+  const exchangeId = String(trader?.exchange_id || '').trim().toLowerCase()
+  const market = exchangeId.includes('sim-us') ? 'US' : 'CN-A'
+  const reasons = []
+  let level = 'OK'
+
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    const liveStatus = liveFileStatusForMarket(market)
+    if (liveStatus?.last_error) {
+      level = 'ERROR'
+      reasons.push('live_file_error')
+    } else if (liveStatus?.stale) {
+      level = 'WARN'
+      reasons.push('live_file_stale')
+    }
+  }
+
+  const session = getMarketSessionStatusForExchange(exchangeId || (market === 'US' ? 'sim-us' : 'sim-cn'), nowMs)
+  if (session?.is_open === false) {
+    if (level === 'OK') level = 'WARN'
+    reasons.push('market_closed')
+  }
+
+  return {
+    level,
+    reasons,
+    market,
+    ts_ms: nowMs,
+  }
+}
+
+async function buildRoomChatContext(roomId) {
+  const trader = getTraderById(roomId)
+  const marketSpec = getMarketSpecForExchange(trader.exchange_id)
+  const market = marketSpec.market
+  const now = Date.now()
+  const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
+  const latestDecision = latest[0] || null
+  const head = latestDecision?.decisions?.[0] || null
+
+  const [overview, digest] = await Promise.all([
+    getMarketOverviewSnapshot(market),
+    getNewsDigestSnapshot(market),
+  ])
+
+  const symbolBrief = head
+    ? {
+      symbol: head.symbol || null,
+      action: head.action || null,
+      confidence: head.confidence ?? null,
+      reasoning: typeof head.reasoning === 'string' ? head.reasoning.slice(0, 120) : null,
+    }
+    : null
+
+  return {
+    data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: now }),
+    market_overview_brief: overview?.brief || '',
+    news_digest_titles: Array.isArray(digest?.titles) ? digest.titles : [],
+    symbol_brief: symbolBrief,
+  }
+}
+
 chatService = createChatService({
   store: chatStore,
   resolveRoomAgent: resolveRoomAgentForChat,
@@ -1387,11 +1744,129 @@ chatService = createChatService({
     const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
     return latest[0] || null
   },
+  resolveRoomContext: buildRoomChatContext,
   maxTextLen: CHAT_MAX_TEXT_LEN,
   rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
   publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
   generateAgentMessageText: chatLlmResponder,
 })
+
+function toPct(value, digits = 2) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return Number((n * 100).toFixed(digits))
+}
+
+function stripStepPrefix(value) {
+  return String(value || '').replace(/^\s*\d+\s+/, '').trim()
+}
+
+function narrationTextFromReasoningSteps(steps) {
+  const rows = Array.isArray(steps) ? steps.map(stripStepPrefix).filter(Boolean) : []
+  if (!rows.length) return ''
+
+  const action = rows.find((line) => line.includes('动作：')) || rows[rows.length - 1]
+  const signal = rows.find((line) => line.includes('信号快照：'))
+    || rows.find((line) => line.includes('市场概览：') || line.includes('消息面：'))
+    || rows[0]
+
+  let text = action
+  if (signal && signal !== action) {
+    text = `${action}；${signal}`
+  }
+
+  if (!/[。！？!?]$/.test(text)) {
+    text += '。'
+  }
+  return text
+}
+
+function fallbackDecisionNarrationText({ trader, decision, context }) {
+  const d = decision?.decisions?.[0] || null
+  if (!d) return ''
+  const action = String(d.action || 'hold').toUpperCase()
+  const symbol = String(d.symbol || '').trim() || (String(context?.symbol || '').trim() || 'UNKNOWN')
+  const conf = Number.isFinite(Number(d.confidence)) ? Number(d.confidence).toFixed(2) : ''
+  const ret5 = toPct(context?.intraday?.feature_snapshot?.ret_5, 2)
+  const rsi = Number(context?.daily?.feature_snapshot?.rsi_14)
+  const bits = []
+  if (ret5 != null) bits.push(`5m涨跌${ret5 >= 0 ? '+' : ''}${ret5}%`)
+  if (Number.isFinite(rsi)) bits.push(`RSI${Number(rsi.toFixed(0))}`)
+  const brief = bits.length ? `（${bits.join('，')}）` : ''
+  const confText = conf ? `，置信度${conf}` : ''
+  return `本轮${symbol}给出${action}${brief}${confText}。`
+}
+
+async function maybeEmitDecisionNarration({ trader, decision, context }) {
+  if (!CHAT_DECISION_NARRATION_ENABLED) return
+  const roomId = String(trader?.trader_id || '').trim()
+  if (!roomId) return
+
+  const roomAgent = resolveRoomAgentForChat(roomId)
+  if (!roomAgent || roomAgent.isRunning !== true) return
+
+  const now = Date.now()
+  const previous = chatNarrationStateByRoom.get(roomId) || {
+    last_emit_ms: 0,
+    last_decision_ts: '',
+    last_cycle: 0,
+  }
+  if (now - Number(previous.last_emit_ms || 0) < CHAT_DECISION_NARRATION_MIN_INTERVAL_MS) {
+    return
+  }
+
+  const decisionTs = String(decision?.timestamp || '').trim()
+  const cycle = Number(decision?.cycle_number || 0)
+  if (decisionTs && previous.last_decision_ts === decisionTs) {
+    return
+  }
+  if (!decisionTs && Number.isFinite(cycle) && cycle > 0 && Number(previous.last_cycle || 0) === cycle) {
+    return
+  }
+
+  let text = ''
+  text = narrationTextFromReasoningSteps(decision?.reasoning_steps_cn)
+
+  if (!text && CHAT_DECISION_NARRATION_USE_LLM && chatLlmResponder) {
+    try {
+      const roomContext = await buildRoomChatContext(roomId)
+      text = await chatLlmResponder({
+        kind: 'narration',
+        roomAgent,
+        roomContext,
+        latestDecision: decision,
+        historyContext: null,
+        inboundMessage: null,
+      })
+    } catch {
+      text = ''
+    }
+  }
+  if (!text) {
+    text = fallbackDecisionNarrationText({ trader, decision, context })
+  }
+  if (!text) return
+
+  const message = buildNarrationAgentMessage({
+    roomAgent,
+    roomId,
+    text,
+    nowMs: now,
+    maxChars: CHAT_AGENT_MAX_CHARS,
+    maxSentences: CHAT_AGENT_MAX_SENTENCES,
+  })
+
+  try {
+    await chatStore.appendPublic(roomId, message)
+    chatNarrationStateByRoom.set(roomId, {
+      last_emit_ms: now,
+      last_decision_ts: decisionTs,
+      last_cycle: Number.isFinite(cycle) ? cycle : 0,
+    })
+  } catch {
+    // ignore: narration is best-effort
+  }
+}
 
 function liveFileProviderForSymbol(symbol) {
   const market = inferMarketFromSymbol(symbol)
@@ -1880,7 +2355,63 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     }
   }
 
-  if (llmDecider && !killSwitchState.active) {
+  const readiness = evaluateDataReadiness({
+    context,
+    intradayFrames,
+    dailyFrames: Array.isArray(dailyBatch?.frames) ? dailyBatch.frames : [],
+    nowMs: (RUNTIME_DATA_MODE === 'live_file'
+      ? Date.now()
+      : (Number.isFinite(Number(context?.as_of_ts_ms)) ? Number(context.as_of_ts_ms) : Date.now())),
+    minIntradayFrames: DATA_READINESS_MIN_INTRADAY_FRAMES,
+    minDailyFrames: DATA_READINESS_MIN_DAILY_FRAMES,
+    freshnessWarnMs: DATA_READINESS_FRESH_WARN_MS,
+    freshnessErrorMs: DATA_READINESS_FRESH_ERROR_MS,
+  })
+  context.data_readiness = readiness
+
+  const readinessError = readiness?.level === 'ERROR'
+  if (readinessError) {
+    // Force HOLD and avoid any LLM calls. Also disable flat-entry guardrail.
+    context.runtime_config.flat_entry_enabled = 'false'
+    context.llm_decision = {
+      source: 'readiness_gate',
+      model: null,
+      action: 'hold',
+      confidence: 0.51,
+      quantity: 0,
+      reasoning: `data readiness ERROR: ${(readiness?.reasons || []).slice(0, 3).join(', ')}`.slice(0, 200),
+      system_prompt: 'agent.data_readiness.v1',
+      input_prompt: JSON.stringify({ symbol, readiness }),
+      cot_trace: 'forced_hold_due_to_data_readiness_error',
+    }
+  }
+
+  try {
+    const [overview, digest] = await Promise.all([
+      getMarketOverviewSnapshot(context.market),
+      getNewsDigestSnapshot(context.market),
+    ])
+
+    context.market_overview = {
+      source_kind: overview?.source_kind || null,
+      brief: overview?.brief || '',
+    }
+    context.news_digest = {
+      source_kind: digest?.source_kind || null,
+      titles: Array.isArray(digest?.titles) ? digest.titles : [],
+    }
+    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: Date.now() })
+    context.symbol_brief = {
+      symbol,
+      last_bar_ts_ms: Number.isFinite(Number(latestEventTs)) ? Number(latestEventTs) : null,
+      ret_5: context?.intraday?.feature_snapshot?.ret_5 ?? null,
+      ret_20: context?.intraday?.feature_snapshot?.ret_20 ?? null,
+    }
+  } catch {
+    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: Date.now() })
+  }
+
+  if (llmDecider && !killSwitchState.active && !readinessError) {
     try {
       const llmDecision = await llmDecider({
         trader,
@@ -2105,6 +2636,110 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
   }
 })
 
+app.get('/api/rooms/:roomId/stream-packet', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'invalid_room_id' })
+      return
+    }
+
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    const limit = Math.max(1, Math.min(Number(req.query.decision_limit || 5) || 5, 20))
+    const tsMs = Date.now()
+    const tz = getMarketSpecForExchange(trader.exchange_id).timezone
+
+    const market = getMarketSpecForExchange(trader.exchange_id).market
+    const [roomContext, overview, digest] = await Promise.all([
+      buildRoomChatContext(roomId),
+      getMarketOverviewSnapshot(market),
+      getNewsDigestSnapshot(market),
+    ])
+
+    const runtimeDecisions = agentRuntime?.getLatestDecisions?.(roomId, limit) || []
+    let persisted = []
+    try {
+      persisted = await decisionLogStore.listLatest({ traderId: roomId, limit: 1, timeZone: tz })
+    } catch {
+      persisted = []
+    }
+    const latestDecision = (runtimeDecisions && runtimeDecisions[0]) || (persisted && persisted[0]) || null
+
+    const head = latestDecision?.decisions?.[0] || null
+    const meta = lastDecisionMetaByTraderId.get(roomId) || null
+    const metaMatchesDecision = meta
+      ? ((meta.decision_ts && meta.decision_ts === String(latestDecision?.timestamp || ''))
+        || (Number(meta.cycle_number || 0) > 0 && Number(meta.cycle_number || 0) === Number(latestDecision?.cycle_number || 0)))
+      : false
+    const effectiveMeta = metaMatchesDecision ? meta : null
+    const decisionAuditPreview = latestDecision ? {
+      schema_version: 'agent.decision_audit.v1',
+      saved_ts_ms: effectiveMeta?.saved_ts_ms || null,
+      timestamp: latestDecision?.timestamp || null,
+      cycle_number: Number(latestDecision?.cycle_number || 0),
+      symbol: head?.symbol || null,
+      action: head?.action || null,
+      decision_source: latestDecision?.decision_source || null,
+      forced_hold: effectiveMeta?.forced_hold || false,
+      data_readiness: effectiveMeta?.data_readiness || null,
+      session_gate: effectiveMeta?.session_gate || null,
+      market_overview: effectiveMeta?.market_overview || null,
+      news_digest: effectiveMeta?.news_digest || null,
+    } : null
+
+    res.json(ok({
+      schema_version: 'room.stream_packet.v1',
+      room_id: roomId,
+      ts_ms: tsMs,
+      trader: {
+        trader_id: trader.trader_id,
+        trader_name: trader.trader_name,
+        exchange_id: trader.exchange_id,
+        is_running: trader.is_running === true,
+      },
+      room_context: roomContext,
+      market_overview: {
+        source_kind: overview?.source_kind || null,
+        brief: overview?.brief || '',
+        status: overview?.status || null,
+      },
+      news_digest: {
+        source_kind: digest?.source_kind || null,
+        titles: Array.isArray(digest?.titles) ? digest.titles : [],
+        status: digest?.status || null,
+      },
+      status: getStatus(roomId),
+      account: getAccount(roomId),
+      positions: getPositions(roomId),
+      decisions_latest: runtimeDecisions,
+      decision_latest: latestDecision,
+      decision_audit_preview: decisionAuditPreview,
+      decision_meta: effectiveMeta,
+      runtime: {
+        state: agentRuntime?.getState?.() || null,
+        metrics: agentRuntime?.getMetrics?.() || null,
+      },
+      files: {
+        market_overview: {
+          cn_a: marketOverviewProviderCn.getStatus(),
+          us: marketOverviewProviderUs.getStatus(),
+        },
+        news_digest: {
+          cn_a: newsDigestProviderCn.getStatus(),
+          us: newsDigestProviderUs.getStatus(),
+        },
+      },
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.code || error?.message || 'stream_packet_failed' })
+  }
+})
+
 app.get('/api/status', (req, res) => {
   const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   res.json(ok(getStatus(traderId)))
@@ -2234,6 +2869,22 @@ app.get('/api/agent/runtime/status', (_req, res) => {
     metrics,
     decision_every_bars: agentDecisionEveryBars,
     market_session_guard: getMarketSessionGatePublicSnapshot(),
+    market_overview_files: {
+      cn_a: marketOverviewProviderCn.getStatus(),
+      us: marketOverviewProviderUs.getStatus(),
+    },
+    news_digest_files: {
+      cn_a: newsDigestProviderCn.getStatus(),
+      us: newsDigestProviderUs.getStatus(),
+    },
+    chat_streaming: {
+      proactive_interval_ms: Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000)),
+      agent_max_chars: CHAT_AGENT_MAX_CHARS,
+      agent_max_sentences: CHAT_AGENT_MAX_SENTENCES,
+      decision_narration_enabled: CHAT_DECISION_NARRATION_ENABLED,
+      decision_narration_use_llm: CHAT_DECISION_NARRATION_USE_LLM,
+      decision_narration_min_interval_ms: CHAT_DECISION_NARRATION_MIN_INTERVAL_MS,
+    },
     kill_switch: killSwitchPublicState(),
     llm: {
       enabled: !!llmDecider,
@@ -2723,7 +3374,7 @@ agentRuntime = createInMemoryAgentRuntime({
   cycleMs: AGENT_RUNTIME_CYCLE_MS,
   maxHistory: 120,
   autoTimer: RUNTIME_DATA_MODE === 'live_file',
-  onDecision: async ({ trader, decision }) => {
+  onDecision: async ({ trader, decision, context }) => {
     const fallbackAccount = getAccount(trader.trader_id)
     const account = {
       total_equity: Number(decision?.account_state?.total_balance ?? fallbackAccount.total_equity),
@@ -2751,6 +3402,54 @@ agentRuntime = createInMemoryAgentRuntime({
       await decisionLogStore.appendDecision({ traderId: trader.trader_id, decision, timeZone: tz })
     } catch {
       // keep runtime robust: failure to persist decisions must not break trading loop
+    }
+
+    try {
+      lastDecisionMetaByTraderId.set(trader.trader_id, {
+        saved_ts_ms: Date.now(),
+        decision_ts: String(decision?.timestamp || ''),
+        cycle_number: Number(decision?.cycle_number || 0),
+        forced_hold: context?.llm_decision?.source === 'readiness_gate',
+        data_readiness: context?.data_readiness || null,
+        session_gate: context?.session_gate || null,
+        market_overview: context?.market_overview || null,
+        news_digest: context?.news_digest || null,
+      })
+    } catch {
+      // ignore
+    }
+
+    try {
+      const tz = getMarketSpecForExchange(trader.exchange_id).timezone
+      const head = decision?.decisions?.[0] || null
+      await decisionAuditStore.appendAudit({
+        traderId: trader.trader_id,
+        timeZone: tz,
+        audit: {
+          timestamp: decision?.timestamp || new Date().toISOString(),
+          cycle_number: Number(decision?.cycle_number || 0),
+          symbol: head?.symbol || null,
+          action: head?.action || null,
+          decision_source: decision?.decision_source || null,
+          forced_hold: context?.llm_decision?.source === 'readiness_gate',
+          data_readiness: context?.data_readiness || null,
+          session_gate: context?.session_gate || null,
+          market_overview: context?.market_overview || null,
+          news_digest: context?.news_digest || null,
+          live_files: {
+            cn_a: publicLiveFileStatus(liveFileFrameProviderCn?.getStatus?.() || null),
+            us: publicLiveFileStatus(liveFileFrameProviderUs?.getStatus?.() || null),
+          },
+        },
+      })
+    } catch {
+      // ignore: audit is best-effort
+    }
+
+    try {
+      await maybeEmitDecisionNarration({ trader, decision, context })
+    } catch {
+      // ignore: narration is best-effort
     }
   },
 })

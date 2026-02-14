@@ -309,6 +309,7 @@ export function LoginPage() {
                     <label className="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5 ml-1 font-bold">{t('email', language)}</label>
                     <input
                       type="email"
+                      data-testid="login-email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full bg-black/50 border border-zinc-700 rounded px-4 py-3 text-sm focus:border-nofx-gold focus:ring-1 focus:ring-nofx-gold/50 outline-none transition-all placeholder-zinc-700 text-white font-mono"
@@ -325,6 +326,7 @@ export function LoginPage() {
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
+                        data-testid="login-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full bg-black/50 border border-zinc-700 rounded px-4 py-3 text-sm focus:border-nofx-gold focus:ring-1 focus:ring-nofx-gold/50 outline-none transition-all placeholder-zinc-700 text-white font-mono pr-10"
@@ -359,6 +361,7 @@ export function LoginPage() {
 
                 <button
                   type="submit"
+                  data-testid="login-submit"
                   disabled={loading}
                   className="w-full bg-nofx-gold text-black font-bold py-3 px-4 rounded text-sm tracking-wide uppercase hover:bg-yellow-400 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed font-mono shadow-[0_0_15px_rgba(255,215,0,0.1)] hover:shadow-[0_0_25px_rgba(255,215,0,0.25)] flex items-center justify-center gap-2 group"
                 >
@@ -390,6 +393,7 @@ export function LoginPage() {
                   </label>
                   <input
                     type="text"
+                    data-testid="otp-code"
                     value={otpCode}
                     onChange={(e) =>
                       setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
@@ -418,6 +422,7 @@ export function LoginPage() {
                   </button>
                   <button
                     type="submit"
+                    data-testid="otp-submit"
                     disabled={loading || otpCode.length !== 6}
                     className="flex-1 bg-nofx-gold text-black font-bold py-3 rounded text-xs font-mono uppercase hover:bg-yellow-400 transition-colors disabled:opacity-50"
                   >

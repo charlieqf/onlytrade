@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import net from 'node:net'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +43,34 @@ async function writeManifest(agentsDir, agentId, payload = {}) {
   )
 }
 
+async function getFreePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.unref()
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : null
+      server.close(() => {
+        if (typeof port === 'number') resolve(port)
+        else reject(new Error('port_unavailable'))
+      })
+    })
+  })
+}
+
+async function stopChild(child, timeoutMs = 2000) {
+  if (!child || child.exitCode !== null) return
+  child.kill('SIGTERM')
+  await Promise.race([
+    once(child, 'exit'),
+    delay(timeoutMs),
+  ])
+  if (child.exitCode === null) {
+    child.kill('SIGKILL')
+  }
+}
+
 test('agent management routes drive registry-backed trader and competition payloads', { timeout: 60000 }, async (t) => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), 'onlytrade-agent-routes-'))
   const agentsDir = path.join(rootDir, 'agents')
@@ -62,7 +92,7 @@ test('agent management routes drive registry-backed trader and competition paylo
   await writeFile(path.join(agentsDir, 't_001', 'avatar.jpg'), 'avatar-thumb', 'utf8')
   await writeFile(path.join(agentsDir, 't_001', 'avatar-hd.jpg'), 'avatar-hd', 'utf8')
 
-  const port = 18082
+  const port = await getFreePort()
   const baseUrl = `http://127.0.0.1:${port}`
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: MOCK_API_DIR,
@@ -79,7 +109,7 @@ test('agent management routes drive registry-backed trader and competition paylo
   })
 
   t.after(async () => {
-    child.kill('SIGTERM')
+    await stopChild(child)
     await rm(rootDir, { recursive: true, force: true })
   })
 

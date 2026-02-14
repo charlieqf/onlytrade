@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -23,8 +25,36 @@ async function waitForServer(baseUrl, timeoutMs = 20000) {
   throw new Error('server_start_timeout')
 }
 
+async function getFreePort() {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.unref()
+    server.on('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : null
+      server.close(() => {
+        if (typeof port === 'number') resolve(port)
+        else reject(new Error('port_unavailable'))
+      })
+    })
+  })
+}
+
+async function stopChild(child, timeoutMs = 2000) {
+  if (!child || child.exitCode !== null) return
+  child.kill('SIGTERM')
+  await Promise.race([
+    once(child, 'exit'),
+    delay(timeoutMs),
+  ])
+  if (child.exitCode === null) {
+    child.kill('SIGKILL')
+  }
+}
+
 test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t) => {
-  const port = 18081
+  const port = await getFreePort()
   const baseUrl = `http://127.0.0.1:${port}`
 
   const child = spawn(process.execPath, ['server.mjs'], {
@@ -39,8 +69,8 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
     stdio: 'ignore',
   })
 
-  t.after(() => {
-    child.kill('SIGTERM')
+  t.after(async () => {
+    await stopChild(child)
   })
 
   await waitForServer(baseUrl)

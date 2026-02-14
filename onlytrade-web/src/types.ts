@@ -205,6 +205,32 @@ export interface RoomStreamPacket {
   }
 }
 
+export interface DecisionAuditRecord {
+  schema_version: string
+  trader_id?: string
+  day_key?: string
+  saved_ts_ms?: number
+  timestamp?: string
+  cycle_number?: number
+  symbol?: string | null
+  action?: string | null
+  decision_source?: string | null
+  forced_hold?: boolean
+  data_readiness?: any
+  session_gate?: any
+  market_overview?: any
+  news_digest?: any
+  live_files?: any
+  [key: string]: any
+}
+
+export interface DecisionAuditListPayload {
+  trader_id: string
+  day_key?: string
+  count: number
+  records: DecisionAuditRecord[]
+}
+
 export interface AgentKillSwitchResult {
   action: 'activate' | 'deactivate'
   kill_switch: {

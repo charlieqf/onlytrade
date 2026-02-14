@@ -176,11 +176,48 @@ function App() {
       : null,
     () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
     {
-      refreshInterval: 5000,
+      // SSE keeps this hot; keep polling as a fallback.
+      refreshInterval: 30000,
       revalidateOnFocus: false,
       dedupingInterval: 1500,
     }
   )
+
+  // Room realtime via SSE (best-effort, falls back to polling).
+  useEffect(() => {
+    if (currentPage !== 'room' || !selectedTraderId) return
+
+    const roomId = selectedTraderId
+    const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
+    const url = `/api/rooms/${encodeURIComponent(roomId)}/events?decision_limit=${encodeURIComponent(String(limit))}`
+
+    const es = new EventSource(url)
+
+    const onStreamPacket = (evt: MessageEvent) => {
+      try {
+        const packet = JSON.parse(String(evt.data || 'null'))
+        if (!packet || typeof packet !== 'object') return
+        // Update cache without triggering a refetch.
+        mutateStreamPacket(packet as any, false)
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    const onDecision = () => {
+      // Revalidate on decision to ensure we pick up any derived fields.
+      mutateStreamPacket()
+    }
+
+    es.addEventListener('stream_packet', onStreamPacket as any)
+    es.addEventListener('decision', onDecision as any)
+
+    return () => {
+      es.removeEventListener('stream_packet', onStreamPacket as any)
+      es.removeEventListener('decision', onDecision as any)
+      es.close()
+    }
+  }, [currentPage, selectedTraderId, decisionsLimit, mutateStreamPacket])
 
   const status = streamPacket?.status
   const account = streamPacket?.account

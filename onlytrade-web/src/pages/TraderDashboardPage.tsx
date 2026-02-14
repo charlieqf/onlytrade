@@ -9,6 +9,7 @@ import { Info, MessageSquare } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import { RoomPublicChatPanel } from '../components/chat/RoomPublicChatPanel'
 import { RoomPrivateChatPanel } from '../components/chat/RoomPrivateChatPanel'
+import { AuditExplorerPanel } from '../components/AuditExplorerPanel'
 import { useUserSessionId } from '../hooks/useUserSessionId'
 import type {
     SystemStatus,
@@ -385,7 +386,10 @@ export function TraderDashboardPage({
 
     return (
         <DeepVoidBackground className="min-h-screen pb-12" disableAnimation>
-            <div className="w-full px-4 md:px-8 relative z-10 pt-6">
+            <div
+                className="w-full px-4 md:px-8 relative z-10 pt-6"
+                data-testid="trader-dashboard"
+            >
                 {/* Trader Header */}
                 <div
                     className="mb-6 rounded-lg p-6 animate-scale-in nofx-glass group"
@@ -978,6 +982,11 @@ export function TraderDashboardPage({
                                 </div>
                             </div>
                         </div>
+
+                        <AuditExplorerPanel
+                            roomId={selectedTrader.trader_id}
+                            language={language}
+                        />
 
                         <div
                             className="nofx-glass p-6 animate-slide-in h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-120px)] flex flex-col"

@@ -45,6 +45,7 @@ import type {
   ChatHistoryResult,
   ChatSessionBootstrapResult,
   RoomStreamPacket,
+  DecisionAuditListPayload,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -464,6 +465,28 @@ export const api = {
     const url = `${API_BASE}/rooms/${encodeURIComponent(safeRoomId)}/stream-packet?decision_limit=${encodeURIComponent(String(limit))}`
     const result = await httpClient.get<RoomStreamPacket>(url)
     if (!result.success || !result.data) throw new Error('获取房间聚合数据失败')
+    return result.data
+  },
+
+  async getDecisionAuditLatest(traderId: string, limit: number = 50): Promise<DecisionAuditListPayload> {
+    const safeTraderId = String(traderId || '').trim()
+    if (!safeTraderId) throw new Error('trader_id_required')
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500))
+    const url = `${API_BASE}/agents/${encodeURIComponent(safeTraderId)}/decision-audit/latest?limit=${encodeURIComponent(String(safeLimit))}`
+    const result = await httpClient.get<DecisionAuditListPayload>(url)
+    if (!result.success || !result.data) throw new Error('获取决策审计失败')
+    return result.data
+  },
+
+  async getDecisionAuditDay(traderId: string, dayKey: string, limit: number = 2000): Promise<DecisionAuditListPayload> {
+    const safeTraderId = String(traderId || '').trim()
+    const safeDayKey = String(dayKey || '').trim()
+    if (!safeTraderId) throw new Error('trader_id_required')
+    if (!safeDayKey) throw new Error('day_key_required')
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 2000, 5000))
+    const url = `${API_BASE}/agents/${encodeURIComponent(safeTraderId)}/decision-audit/day?day_key=${encodeURIComponent(safeDayKey)}&limit=${encodeURIComponent(String(safeLimit))}`
+    const result = await httpClient.get<DecisionAuditListPayload>(url)
+    if (!result.success || !result.data) throw new Error('获取决策审计失败')
     return result.data
   },
 

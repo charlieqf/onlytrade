@@ -3,6 +3,10 @@ export interface SystemConfig {
   registration_enabled?: boolean
 }
 
+export function isRegistrationEnabled(config?: SystemConfig | null): boolean {
+  return config?.registration_enabled !== false
+}
+
 let configPromise: Promise<SystemConfig> | null = null
 let cachedConfig: SystemConfig | null = null
 

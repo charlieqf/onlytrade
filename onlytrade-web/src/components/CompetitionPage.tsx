@@ -8,6 +8,11 @@ import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
 import { TraderAvatar } from './TraderAvatar'
 import { DeepVoidBackground } from './DeepVoidBackground'
+import {
+  coerceFiniteNumber,
+  formatSignedPercentDisplay,
+  isFiniteNumber,
+} from '../utils/format'
 
 export function CompetitionPage() {
   const { language } = useLanguage()
@@ -25,7 +30,10 @@ export function CompetitionPage() {
   if (!competition) {
     return (
       <DeepVoidBackground className="py-8" disableAnimation>
-        <div className="container mx-auto max-w-7xl px-4 md:px-8">
+        <div
+          className="container mx-auto max-w-7xl px-4 md:px-8"
+          data-testid="page-leaderboard"
+        >
           <div className="space-y-6">
             <div className="animate-pulse bg-black/40 border border-white/10 rounded-xl p-8 backdrop-blur-md">
               <div className="flex items-center justify-between mb-6">
@@ -53,7 +61,10 @@ export function CompetitionPage() {
   if (!competition.traders || competition.traders.length === 0) {
     return (
       <DeepVoidBackground className="py-8" disableAnimation>
-        <div className="container mx-auto max-w-7xl px-4 md:px-8 space-y-8 animate-fade-in">
+        <div
+          className="container mx-auto max-w-7xl px-4 md:px-8 space-y-8 animate-fade-in"
+          data-testid="page-leaderboard"
+        >
           {/* Competition Header - 精简版 */}
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
             <div className="flex items-center gap-3 md:gap-4">
@@ -101,7 +112,9 @@ export function CompetitionPage() {
 
   // 按收益率排序
   const sortedTraders = [...competition.traders].sort(
-    (a, b) => b.total_pnl_pct - a.total_pnl_pct
+    (a, b) =>
+      coerceFiniteNumber(b.total_pnl_pct, Number.NEGATIVE_INFINITY) -
+      coerceFiniteNumber(a.total_pnl_pct, Number.NEGATIVE_INFINITY)
   )
 
   // 找出领先者
@@ -118,7 +131,10 @@ export function CompetitionPage() {
 
   return (
     <DeepVoidBackground className="py-8" disableAnimation>
-      <div className="w-full px-4 md:px-8 space-y-8 animate-fade-in">
+      <div
+        className="w-full px-4 md:px-8 space-y-8 animate-fade-in"
+        data-testid="page-leaderboard"
+      >
         {/* Competition Header - 精简版 */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
           <div className="flex items-center gap-3 md:gap-4">
@@ -156,12 +172,12 @@ export function CompetitionPage() {
             </div>
             <div
               className="text-sm font-semibold"
+              data-testid="competition-leader-pnl-pct"
               style={{
                 color: (leader?.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D',
               }}
             >
-              {(leader?.total_pnl ?? 0) >= 0 ? '+' : ''}
-              {leader?.total_pnl_pct?.toFixed(2) || '0.00'}%
+              {formatSignedPercentDisplay(leader?.total_pnl_pct, 2, '—')}
             </div>
             <div className="text-[11px] text-zinc-400 mt-2 space-y-0.5">
               <div>
@@ -226,6 +242,8 @@ export function CompetitionPage() {
                   sortedTraders,
                   trader.trader_id
                 )
+                const totalEquity = coerceFiniteNumber(trader.total_equity, 0)
+                const totalPnl = coerceFiniteNumber(trader.total_pnl, 0)
 
                 return (
                   <div
@@ -296,7 +314,7 @@ export function CompetitionPage() {
                             className="text-xs md:text-sm font-bold mono"
                             style={{ color: '#EAECEF' }}
                           >
-                            {trader.total_equity?.toFixed(2) || '0.00'}
+                            {totalEquity.toFixed(2)}
                           </div>
                         </div>
 
@@ -309,20 +327,19 @@ export function CompetitionPage() {
                             className="text-base md:text-lg font-bold mono"
                             style={{
                               color:
-                                (trader.total_pnl ?? 0) >= 0
+                                totalPnl >= 0
                                   ? '#0ECB81'
                                   : '#F6465D',
                             }}
                           >
-                            {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}
-                            {trader.total_pnl_pct?.toFixed(2) || '0.00'}%
+                            {formatSignedPercentDisplay(trader.total_pnl_pct, 2, '—')}
                           </div>
                           <div
                             className="text-xs mono"
                             style={{ color: '#848E9C' }}
                           >
-                            {(trader.total_pnl ?? 0) >= 0 ? '+' : ''}
-                            {trader.total_pnl?.toFixed(2) || '0.00'}
+                            {totalPnl >= 0 ? '+' : ''}
+                            {totalPnl.toFixed(2)}
                           </div>
                         </div>
 
@@ -400,10 +417,8 @@ export function CompetitionPage() {
 
                 // Check if both values are valid numbers
                 const hasValidData =
-                  trader.total_pnl_pct != null &&
-                  opponent.total_pnl_pct != null &&
-                  !isNaN(trader.total_pnl_pct) &&
-                  !isNaN(opponent.total_pnl_pct)
+                  isFiniteNumber(trader.total_pnl_pct) &&
+                  isFiniteNumber(opponent.total_pnl_pct)
 
                 const gap = hasValidData
                   ? trader.total_pnl_pct - opponent.total_pnl_pct
@@ -455,10 +470,7 @@ export function CompetitionPage() {
                             (trader.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D',
                         }}
                       >
-                        {trader.total_pnl_pct != null &&
-                          !isNaN(trader.total_pnl_pct)
-                          ? `${trader.total_pnl_pct >= 0 ? '+' : ''}${trader.total_pnl_pct.toFixed(2)}%`
-                          : '—'}
+                        {formatSignedPercentDisplay(trader.total_pnl_pct, 2, '—')}
                       </div>
                       {hasValidData && isWinning && gap > 0 && (
                         <div

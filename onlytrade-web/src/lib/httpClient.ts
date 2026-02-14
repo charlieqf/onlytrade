@@ -30,8 +30,10 @@ export class HttpClient {
   private static isHandling401 = false
   private loginRequired: boolean
 
-  constructor() {
-    this.loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
+  constructor(options?: { loginRequired?: boolean }) {
+    this.loginRequired =
+      options?.loginRequired ??
+      (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
     // Create axios instance
     this.axiosInstance = axios.create({
       baseURL: '/',
@@ -129,7 +131,8 @@ export class HttpClient {
         }
 
         sessionStorage.setItem('from401', 'true')
-        window.location.href = '/login'
+        window.history.pushState({}, '', '/login')
+        window.dispatchEvent(new PopStateEvent('popstate'))
 
         // Return pending promise
         return new Promise(() => {})

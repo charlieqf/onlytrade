@@ -6,6 +6,7 @@ import { t, type Language } from '../i18n/translations'
 import { useSystemConfig } from '../hooks/useSystemConfig'
 import { OFFICIAL_LINKS } from '../constants/branding'
 import { getDemoMode, isStaticDemoMode } from '../demo/staticDemo'
+import { isRegistrationEnabled } from '../lib/config'
 
 type Page =
   | 'lobby'
@@ -44,7 +45,7 @@ export default function HeaderBar({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const userDropdownRef = useRef<HTMLDivElement>(null)
   const { config: systemConfig } = useSystemConfig()
-  const registrationEnabled = systemConfig?.registration_enabled !== false
+  const registrationEnabled = isRegistrationEnabled(systemConfig)
   const staticDemo = isStaticDemoMode()
   const demoMode = getDemoMode()
   const demoLabel = demoMode === 'mock-live' ? 'Mock Live' : 'Static'

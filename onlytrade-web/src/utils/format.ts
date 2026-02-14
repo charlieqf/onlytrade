@@ -132,4 +132,29 @@ export function formatPercent(value: number | undefined | null, decimals = 2): s
   return value.toFixed(decimals)
 }
 
-export default { formatPrice, formatQuantity, formatPercent }
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+export function coerceFiniteNumber(value: unknown, fallback = 0): number {
+  return isFiniteNumber(value) ? value : fallback
+}
+
+export function formatSignedPercentDisplay(
+  value: number | undefined | null,
+  decimals = 2,
+  missing = '—'
+): string {
+  if (!isFiniteNumber(value)) return missing
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(decimals)}%`
+}
+
+export default {
+  formatPrice,
+  formatQuantity,
+  formatPercent,
+  isFiniteNumber,
+  coerceFiniteNumber,
+  formatSignedPercentDisplay,
+}

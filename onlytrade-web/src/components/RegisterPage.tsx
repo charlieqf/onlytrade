@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
-import { getSystemConfig } from '../lib/config'
+import { getSystemConfig, isRegistrationEnabled } from '../lib/config'
 import { toast } from 'sonner'
 import { copyWithToast } from '../lib/clipboard'
 import { Eye, EyeOff } from 'lucide-react'
@@ -39,7 +39,7 @@ export function RegisterPage() {
     getSystemConfig()
       .then((config) => {
         setBetaMode(config.beta_mode || false)
-        setRegistrationEnabled(config.registration_enabled !== false)
+        setRegistrationEnabled(isRegistrationEnabled(config))
       })
       .catch((err) => {
         console.error('Failed to fetch system config:', err)
@@ -151,7 +151,7 @@ export function RegisterPage() {
   return (
     <DeepVoidBackground className="min-h-screen flex items-center justify-center py-12 font-mono" disableAnimation>
 
-      <div className="w-full max-w-lg relative z-10 px-6">
+      <div className="w-full max-w-lg relative z-10 px-6" data-testid="page-register">
         {/* Navigation - Top Bar (Mobile/Desktop Friendly) */}
         <div className="flex justify-between items-center mb-8">
           <button

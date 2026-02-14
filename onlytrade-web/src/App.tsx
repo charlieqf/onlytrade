@@ -349,6 +349,7 @@ function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
+            data-testid={`page-${currentPage}`}
           >
             {currentPage === 'lobby' ? (
               <LobbyPage />
@@ -388,7 +389,10 @@ function App() {
                   }}
                 />
               ) : (
-                <div className="px-6 py-10 text-sm text-zinc-300">
+                <div
+                  className="px-6 py-10 text-sm text-zinc-300"
+                  data-testid="room-empty-state"
+                >
                   {language === 'zh'
                     ? '未选择交易员。请从大厅进入房间。'
                     : 'No trader selected. Enter a room from the lobby.'}

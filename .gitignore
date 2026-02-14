@@ -30,6 +30,11 @@ data/chat/
 runtime-api/test/tmp-audit-store/
 runtime-api/test/tmp-live-json/
 
+# web test artifacts
+onlytrade-web/coverage/
+onlytrade-web/playwright-report/
+onlytrade-web/test-results/
+
 # local avatar source files (do not commit)
 /us1.jpg
 /us2.jpg

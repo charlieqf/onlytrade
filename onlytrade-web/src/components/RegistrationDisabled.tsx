@@ -13,6 +13,7 @@ export function RegistrationDisabled() {
     <div
       className="min-h-screen flex items-center justify-center"
       style={{ background: '#0B0E11', color: '#EAECEF' }}
+      data-testid="page-registration-disabled"
     >
       <div className="text-center max-w-md px-6">
         <img

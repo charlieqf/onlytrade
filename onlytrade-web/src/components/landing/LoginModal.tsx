@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { X } from 'lucide-react'
 import { t, Language } from '../../i18n/translations'
 import { useSystemConfig } from '../../hooks/useSystemConfig'
+import { isRegistrationEnabled } from '../../lib/config'
 
 interface LoginModalProps {
   onClose: () => void
@@ -10,7 +11,7 @@ interface LoginModalProps {
 
 export default function LoginModal({ onClose, language }: LoginModalProps) {
   const { config: systemConfig } = useSystemConfig()
-  const registrationEnabled = systemConfig?.registration_enabled !== false
+  const registrationEnabled = isRegistrationEnabled(systemConfig)
 
   return (
     <motion.div

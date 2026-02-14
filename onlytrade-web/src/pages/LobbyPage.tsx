@@ -6,6 +6,7 @@ import type { CompetitionData, CompetitionTraderData } from '../types'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import { TraderAvatar } from '../components/TraderAvatar'
 import { useLanguage } from '../contexts/LanguageContext'
+import { coerceFiniteNumber, formatSignedPercentDisplay } from '../utils/format'
 
 function getTraderSlug(trader: CompetitionTraderData) {
   const idPrefix = trader.trader_id.slice(0, 4)
@@ -35,7 +36,10 @@ export function LobbyPage() {
 
   return (
     <DeepVoidBackground className="py-10" disableAnimation>
-      <div className="w-full px-4 md:px-8 space-y-8 animate-fade-in">
+      <div
+        className="w-full px-4 md:px-8 space-y-8 animate-fade-in"
+        data-testid="page-lobby"
+      >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-8">
             <div className="bg-black/40 border border-white/10 rounded-2xl p-7 backdrop-blur-md hover:border-white/20 transition-colors">
@@ -66,6 +70,7 @@ export function LobbyPage() {
 
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <button
+                  data-testid="lobby-enter-room"
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm bg-nofx-gold text-black hover:opacity-90 transition-opacity"
                   onClick={() => {
                     if (topTraders[0]) {
@@ -81,6 +86,7 @@ export function LobbyPage() {
 
                 <button
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm border border-nofx-gold/25 bg-black/30 text-zinc-100 hover:bg-black/40 transition-colors"
+                  data-testid="lobby-go-leaderboard"
                   onClick={() => navigate('/leaderboard')}
                 >
                   <Trophy className="w-4 h-4 text-nofx-gold" />
@@ -135,7 +141,7 @@ export function LobbyPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {topTraders.map((trader, idx) => {
-              const pct = trader.total_pnl_pct ?? 0
+              const pct = coerceFiniteNumber(trader.total_pnl_pct, 0)
               const positive = pct >= 0
               const isRunning = !!trader.is_running
               return (
@@ -184,8 +190,7 @@ export function LobbyPage() {
                       className="text-sm font-bold"
                       style={{ color: positive ? '#0ECB81' : '#F6465D' }}
                     >
-                      {positive ? '+' : ''}
-                      {pct.toFixed(2)}%
+                      {formatSignedPercentDisplay(pct, 2, '+0.00%')}
                     </div>
                   </div>
                 </button>

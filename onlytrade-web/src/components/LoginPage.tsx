@@ -7,6 +7,7 @@ import { DeepVoidBackground } from './DeepVoidBackground'
 // import { Input } from './ui/input' // Removed unused import
 import { toast } from 'sonner'
 import { useSystemConfig } from '../hooks/useSystemConfig'
+import { isRegistrationEnabled } from '../lib/config'
 
 export function LoginPage() {
   const { language } = useLanguage()
@@ -24,7 +25,7 @@ export function LoginPage() {
   const [adminPassword, setAdminPassword] = useState('')
   const adminMode = false
   const { config: systemConfig } = useSystemConfig()
-  const registrationEnabled = systemConfig?.registration_enabled !== false
+  const registrationEnabled = isRegistrationEnabled(systemConfig)
   const [expiredToastId, setExpiredToastId] = useState<string | number | null>(null)
 
   // Show notification if user was redirected here due to 401

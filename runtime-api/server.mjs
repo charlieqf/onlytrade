@@ -1,5 +1,5 @@
 import express from 'express'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
@@ -32,6 +32,10 @@ import { evaluateDataReadiness } from './src/dataReadiness.mjs'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const ROOT_DIR = path.resolve(__dirname, '..')
+const DECISION_AUDIT_BASE_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.DECISION_AUDIT_BASE_DIR || path.join('data', 'audit', 'decision_audit')
+)
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) return
@@ -98,6 +102,11 @@ const AGENT_SESSION_GUARD_ENABLED = String(
 const AGENT_SESSION_GUARD_AUTO_RESUME = String(process.env.AGENT_SESSION_GUARD_AUTO_RESUME || 'true').toLowerCase() !== 'false'
 const AGENT_SESSION_GUARD_CHECK_MS = Math.max(5_000, Number(process.env.AGENT_SESSION_GUARD_CHECK_MS || 30_000))
 const AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA = String(process.env.AGENT_SESSION_GUARD_REQUIRE_FRESH_LIVE_DATA || 'true').toLowerCase() !== 'false'
+const ROOM_EVENTS_KEEPALIVE_MS = Math.max(5_000, Number(process.env.ROOM_EVENTS_KEEPALIVE_MS || 15_000))
+const ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS = Math.max(
+  2_000,
+  Number(process.env.ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS || 15_000)
+)
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -590,6 +599,54 @@ function resolveNicknameForSession(userSessionId, preferredNickname = '') {
     updated_ts_ms: Date.now(),
   })
   return fallback
+}
+
+function ensureRoomSubscriberSet(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const existing = roomEventSubscribersByRoom.get(key)
+  if (existing) return existing
+  const set = new Set()
+  roomEventSubscribersByRoom.set(key, set)
+  return set
+}
+
+function writeSseEvent(res, { event = 'message', data = null } = {}) {
+  try {
+    if (!res || res.writableEnded) return false
+    const payload = JSON.stringify(data)
+    res.write(`event: ${event}\n`)
+    res.write(`data: ${payload}\n\n`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function broadcastRoomEvent(roomId, event, data) {
+  const key = String(roomId || '').trim()
+  if (!key) return 0
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!set || set.size === 0) return 0
+
+  let sent = 0
+  for (const client of Array.from(set)) {
+    const okWrite = writeSseEvent(client?.res, { event, data })
+    if (!okWrite) {
+      try {
+        set.delete(client)
+      } catch {
+        // ignore
+      }
+      continue
+    }
+    sent += 1
+  }
+
+  if (set.size === 0) {
+    roomEventSubscribersByRoom.delete(key)
+  }
+  return sent
 }
 
 function derivedDecisionCycleMs() {
@@ -1389,6 +1446,7 @@ const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
 const lastDecisionMetaByTraderId = new Map()
+const roomEventSubscribersByRoom = new Map()
 const marketOverviewProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_OVERVIEW_PATH_CN,
   refreshMs: MARKET_OVERVIEW_REFRESH_MS,
@@ -2630,113 +2688,339 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
       text,
     })
 
+    try {
+      const msg = result?.message
+      if (msg?.visibility === 'public') {
+        broadcastRoomEvent(roomId, 'chat_public_append', {
+          schema_version: 'room.chat_public_append.v1',
+          room_id: roomId,
+          ts_ms: Date.now(),
+          message: msg,
+          agent_reply: result?.agent_reply || null,
+        })
+      }
+    } catch {
+      // ignore
+    }
+
     res.json(ok(result))
   } catch (error) {
     res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_post_failed' })
   }
 })
 
-app.get('/api/rooms/:roomId/stream-packet', async (req, res) => {
+function httpError(code, status = 400) {
+  const error = new Error(code)
+  error.code = code
+  error.status = status
+  return error
+}
+
+async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
+  const safeRoomId = String(roomId || '').trim()
+  if (!safeRoomId) {
+    throw httpError('invalid_room_id', 400)
+  }
+
+  const trader = getRegisteredTraderStrict(safeRoomId)
+  if (!trader) {
+    throw httpError('room_not_found', 404)
+  }
+
+  const limit = Math.max(1, Math.min(Number(decisionLimit || 5) || 5, 20))
+  const tsMs = Date.now()
+  const tz = getMarketSpecForExchange(trader.exchange_id).timezone
+
+  const market = getMarketSpecForExchange(trader.exchange_id).market
+  const [roomContext, overview, digest] = await Promise.all([
+    buildRoomChatContext(safeRoomId),
+    getMarketOverviewSnapshot(market),
+    getNewsDigestSnapshot(market),
+  ])
+
+  const runtimeDecisions = agentRuntime?.getLatestDecisions?.(safeRoomId, limit) || []
+  let persisted = []
   try {
-    const roomId = String(req.params.roomId || '').trim()
-    if (!roomId) {
-      res.status(400).json({ success: false, error: 'invalid_room_id' })
-      return
-    }
+    persisted = await decisionLogStore.listLatest({ traderId: safeRoomId, limit: 1, timeZone: tz })
+  } catch {
+    persisted = []
+  }
+  const latestDecision = (runtimeDecisions && runtimeDecisions[0]) || (persisted && persisted[0]) || null
 
-    const trader = getRegisteredTraderStrict(roomId)
-    if (!trader) {
-      res.status(404).json({ success: false, error: 'room_not_found' })
-      return
-    }
+  const head = latestDecision?.decisions?.[0] || null
+  const meta = lastDecisionMetaByTraderId.get(safeRoomId) || null
+  const metaMatchesDecision = meta
+    ? ((meta.decision_ts && meta.decision_ts === String(latestDecision?.timestamp || ''))
+      || (Number(meta.cycle_number || 0) > 0 && Number(meta.cycle_number || 0) === Number(latestDecision?.cycle_number || 0)))
+    : false
+  const effectiveMeta = metaMatchesDecision ? meta : null
 
-    const limit = Math.max(1, Math.min(Number(req.query.decision_limit || 5) || 5, 20))
-    const tsMs = Date.now()
-    const tz = getMarketSpecForExchange(trader.exchange_id).timezone
+  const decisionAuditPreview = latestDecision ? {
+    schema_version: 'agent.decision_audit.v1',
+    saved_ts_ms: effectiveMeta?.saved_ts_ms || null,
+    timestamp: latestDecision?.timestamp || null,
+    cycle_number: Number(latestDecision?.cycle_number || 0),
+    symbol: head?.symbol || null,
+    action: head?.action || null,
+    decision_source: latestDecision?.decision_source || null,
+    forced_hold: effectiveMeta?.forced_hold || false,
+    data_readiness: effectiveMeta?.data_readiness || null,
+    session_gate: effectiveMeta?.session_gate || null,
+    market_overview: effectiveMeta?.market_overview || null,
+    news_digest: effectiveMeta?.news_digest || null,
+  } : null
 
-    const market = getMarketSpecForExchange(trader.exchange_id).market
-    const [roomContext, overview, digest] = await Promise.all([
-      buildRoomChatContext(roomId),
-      getMarketOverviewSnapshot(market),
-      getNewsDigestSnapshot(market),
-    ])
-
-    const runtimeDecisions = agentRuntime?.getLatestDecisions?.(roomId, limit) || []
-    let persisted = []
-    try {
-      persisted = await decisionLogStore.listLatest({ traderId: roomId, limit: 1, timeZone: tz })
-    } catch {
-      persisted = []
-    }
-    const latestDecision = (runtimeDecisions && runtimeDecisions[0]) || (persisted && persisted[0]) || null
-
-    const head = latestDecision?.decisions?.[0] || null
-    const meta = lastDecisionMetaByTraderId.get(roomId) || null
-    const metaMatchesDecision = meta
-      ? ((meta.decision_ts && meta.decision_ts === String(latestDecision?.timestamp || ''))
-        || (Number(meta.cycle_number || 0) > 0 && Number(meta.cycle_number || 0) === Number(latestDecision?.cycle_number || 0)))
-      : false
-    const effectiveMeta = metaMatchesDecision ? meta : null
-    const decisionAuditPreview = latestDecision ? {
-      schema_version: 'agent.decision_audit.v1',
-      saved_ts_ms: effectiveMeta?.saved_ts_ms || null,
-      timestamp: latestDecision?.timestamp || null,
-      cycle_number: Number(latestDecision?.cycle_number || 0),
-      symbol: head?.symbol || null,
-      action: head?.action || null,
-      decision_source: latestDecision?.decision_source || null,
-      forced_hold: effectiveMeta?.forced_hold || false,
-      data_readiness: effectiveMeta?.data_readiness || null,
-      session_gate: effectiveMeta?.session_gate || null,
-      market_overview: effectiveMeta?.market_overview || null,
-      news_digest: effectiveMeta?.news_digest || null,
-    } : null
-
-    res.json(ok({
-      schema_version: 'room.stream_packet.v1',
-      room_id: roomId,
-      ts_ms: tsMs,
-      trader: {
-        trader_id: trader.trader_id,
-        trader_name: trader.trader_name,
-        exchange_id: trader.exchange_id,
-        is_running: trader.is_running === true,
-      },
-      room_context: roomContext,
+  return {
+    schema_version: 'room.stream_packet.v1',
+    room_id: safeRoomId,
+    ts_ms: tsMs,
+    trader: {
+      trader_id: trader.trader_id,
+      trader_name: trader.trader_name,
+      exchange_id: trader.exchange_id,
+      is_running: trader.is_running === true,
+    },
+    room_context: roomContext,
+    market_overview: {
+      source_kind: overview?.source_kind || null,
+      brief: overview?.brief || '',
+      status: overview?.status || null,
+    },
+    news_digest: {
+      source_kind: digest?.source_kind || null,
+      titles: Array.isArray(digest?.titles) ? digest.titles : [],
+      status: digest?.status || null,
+    },
+    status: getStatus(safeRoomId),
+    account: getAccount(safeRoomId),
+    positions: getPositions(safeRoomId),
+    decisions_latest: runtimeDecisions,
+    decision_latest: latestDecision,
+    decision_audit_preview: decisionAuditPreview,
+    decision_meta: effectiveMeta,
+    runtime: {
+      state: agentRuntime?.getState?.() || null,
+      metrics: agentRuntime?.getMetrics?.() || null,
+    },
+    files: {
       market_overview: {
-        source_kind: overview?.source_kind || null,
-        brief: overview?.brief || '',
-        status: overview?.status || null,
+        cn_a: marketOverviewProviderCn.getStatus(),
+        us: marketOverviewProviderUs.getStatus(),
       },
       news_digest: {
-        source_kind: digest?.source_kind || null,
-        titles: Array.isArray(digest?.titles) ? digest.titles : [],
-        status: digest?.status || null,
+        cn_a: newsDigestProviderCn.getStatus(),
+        us: newsDigestProviderUs.getStatus(),
       },
-      status: getStatus(roomId),
-      account: getAccount(roomId),
-      positions: getPositions(roomId),
-      decisions_latest: runtimeDecisions,
-      decision_latest: latestDecision,
-      decision_audit_preview: decisionAuditPreview,
-      decision_meta: effectiveMeta,
-      runtime: {
-        state: agentRuntime?.getState?.() || null,
-        metrics: agentRuntime?.getMetrics?.() || null,
-      },
-      files: {
-        market_overview: {
-          cn_a: marketOverviewProviderCn.getStatus(),
-          us: marketOverviewProviderUs.getStatus(),
-        },
-        news_digest: {
-          cn_a: newsDigestProviderCn.getStatus(),
-          us: newsDigestProviderUs.getStatus(),
-        },
-      },
+    },
+  }
+}
+
+function isValidDayKey(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim())
+}
+
+async function readJsonlRecords(filePath, { limit = 100, fromEnd = true } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 2000))
+  try {
+    const content = await readFile(filePath, 'utf8')
+    const lines = content.split(/\r?\n/).filter(Boolean)
+    const slice = fromEnd ? lines.slice(-safeLimit) : lines.slice(0, safeLimit)
+    const out = []
+    for (const line of slice) {
+      try {
+        const parsed = JSON.parse(line)
+        if (parsed && typeof parsed === 'object') out.push(parsed)
+      } catch {
+        // ignore malformed line
+      }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+async function listDecisionAuditLatest(traderId, { limit = 50 } = {}) {
+  const safeTraderId = String(traderId || '').trim()
+  if (!safeTraderId) return []
+
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500))
+  const traderDir = path.join(DECISION_AUDIT_BASE_DIR, safeTraderId)
+
+  let entries = []
+  try {
+    entries = await readdir(traderDir)
+  } catch {
+    return []
+  }
+
+  const files = entries
+    .filter((name) => String(name || '').endsWith('.jsonl'))
+    .sort()
+    .reverse()
+
+  const records = []
+  for (const file of files) {
+    const remaining = safeLimit - records.length
+    if (remaining <= 0) break
+    const fp = path.join(traderDir, file)
+    const chunk = await readJsonlRecords(fp, { limit: remaining, fromEnd: true })
+    records.push(...chunk)
+  }
+
+  records.sort((a, b) => Number(b?.saved_ts_ms || 0) - Number(a?.saved_ts_ms || 0))
+  return records.slice(0, safeLimit)
+}
+
+async function listDecisionAuditDay(traderId, dayKey, { limit = 2000 } = {}) {
+  const safeTraderId = String(traderId || '').trim()
+  const safeDayKey = String(dayKey || '').trim()
+  if (!safeTraderId || !isValidDayKey(safeDayKey)) return []
+  const fp = path.join(DECISION_AUDIT_BASE_DIR, safeTraderId, `${safeDayKey}.jsonl`)
+  return await readJsonlRecords(fp, { limit, fromEnd: false })
+}
+
+app.get('/api/rooms/:roomId/stream-packet', async (req, res) => {
+  try {
+    const packet = await buildRoomStreamPacket({
+      roomId: req.params.roomId,
+      decisionLimit: req.query.decision_limit,
+    })
+    res.json(ok(packet))
+  } catch (error) {
+    res
+      .status(Number.isFinite(Number(error?.status)) ? Number(error.status) : 500)
+      .json({ success: false, error: error?.code || error?.message || 'stream_packet_failed' })
+  }
+})
+
+app.get('/api/rooms/:roomId/events', async (req, res) => {
+  const roomId = String(req.params.roomId || '').trim()
+  const decisionLimit = req.query.decision_limit
+  const intervalOverride = Number(req.query.interval_ms)
+  const packetIntervalMs = Number.isFinite(intervalOverride)
+    ? Math.max(2_000, Math.min(Math.floor(intervalOverride), 60_000))
+    : ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS
+
+  try {
+    // Validate room existence early.
+    getRegisteredTraderStrict(roomId) || (() => { throw httpError('room_not_found', 404) })()
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    })
+
+    // Initial comment to open the stream.
+    res.write(': connected\n\n')
+
+    const set = ensureRoomSubscriberSet(roomId)
+    if (!set) {
+      res.end()
+      return
+    }
+
+    const client = {
+      res,
+      roomId,
+      decisionLimit,
+      connected_ts_ms: Date.now(),
+    }
+    set.add(client)
+
+    const keepaliveTimer = setInterval(() => {
+      try {
+        if (res.writableEnded) return
+        res.write(': keepalive\n\n')
+      } catch {
+        // ignore
+      }
+    }, ROOM_EVENTS_KEEPALIVE_MS)
+
+    const packetTimer = setInterval(async () => {
+      try {
+        const packet = await buildRoomStreamPacket({ roomId, decisionLimit })
+        writeSseEvent(res, { event: 'stream_packet', data: packet })
+      } catch {
+        // ignore
+      }
+    }, packetIntervalMs)
+
+    // Push an initial packet immediately.
+    try {
+      const packet = await buildRoomStreamPacket({ roomId, decisionLimit })
+      writeSseEvent(res, { event: 'stream_packet', data: packet })
+    } catch (error) {
+      writeSseEvent(res, { event: 'error', data: { error: error?.code || error?.message || 'stream_packet_failed' } })
+    }
+
+    req.on('close', () => {
+      clearInterval(keepaliveTimer)
+      clearInterval(packetTimer)
+      try {
+        set.delete(client)
+      } catch {
+        // ignore
+      }
+      if (set.size === 0) {
+        roomEventSubscribersByRoom.delete(roomId)
+      }
+    })
+  } catch (error) {
+    res
+      .status(Number.isFinite(Number(error?.status)) ? Number(error.status) : 500)
+      .json({ success: false, error: error?.code || error?.message || 'room_events_failed' })
+  }
+})
+
+app.get('/api/agents/:agentId/decision-audit/latest', async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || '').trim()
+    const trader = getRegisteredTraderStrict(agentId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'agent_not_registered' })
+      return
+    }
+
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 50) || 50, 500))
+    const records = await listDecisionAuditLatest(agentId, { limit })
+    res.json(ok({
+      trader_id: agentId,
+      count: records.length,
+      records,
     }))
   } catch (error) {
-    res.status(500).json({ success: false, error: error?.code || error?.message || 'stream_packet_failed' })
+    res.status(500).json({ success: false, error: error?.code || error?.message || 'decision_audit_latest_failed' })
+  }
+})
+
+app.get('/api/agents/:agentId/decision-audit/day', async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || '').trim()
+    const trader = getRegisteredTraderStrict(agentId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'agent_not_registered' })
+      return
+    }
+
+    const dayKey = String(req.query.day_key || '').trim()
+    if (!isValidDayKey(dayKey)) {
+      res.status(400).json({ success: false, error: 'invalid_day_key' })
+      return
+    }
+
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 2000) || 2000, 5000))
+    const records = await listDecisionAuditDay(agentId, dayKey, { limit })
+    res.json(ok({
+      trader_id: agentId,
+      day_key: dayKey,
+      count: records.length,
+      records,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.code || error?.message || 'decision_audit_day_failed' })
   }
 })
 
@@ -3414,6 +3698,18 @@ agentRuntime = createInMemoryAgentRuntime({
         session_gate: context?.session_gate || null,
         market_overview: context?.market_overview || null,
         news_digest: context?.news_digest || null,
+      })
+    } catch {
+      // ignore
+    }
+
+    try {
+      broadcastRoomEvent(trader.trader_id, 'decision', {
+        schema_version: 'room.decision_event.v1',
+        room_id: trader.trader_id,
+        ts_ms: Date.now(),
+        decision,
+        decision_meta: lastDecisionMetaByTraderId.get(trader.trader_id) || null,
       })
     } catch {
       // ignore

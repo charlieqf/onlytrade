@@ -29,6 +29,7 @@ data/chat/
 # test artifacts
 runtime-api/test/tmp-audit-store/
 runtime-api/test/tmp-live-json/
+runtime-api/test/tmp-audit-routes/
 
 # web test artifacts
 onlytrade-web/coverage/

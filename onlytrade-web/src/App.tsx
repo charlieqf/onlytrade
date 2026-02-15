@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import useSWR from 'swr'
+import useSWR, { useSWRConfig } from 'swr'
 import { api } from './lib/api'
 import { TraderDashboardPage } from './pages/TraderDashboardPage'
 import { LobbyPage } from './pages/LobbyPage'
@@ -24,6 +24,7 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeControlAction,
   ReplayRuntimeStatus,
+  ChatMessage,
   RoomStreamPacket,
 } from './types'
 
@@ -34,12 +35,34 @@ type Page =
   | 'login'
   | 'register'
 
+function mergeChatMessages(previous: ChatMessage[] | undefined, incoming: ChatMessage[]) {
+  const prev = Array.isArray(previous) ? previous : []
+  const nextItems = Array.isArray(incoming) ? incoming : []
+
+  const byId = new Map<string, ChatMessage>()
+  for (const msg of prev) {
+    if (msg && typeof msg === 'object' && typeof (msg as any).id === 'string') {
+      byId.set((msg as any).id, msg)
+    }
+  }
+  for (const msg of nextItems) {
+    if (msg && typeof msg === 'object' && typeof (msg as any).id === 'string') {
+      byId.set((msg as any).id, msg)
+    }
+  }
+
+  const out = Array.from(byId.values())
+  out.sort((a, b) => Number(a?.created_ts_ms || 0) - Number(b?.created_ts_ms || 0))
+  return out.slice(-200)
+}
+
 
 
 function App() {
   const { language, setLanguage } = useLanguage()
   const { user, logout, isLoading } = useAuth()
   const { loading: configLoading } = useSystemConfig()
+  const { mutate: mutateCache } = useSWRConfig()
   const loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
   const hasRuntimeAccess = !loginRequired || !!user
   const [route, setRoute] = useState(window.location.pathname)
@@ -209,15 +232,38 @@ function App() {
       mutateStreamPacket()
     }
 
+    const onChatPublicAppend = (evt: MessageEvent) => {
+      try {
+        const payload = JSON.parse(String(evt.data || 'null'))
+        if (!payload || typeof payload !== 'object') return
+
+        const messages: ChatMessage[] = []
+        if (payload?.message && typeof payload.message === 'object') {
+          messages.push(payload.message as any)
+        }
+        // Back-compat: older payloads may include agent_reply.
+        if (payload?.agent_reply && typeof payload.agent_reply === 'object') {
+          messages.push(payload.agent_reply as any)
+        }
+        if (messages.length === 0) return
+
+        mutateCache(['room-public-chat', roomId], (prev: any) => mergeChatMessages(prev, messages), false)
+      } catch {
+        // ignore parse errors
+      }
+    }
+
     es.addEventListener('stream_packet', onStreamPacket as any)
     es.addEventListener('decision', onDecision as any)
+    es.addEventListener('chat_public_append', onChatPublicAppend as any)
 
     return () => {
       es.removeEventListener('stream_packet', onStreamPacket as any)
       es.removeEventListener('decision', onDecision as any)
+      es.removeEventListener('chat_public_append', onChatPublicAppend as any)
       es.close()
     }
-  }, [currentPage, selectedTraderId, decisionsLimit, mutateStreamPacket])
+  }, [currentPage, selectedTraderId, decisionsLimit, mutateStreamPacket, mutateCache])
 
   const status = streamPacket?.status
   const account = streamPacket?.account

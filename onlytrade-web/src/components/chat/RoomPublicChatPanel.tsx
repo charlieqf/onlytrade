@@ -61,7 +61,7 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
     roomId ? ['room-public-chat', roomId] : null,
     () => api.getRoomPublicMessages(roomId, 50),
     {
-      refreshInterval: 2500,
+      refreshInterval: 60000,
       revalidateOnFocus: false,
     }
   )

@@ -644,6 +644,16 @@ function writeSseEvent(res, { id = null, event = 'message', data = null } = {}) 
   }
 }
 
+function writeSseComment(res, comment = 'keepalive') {
+  try {
+    if (!res || res.writableEnded) return false
+    res.write(`: ${String(comment || 'keepalive')}\n\n`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function nextRoomEventId(roomId) {
   const key = String(roomId || '').trim()
   if (!key) return null
@@ -729,6 +739,143 @@ function replayRoomEventsSince(roomId, lastEventId) {
   return buf.filter((item) => Number(item?.id || 0) > last)
 }
 
+function broadcastRoomComment(roomId, comment = 'keepalive') {
+  const key = String(roomId || '').trim()
+  if (!key) return 0
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!set || set.size === 0) return 0
+  let sent = 0
+  for (const client of Array.from(set)) {
+    const okWrite = writeSseComment(client?.res, comment)
+    if (!okWrite) {
+      try { set.delete(client) } catch { /* ignore */ }
+      continue
+    }
+    sent += 1
+  }
+  if (set.size === 0) {
+    roomEventSubscribersByRoom.delete(key)
+    markRoomEventBufferExpiring(key, Date.now())
+    clearRoomKeepaliveTimer(key)
+    clearRoomStreamPacketTimer(key)
+  }
+  return sent
+}
+
+function broadcastRoomStreamPacket(roomId, packet) {
+  const key = String(roomId || '').trim()
+  if (!key) return 0
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!set || set.size === 0) return 0
+  const id = nextRoomEventId(key)
+  let sent = 0
+  for (const client of Array.from(set)) {
+    const okWrite = writeSseEvent(client?.res, { id, event: 'stream_packet', data: packet })
+    if (!okWrite) {
+      try { set.delete(client) } catch { /* ignore */ }
+      continue
+    }
+    sent += 1
+  }
+  if (set.size === 0) {
+    roomEventSubscribersByRoom.delete(key)
+    markRoomEventBufferExpiring(key, Date.now())
+    clearRoomKeepaliveTimer(key)
+    clearRoomStreamPacketTimer(key)
+  }
+  return sent
+}
+
+function computeRoomPacketIntervalMs(roomId) {
+  const key = String(roomId || '').trim()
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!key || !set || set.size === 0) return ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS
+
+  let min = ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS
+  for (const client of Array.from(set)) {
+    const n = Number(client?.packet_interval_ms)
+    if (Number.isFinite(n) && n > 0) {
+      min = Math.min(min, n)
+    }
+  }
+  return Math.max(2_000, Math.min(Math.floor(min), 60_000))
+}
+
+function computeRoomDecisionLimitMax(roomId) {
+  const key = String(roomId || '').trim()
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!key || !set || set.size === 0) return 5
+  let max = 5
+  for (const client of Array.from(set)) {
+    const n = Number(client?.decision_limit_num)
+    if (Number.isFinite(n) && n > 0) {
+      max = Math.max(max, n)
+    }
+  }
+  return Math.max(1, Math.min(Math.floor(max), 20))
+}
+
+function clearRoomKeepaliveTimer(roomId) {
+  const key = String(roomId || '').trim()
+  const existing = roomKeepaliveTimerByRoom.get(key)
+  if (!existing) return
+  try { clearInterval(existing) } catch { /* ignore */ }
+  roomKeepaliveTimerByRoom.delete(key)
+}
+
+function clearRoomStreamPacketTimer(roomId) {
+  const key = String(roomId || '').trim()
+  const existing = roomStreamPacketTimerByRoom.get(key)
+  if (!existing) return
+  try { clearInterval(existing.timer) } catch { /* ignore */ }
+  roomStreamPacketTimerByRoom.delete(key)
+}
+
+function ensureRoomKeepaliveTimer(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!set || set.size === 0) return
+  if (roomKeepaliveTimerByRoom.get(key)) return
+
+  const timer = setInterval(() => {
+    try {
+      broadcastRoomComment(key, 'keepalive')
+    } catch {
+      // ignore
+    }
+  }, ROOM_EVENTS_KEEPALIVE_MS)
+  roomKeepaliveTimerByRoom.set(key, timer)
+}
+
+function ensureRoomStreamPacketTimer(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const set = roomEventSubscribersByRoom.get(key)
+  if (!set || set.size === 0) return
+
+  const wantedIntervalMs = computeRoomPacketIntervalMs(key)
+  const existing = roomStreamPacketTimerByRoom.get(key)
+  if (existing && existing.intervalMs === wantedIntervalMs) return
+
+  if (existing) {
+    try { clearInterval(existing.timer) } catch { /* ignore */ }
+    roomStreamPacketTimerByRoom.delete(key)
+  }
+
+  const timer = setInterval(async () => {
+    try {
+      const decisionLimit = computeRoomDecisionLimitMax(key)
+      const packet = await buildRoomStreamPacket({ roomId: key, decisionLimit })
+      broadcastRoomStreamPacket(key, packet)
+    } catch {
+      // ignore
+    }
+  }, wantedIntervalMs)
+
+  roomStreamPacketTimerByRoom.set(key, { timer, intervalMs: wantedIntervalMs })
+}
+
 function broadcastRoomEvent(roomId, event, data) {
   const key = String(roomId || '').trim()
   if (!key) return 0
@@ -758,6 +905,9 @@ function broadcastRoomEvent(roomId, event, data) {
 
   if (set.size === 0) {
     roomEventSubscribersByRoom.delete(key)
+    markRoomEventBufferExpiring(key, Date.now())
+    clearRoomKeepaliveTimer(key)
+    clearRoomStreamPacketTimer(key)
   }
   return sent
 }
@@ -1565,6 +1715,8 @@ const roomEventBufferByRoom = new Map()
 const roomEventSeqByRoom = new Map()
 const roomEventBufferExpiryByRoom = new Map()
 const roomPublicChatActivityByRoom = new Map()
+const roomKeepaliveTimerByRoom = new Map()
+const roomStreamPacketTimerByRoom = new Map()
 const proactiveEmitInFlightByRoom = new Map()
 let proactiveLlmInFlight = 0
 const proactiveViewerTickStateByRoom = new Map()
@@ -3226,6 +3378,7 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
   const packetIntervalMs = Number.isFinite(intervalOverride)
     ? Math.max(2_000, Math.min(Math.floor(intervalOverride), 60_000))
     : ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS
+  const decisionLimitNum = Math.max(1, Math.min(Number(decisionLimit || 5) || 5, 20))
 
   try {
     // Validate room existence early.
@@ -3251,11 +3404,16 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
       res,
       roomId,
       decisionLimit,
+      decision_limit_num: decisionLimitNum,
+      packet_interval_ms: packetIntervalMs,
       connected_ts_ms: Date.now(),
     }
     set.add(client)
 
     markRoomEventBufferActive(roomId)
+
+    ensureRoomKeepaliveTimer(roomId)
+    ensureRoomStreamPacketTimer(roomId)
 
     // Best-effort replay: if the browser reconnects with Last-Event-ID,
     // replay buffered broadcast events so the client can catch up.
@@ -3269,35 +3427,15 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
       // ignore
     }
 
-    const keepaliveTimer = setInterval(() => {
-      try {
-        if (res.writableEnded) return
-        res.write(': keepalive\n\n')
-      } catch {
-        // ignore
-      }
-    }, ROOM_EVENTS_KEEPALIVE_MS)
-
-    const packetTimer = setInterval(async () => {
-      try {
-        const packet = await buildRoomStreamPacket({ roomId, decisionLimit })
-        writeSseEvent(res, { event: 'stream_packet', data: packet })
-      } catch {
-        // ignore
-      }
-    }, packetIntervalMs)
-
     // Push an initial packet immediately.
     try {
-      const packet = await buildRoomStreamPacket({ roomId, decisionLimit })
-      writeSseEvent(res, { event: 'stream_packet', data: packet })
+      const packet = await buildRoomStreamPacket({ roomId, decisionLimit: decisionLimitNum })
+      writeSseEvent(res, { id: nextRoomEventId(roomId), event: 'stream_packet', data: packet })
     } catch (error) {
       writeSseEvent(res, { event: 'error', data: { error: error?.code || error?.message || 'stream_packet_failed' } })
     }
 
     req.on('close', () => {
-      clearInterval(keepaliveTimer)
-      clearInterval(packetTimer)
       try {
         set.delete(client)
       } catch {
@@ -3306,6 +3444,11 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
       if (set.size === 0) {
         roomEventSubscribersByRoom.delete(roomId)
         markRoomEventBufferExpiring(roomId, Date.now())
+        clearRoomKeepaliveTimer(roomId)
+        clearRoomStreamPacketTimer(roomId)
+      } else {
+        // Re-evaluate desired per-room packet interval when subscriber set changes.
+        ensureRoomStreamPacketTimer(roomId)
       }
     })
   } catch (error) {

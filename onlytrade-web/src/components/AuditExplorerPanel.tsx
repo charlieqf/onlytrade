@@ -40,16 +40,29 @@ async function copyToClipboard(text: string) {
 }
 
 export function AuditExplorerPanel({ roomId, language }: { roomId: string; language: Language }) {
+  const [mode, setMode] = useState<'latest' | 'day'>('latest')
   const [expandedKey, setExpandedKey] = useState<string>('')
+  const [dayKey, setDayKey] = useState<string>(() => {
+    try {
+      return new Date().toISOString().slice(0, 10)
+    } catch {
+      return ''
+    }
+  })
   const [limit, setLimit] = useState<number>(50)
   const [copiedKey, setCopiedKey] = useState<string>('')
+  const [symbolQuery, setSymbolQuery] = useState<string>('')
+  const [readinessLevel, setReadinessLevel] = useState<string>('ALL')
+  const [forcedHoldOnly, setForcedHoldOnly] = useState<boolean>(false)
 
-  const swrKey = roomId ? `audit-latest-${roomId}-${limit}` : null
+  const swrKey = roomId
+    ? `audit-${mode}-${roomId}-${mode === 'day' ? dayKey : 'latest'}-${limit}`
+    : null
   const { data, error, isLoading, mutate } = useSWR<DecisionAuditListPayload>(
     swrKey,
-    () => api.getDecisionAuditLatest(roomId, limit),
+    () => (mode === 'day' ? api.getDecisionAuditDay(roomId, dayKey, limit) : api.getDecisionAuditLatest(roomId, limit)),
     {
-      refreshInterval: 15000,
+      refreshInterval: mode === 'latest' ? 15000 : 0,
       revalidateOnFocus: false,
       dedupingInterval: 2000,
     }
@@ -58,6 +71,60 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
   const records: DecisionAuditRecord[] = useMemo(() => {
     return Array.isArray(data?.records) ? data!.records : []
   }, [data])
+
+  const filteredRecords: DecisionAuditRecord[] = useMemo(() => {
+    const q = String(symbolQuery || '').trim().toLowerCase()
+    const level = String(readinessLevel || 'ALL').toUpperCase()
+
+    return records.filter((rec) => {
+      if (forcedHoldOnly && rec?.forced_hold !== true) return false
+
+      if (level !== 'ALL') {
+        const recLevel = String(rec?.data_readiness?.level || '').toUpperCase()
+        if (recLevel !== level) return false
+      }
+
+      if (q) {
+        const sym = String(rec?.symbol || '').toLowerCase()
+        if (!sym.includes(q)) return false
+      }
+
+      return true
+    })
+  }, [records, symbolQuery, readinessLevel, forcedHoldOnly])
+
+  function downloadJsonl(items: DecisionAuditRecord[]) {
+    const rows = Array.isArray(items) ? items : []
+    const content = rows.map((rec) => {
+      try {
+        return JSON.stringify(rec)
+      } catch {
+        return ''
+      }
+    }).filter(Boolean).join('\n')
+    if (!content) return
+
+    const filename = `decision-audit-${roomId}-${mode === 'day' ? (dayKey || 'day') : 'latest'}.jsonl`
+    const blob = new Blob([`${content}\n`], { type: 'application/x-ndjson;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function jumpToDecision(rec: DecisionAuditRecord) {
+    try {
+      const cycle = Number(rec?.cycle_number || 0)
+      const ts = String(rec?.timestamp || '').trim()
+      window.dispatchEvent(new CustomEvent('jump-to-decision', { detail: { cycle_number: cycle, timestamp: ts } }))
+    } catch {
+      // ignore
+    }
+  }
 
   const copyWithToast = async (text: string, key: string) => {
     try {
@@ -86,6 +153,44 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="flex items-center rounded border border-white/10 bg-black/30 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('latest')
+                setExpandedKey('')
+                if (limit > 500) setLimit(50)
+              }}
+              className={`text-[11px] px-2 py-1 ${mode === 'latest' ? 'text-nofx-text-main bg-white/10' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+            >
+              {language === 'zh' ? '最新' : 'Latest'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('day')
+                setExpandedKey('')
+                if (limit < 2000) setLimit(2000)
+              }}
+              className={`text-[11px] px-2 py-1 ${mode === 'day' ? 'text-nofx-text-main bg-white/10' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+            >
+              {language === 'zh' ? '按日' : 'Day'}
+            </button>
+          </div>
+
+          {mode === 'day' && (
+            <input
+              type="date"
+              value={dayKey}
+              onChange={(e) => {
+                setDayKey(String(e.target.value || '').trim())
+                setExpandedKey('')
+              }}
+              className="px-2 py-1 rounded text-xs font-mono bg-black/40 text-nofx-text-main border border-white/10 hover:border-white/20 focus:outline-none"
+              title={language === 'zh' ? '日期' : 'Day key'}
+            />
+          )}
+
           <select
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
@@ -96,7 +201,20 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
             <option value={20}>20</option>
             <option value={50}>50</option>
             <option value={100}>100</option>
+            <option value={200}>200</option>
+            <option value={500}>500</option>
+            <option value={2000}>2000</option>
           </select>
+
+          <button
+            type="button"
+            onClick={() => downloadJsonl(filteredRecords)}
+            className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+            title={language === 'zh' ? '下载 JSONL' : 'Download JSONL'}
+          >
+            {language === 'zh' ? '下载' : 'Download'}
+          </button>
+
           <button
             type="button"
             onClick={() => mutate()}
@@ -104,6 +222,37 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
           >
             {language === 'zh' ? '刷新' : 'Refresh'}
           </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <input
+          value={symbolQuery}
+          onChange={(e) => setSymbolQuery(String(e.target.value || ''))}
+          placeholder={language === 'zh' ? 'symbol 包含...' : 'symbol contains...'}
+          className="px-2 py-1 rounded text-xs font-mono bg-black/40 text-nofx-text-main border border-white/10 hover:border-white/20 focus:outline-none"
+        />
+        <select
+          value={readinessLevel}
+          onChange={(e) => setReadinessLevel(String(e.target.value || 'ALL'))}
+          className="px-2 py-1 rounded text-xs font-mono bg-black/40 text-nofx-text-main border border-white/10 hover:border-white/20 focus:outline-none"
+          title={language === 'zh' ? '就绪级别' : 'Readiness'}
+        >
+          <option value="ALL">{language === 'zh' ? '就绪: 全部' : 'Readiness: ALL'}</option>
+          <option value="OK">OK</option>
+          <option value="WARN">WARN</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <label className="flex items-center gap-1 text-[11px] text-nofx-text-muted select-none">
+          <input
+            type="checkbox"
+            checked={forcedHoldOnly}
+            onChange={(e) => setForcedHoldOnly(!!e.target.checked)}
+          />
+          {language === 'zh' ? '仅 forced_hold' : 'forced_hold only'}
+        </label>
+        <div className="text-[11px] text-nofx-text-muted opacity-70">
+          {filteredRecords.length}/{records.length}
         </div>
       </div>
 
@@ -125,9 +274,15 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
         </div>
       )}
 
-      {records.length > 0 && (
+      {!isLoading && !error && records.length > 0 && filteredRecords.length === 0 && (
+        <div className="text-xs text-nofx-text-muted opacity-70">
+          {language === 'zh' ? '无匹配结果。' : 'No matches.'}
+        </div>
+      )}
+
+      {filteredRecords.length > 0 && (
         <div className="space-y-2">
-          {records.map((rec, idx) => {
+          {filteredRecords.map((rec, idx) => {
             const key = `${rec.saved_ts_ms || rec.timestamp || idx}`
             const readiness = rec.data_readiness
             const readinessLevel = String(readiness?.level || '').toUpperCase() || '--'
@@ -152,6 +307,18 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        jumpToDecision(rec)
+                      }}
+                      className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
+                      title={language === 'zh' ? '跳转到对应决策卡片' : 'Jump to decision card'}
+                    >
+                      {language === 'zh' ? '跳转' : 'Jump'}
+                    </button>
                     <span className="text-[11px] text-nofx-text-muted">
                       {expandedKey === key ? t('collapse', language) : t('expand', language)}
                     </span>

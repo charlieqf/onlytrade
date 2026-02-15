@@ -87,6 +87,46 @@ export function TraderDashboardPage({
     onNavigateToLobby,
 }: TraderDashboardPageProps) {
     const quoteCurrency = selectedTrader?.exchange_id?.toLowerCase().includes('sim-us') ? 'USD' : 'CNY'
+    const decisionsScrollRef = useRef<HTMLDivElement | null>(null)
+    const [highlightDecisionCycle, setHighlightDecisionCycle] = useState<number>(0)
+
+    useEffect(() => {
+        const handler = (evt: any) => {
+            try {
+                const detail = evt?.detail || {}
+                const cycle = Number(detail?.cycle_number || 0)
+                const timestamp = String(detail?.timestamp || '').trim()
+
+                const container = decisionsScrollRef.current
+                if (!container) return
+
+                let target: HTMLElement | null = null
+                if (Number.isFinite(cycle) && cycle > 0) {
+                    target = container.querySelector(`[data-decision-cycle="${String(cycle)}"]`)
+                }
+                if (!target && timestamp) {
+                    target = container.querySelector(`[data-decision-ts="${CSS.escape(timestamp)}"]`)
+                }
+                if (!target) return
+
+                container.scrollTop = Math.max(0, (target as any).offsetTop - 8)
+
+                if (Number.isFinite(cycle) && cycle > 0) {
+                    setHighlightDecisionCycle(cycle)
+                    window.setTimeout(() => {
+                        setHighlightDecisionCycle((prev) => (prev === cycle ? 0 : prev))
+                    }, 1800)
+                }
+            } catch {
+                // ignore
+            }
+        }
+
+        window.addEventListener('jump-to-decision', handler as any)
+        return () => {
+            window.removeEventListener('jump-to-decision', handler as any)
+        }
+    }, [])
 
     const noDecisionsHint = (() => {
         if (!selectedTrader) return null
@@ -1027,10 +1067,16 @@ export function TraderDashboardPage({
                             <div
                                 className="space-y-4 overflow-y-auto pr-2 custom-scrollbar"
                                 style={{ maxHeight: 'calc(100vh - 280px)' }}
+                                ref={decisionsScrollRef}
                             >
                                 {decisions && decisions.length > 0 ? (
                                     decisions.map((decision, i) => (
-                                        <div key={`${decision.timestamp}-${i}`} className="flex items-start gap-3">
+                                        <div
+                                            key={`${decision.timestamp}-${i}`}
+                                            data-decision-cycle={decision.cycle_number}
+                                            data-decision-ts={decision.timestamp}
+                                            className={`flex items-start gap-3 ${Number(decision.cycle_number || 0) === highlightDecisionCycle ? 'rounded-lg ring-1 ring-nofx-gold/40 bg-white/5 p-1' : ''}`}
+                                        >
                                             <div className="pt-1 shrink-0">
                                                 <TraderAvatar
                                                     traderId={selectedTrader.trader_id}

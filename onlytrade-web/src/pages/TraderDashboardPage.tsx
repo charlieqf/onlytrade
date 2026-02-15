@@ -20,6 +20,14 @@ import type {
     RoomStreamPacket,
 } from '../types'
 
+type RoomSseStatus = 'connecting' | 'connected' | 'reconnecting' | 'error'
+type RoomSseState = {
+    status: RoomSseStatus
+    last_open_ts_ms: number | null
+    last_error_ts_ms: number | null
+    last_event_ts_ms: number | null
+}
+
 // --- Helper Functions ---
 
 // 获取友好的AI模型名称
@@ -63,6 +71,7 @@ interface TraderDashboardPageProps {
     positions?: Position[]
     decisions?: DecisionRecord[]
     streamPacket?: RoomStreamPacket
+    roomSseState?: RoomSseState
     decisionsLimit: number
     onDecisionsLimitChange: (limit: number) => void
     lastUpdate: string
@@ -76,6 +85,7 @@ export function TraderDashboardPage({
     positions,
     decisions,
     streamPacket,
+    roomSseState,
     decisionsLimit,
     onDecisionsLimitChange,
     lastUpdate,
@@ -789,12 +799,13 @@ export function TraderDashboardPage({
                             {!chatSessionLoading && !chatSessionError && userSessionId && userNickname && (
                                 <>
                                     {chatTab === 'public' ? (
-                                        <RoomPublicChatPanel
-                                            roomId={selectedTrader.trader_id}
-                                            roomAgentName={selectedTrader.trader_name}
-                                            userSessionId={userSessionId}
-                                            userNickname={userNickname}
-                                        />
+                                         <RoomPublicChatPanel
+                                             roomId={selectedTrader.trader_id}
+                                             roomAgentName={selectedTrader.trader_name}
+                                             userSessionId={userSessionId}
+                                             userNickname={userNickname}
+                                             roomSseState={roomSseState}
+                                         />
                                     ) : (
                                         <RoomPrivateChatPanel
                                             roomId={selectedTrader.trader_id}

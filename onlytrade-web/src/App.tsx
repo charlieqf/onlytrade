@@ -35,6 +35,14 @@ type Page =
   | 'login'
   | 'register'
 
+type RoomSseStatus = 'connecting' | 'connected' | 'reconnecting' | 'error'
+type RoomSseState = {
+  status: RoomSseStatus
+  last_open_ts_ms: number | null
+  last_error_ts_ms: number | null
+  last_event_ts_ms: number | null
+}
+
 function mergeChatMessages(previous: ChatMessage[] | undefined, incoming: ChatMessage[]) {
   const prev = Array.isArray(previous) ? previous : []
   const nextItems = Array.isArray(incoming) ? incoming : []
@@ -66,6 +74,12 @@ function App() {
   const loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
   const hasRuntimeAccess = !loginRequired || !!user
   const [route, setRoute] = useState(window.location.pathname)
+  const [roomSseState, setRoomSseState] = useState<RoomSseState>({
+    status: 'connecting',
+    last_open_ts_ms: null,
+    last_error_ts_ms: null,
+    last_event_ts_ms: null,
+  })
 
   // Resolve page from current path.
   const getInitialPage = (): Page => {
@@ -214,12 +228,55 @@ function App() {
     const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
     const url = `/api/rooms/${encodeURIComponent(roomId)}/events?decision_limit=${encodeURIComponent(String(limit))}`
 
+    setRoomSseState({
+      status: 'connecting',
+      last_open_ts_ms: null,
+      last_error_ts_ms: null,
+      last_event_ts_ms: null,
+    })
+
     const es = new EventSource(url)
+
+    const markEvent = () => {
+      const now = Date.now()
+      setRoomSseState((prev) => ({
+        ...prev,
+        last_event_ts_ms: now,
+      }))
+    }
+
+    es.onopen = () => {
+      const now = Date.now()
+      setRoomSseState((prev) => ({
+        ...prev,
+        status: 'connected',
+        last_open_ts_ms: now,
+      }))
+    }
+
+    es.onerror = () => {
+      const now = Date.now()
+      setRoomSseState((prev) => {
+        const nextStatus: RoomSseStatus = es.readyState === 2
+          ? 'error'
+          : (prev.status === 'connecting' ? 'connecting' : 'reconnecting')
+        return {
+          ...prev,
+          status: nextStatus,
+          last_error_ts_ms: now,
+        }
+      })
+    }
 
     const onStreamPacket = (evt: MessageEvent) => {
       try {
         const packet = JSON.parse(String(evt.data || 'null'))
         if (!packet || typeof packet !== 'object') return
+        markEvent()
+
+        if (Array.isArray((packet as any).decisions_latest)) {
+          ;(packet as any).decisions_latest = (packet as any).decisions_latest.slice(0, limit)
+        }
         // Update cache without triggering a refetch.
         mutateStreamPacket(packet as any, false)
       } catch {
@@ -229,6 +286,7 @@ function App() {
 
     const onDecision = () => {
       // Revalidate on decision to ensure we pick up any derived fields.
+      markEvent()
       mutateStreamPacket()
     }
 
@@ -236,6 +294,7 @@ function App() {
       try {
         const payload = JSON.parse(String(evt.data || 'null'))
         if (!payload || typeof payload !== 'object') return
+        markEvent()
 
         const messages: ChatMessage[] = []
         if (payload?.message && typeof payload.message === 'object') {
@@ -262,6 +321,12 @@ function App() {
       es.removeEventListener('decision', onDecision as any)
       es.removeEventListener('chat_public_append', onChatPublicAppend as any)
       es.close()
+      setRoomSseState({
+        status: 'connecting',
+        last_open_ts_ms: null,
+        last_error_ts_ms: null,
+        last_event_ts_ms: null,
+      })
     }
   }, [currentPage, selectedTraderId, decisionsLimit, mutateStreamPacket, mutateCache])
 
@@ -447,6 +512,7 @@ function App() {
                   positions={positions}
                   decisions={decisions}
                   streamPacket={streamPacket}
+                  roomSseState={roomSseState}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
                   lastUpdate={lastUpdate}

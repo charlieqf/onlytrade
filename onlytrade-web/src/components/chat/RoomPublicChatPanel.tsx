@@ -8,6 +8,10 @@ interface RoomPublicChatPanelProps {
   roomAgentName: string
   userSessionId: string
   userNickname: string
+  roomSseState?: {
+    status: 'connecting' | 'connected' | 'reconnecting' | 'error'
+    last_event_ts_ms: number | null
+  }
 }
 
 function normalizeAgentHandle(agentName: string) {
@@ -51,7 +55,7 @@ function senderLabel(message: ChatMessage) {
   return message.sender_type === 'agent' ? 'Agent' : 'You'
 }
 
-export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, userNickname }: RoomPublicChatPanelProps) {
+export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, userNickname, roomSseState }: RoomPublicChatPanelProps) {
   const [text, setText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -160,11 +164,28 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
     }
   }
 
+  const sseStatus = roomSseState?.status || 'connecting'
+  const sseClass = sseStatus === 'connected'
+    ? 'text-[11px] font-mono text-nofx-green'
+    : sseStatus === 'reconnecting'
+      ? 'text-[11px] font-mono text-nofx-gold'
+      : sseStatus === 'error'
+        ? 'text-[11px] font-mono text-nofx-red'
+        : 'text-[11px] font-mono text-nofx-text-muted'
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wide text-nofx-text-muted">Public</span>
-        <span className="text-[11px] text-nofx-text-muted">{messages.length} messages</span>
+        <div className="flex items-center gap-2">
+          <span className={sseClass}>SSE: {sseStatus}</span>
+          {roomSseState?.last_event_ts_ms && (
+            <span className="text-[11px] font-mono text-nofx-text-muted">
+              last {formatMessageTime(roomSseState.last_event_ts_ms)}
+            </span>
+          )}
+          <span className="text-[11px] text-nofx-text-muted">{messages.length} messages</span>
+        </div>
       </div>
 
       <div ref={scrollContainerRef} className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2">

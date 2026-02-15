@@ -11,6 +11,7 @@ import { isRegistrationEnabled } from '../lib/config'
 type Page =
   | 'lobby'
   | 'room'
+  | 'stream'
   | 'leaderboard'
   | 'login'
   | 'register'

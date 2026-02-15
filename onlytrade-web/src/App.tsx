@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
 import { api } from './lib/api'
 import { TraderDashboardPage } from './pages/TraderDashboardPage'
+import { StreamingRoomPage } from './pages/StreamingRoomPage'
 import { LobbyPage } from './pages/LobbyPage'
 import { LoginPage } from './components/LoginPage'
 import { RegisterPage } from './components/RegisterPage'
@@ -31,6 +32,7 @@ import type {
 type Page =
   | 'lobby'
   | 'room'
+  | 'stream'
   | 'leaderboard'
   | 'login'
   | 'register'
@@ -88,6 +90,7 @@ function App() {
     if (path === '/' || path === '' || path === '/lobby') return 'lobby'
     if (path === '/leaderboard' || path === '/competition') return 'leaderboard'
     if (path === '/room' || path === '/dashboard') return 'room'
+    if (path === '/stream' || path === '/streaming-room') return 'stream'
     return 'lobby'
   }
 
@@ -105,6 +108,7 @@ function App() {
     const pathMap: Record<Page, string> = {
       'lobby': '/lobby',
       'room': '/room',
+      'stream': '/stream',
       'leaderboard': '/leaderboard',
       'login': '/login',
       'register': '/register',
@@ -166,6 +170,11 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/stream' || path === '/streaming-room') {
+        setCurrentPage('stream')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       }
       setRoute(path)
     }
@@ -208,7 +217,7 @@ function App() {
 
   // Room atomic stream packet (status/account/positions/decisions/context)
   const { data: streamPacket, mutate: mutateStreamPacket } = useSWR<RoomStreamPacket>(
-    currentPage === 'room' && selectedTraderId
+    (currentPage === 'room' || currentPage === 'stream') && selectedTraderId
       ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
       : null,
     () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
@@ -222,7 +231,7 @@ function App() {
 
   // Room realtime via SSE (best-effort, falls back to polling).
   useEffect(() => {
-    if (currentPage !== 'room' || !selectedTraderId) return
+    if ((currentPage !== 'room' && currentPage !== 'stream') || !selectedTraderId) return
 
     const roomId = selectedTraderId
     const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
@@ -545,6 +554,24 @@ function App() {
                   {language === 'zh'
                     ? '未选择交易员。请从大厅进入房间。'
                     : 'No trader selected. Enter a room from the lobby.'}
+                </div>
+              )
+            ) : currentPage === 'stream' ? (
+              selectedTrader ? (
+                <StreamingRoomPage
+                  selectedTrader={selectedTrader}
+                  streamPacket={streamPacket}
+                  roomSseState={roomSseState}
+                  language={language}
+                />
+              ) : (
+                <div
+                  className="px-6 py-10 text-sm text-zinc-300"
+                  data-testid="stream-empty-state"
+                >
+                  {language === 'zh'
+                    ? '未选择交易员。请在 URL 中添加 ?trader=... 或先从大厅进入。'
+                    : 'No trader selected. Add ?trader=... in URL or open from lobby first.'}
                 </div>
               )
             ) : (

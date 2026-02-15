@@ -1,6 +1,7 @@
 import { nyIsRegularSessionOpen } from './common.mjs'
 import { runCycle } from './run_cycle.mjs'
 import { parseSymbolList } from './common.mjs'
+import { pathToFileURL } from 'node:url'
 
 function parseArgs(argv) {
   const out = {}
@@ -50,7 +51,9 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ ok: true, status: 'ran', ...summary })}\n`)
 }
 
-main().catch((err) => {
-  process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
-  process.exitCode = 1
-})
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
+    process.exitCode = 1
+  })
+}

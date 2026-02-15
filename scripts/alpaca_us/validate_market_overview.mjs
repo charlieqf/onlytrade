@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -57,7 +58,9 @@ async function main() {
   process.stdout.write(`${JSON.stringify(summary)}\n`)
 }
 
-main().catch((err) => {
-  process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
-  process.exitCode = 1
-})
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
+    process.exitCode = 1
+  })
+}

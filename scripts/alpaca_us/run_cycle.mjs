@@ -1,6 +1,7 @@
 import { fetchAlpacaBars } from './alpacaClient.mjs'
 import { alpacaBarsToFrames } from './converter.mjs'
 import { atomicWriteJson, parseSymbolList } from './common.mjs'
+import { pathToFileURL } from 'node:url'
 
 function parseArgs(argv) {
   const out = {}
@@ -110,7 +111,9 @@ async function main() {
   process.stdout.write(`${JSON.stringify({ ok: true, ...summary })}\n`)
 }
 
-main().catch((err) => {
-  process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
-  process.exitCode = 1
-})
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    process.stderr.write(`${JSON.stringify({ ok: false, error: String(err?.message || err) })}\n`)
+    process.exitCode = 1
+  })
+}

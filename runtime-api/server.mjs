@@ -25,7 +25,7 @@ import { createDecisionAuditStore } from './src/decisionAuditStore.mjs'
 import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
 import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
-import { buildNarrationAgentMessage } from './src/chat/chatAgentResponder.mjs'
+import { buildNarrationAgentMessage, buildProactiveAgentMessage } from './src/chat/chatAgentResponder.mjs'
 import { createLiveJsonFileProvider } from './src/liveJsonFileProvider.mjs'
 import { evaluateDataReadiness } from './src/dataReadiness.mjs'
 
@@ -107,6 +107,8 @@ const ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS = Math.max(
   2_000,
   Number(process.env.ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS || 15_000)
 )
+const ROOM_EVENTS_BUFFER_SIZE = Math.max(10, Math.min(2000, Number(process.env.ROOM_EVENTS_BUFFER_SIZE || 200)))
+const ROOM_EVENTS_BUFFER_TTL_MS = Math.max(2_000, Number(process.env.ROOM_EVENTS_BUFFER_TTL_MS || 60_000))
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -151,6 +153,10 @@ const CHAT_PROACTIVE_VIEWER_TICK_ROOMS_PER_INTERVAL = Math.max(
 const CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS = Math.max(
   2000,
   Number(process.env.CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS || 5000)
+)
+const CHAT_PROACTIVE_LLM_MAX_CONCURRENCY = Math.max(
+  0,
+  Math.min(10, Number(process.env.CHAT_PROACTIVE_LLM_MAX_CONCURRENCY || 2))
 )
 
 const MARKET_OVERVIEW_PATH_CN = path.resolve(
@@ -623,10 +629,13 @@ function ensureRoomSubscriberSet(roomId) {
   return set
 }
 
-function writeSseEvent(res, { event = 'message', data = null } = {}) {
+function writeSseEvent(res, { id = null, event = 'message', data = null } = {}) {
   try {
     if (!res || res.writableEnded) return false
     const payload = JSON.stringify(data)
+    if (id != null) {
+      res.write(`id: ${String(id)}\n`)
+    }
     res.write(`event: ${event}\n`)
     res.write(`data: ${payload}\n\n`)
     return true
@@ -635,15 +644,107 @@ function writeSseEvent(res, { event = 'message', data = null } = {}) {
   }
 }
 
+function nextRoomEventId(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const previous = Number(roomEventSeqByRoom.get(key) || 0)
+  const next = Number.isFinite(previous) ? previous + 1 : 1
+  roomEventSeqByRoom.set(key, next)
+  return next
+}
+
+function ensureRoomEventBuffer(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const existing = roomEventBufferByRoom.get(key)
+  if (existing) return existing
+  const buf = []
+  roomEventBufferByRoom.set(key, buf)
+  return buf
+}
+
+function cleanupRoomEventBufferIfExpired(roomId, nowMs = Date.now()) {
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const expiry = roomEventBufferExpiryByRoom.get(key)
+  if (expiry == null) return
+  const expMs = Number(expiry)
+  if (!Number.isFinite(expMs)) return
+  if (nowMs < expMs) return
+  roomEventBufferByRoom.delete(key)
+  roomEventBufferExpiryByRoom.delete(key)
+  roomEventSeqByRoom.delete(key)
+}
+
+function markRoomEventBufferActive(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return
+  cleanupRoomEventBufferIfExpired(key)
+  ensureRoomEventBuffer(key)
+  roomEventBufferExpiryByRoom.set(key, null)
+}
+
+function markRoomEventBufferExpiring(roomId, nowMs = Date.now()) {
+  const key = String(roomId || '').trim()
+  if (!key) return
+  if (!roomEventBufferByRoom.has(key)) return
+  roomEventBufferExpiryByRoom.set(key, nowMs + ROOM_EVENTS_BUFFER_TTL_MS)
+}
+
+function isRoomEventBufferActive(roomId, nowMs = Date.now()) {
+  const key = String(roomId || '').trim()
+  if (!key) return false
+  if (!roomEventBufferByRoom.has(key)) return false
+  const expiry = roomEventBufferExpiryByRoom.get(key)
+  if (expiry == null) return true
+  const expMs = Number(expiry)
+  if (!Number.isFinite(expMs)) return false
+  if (nowMs < expMs) return true
+  cleanupRoomEventBufferIfExpired(key, nowMs)
+  return false
+}
+
+function recordRoomEvent(roomId, event, data) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const id = nextRoomEventId(key)
+  if (id == null) return null
+  const buf = ensureRoomEventBuffer(key)
+  if (buf) {
+    buf.push({ id, event, data, ts_ms: Date.now() })
+    if (buf.length > ROOM_EVENTS_BUFFER_SIZE) {
+      buf.splice(0, buf.length - ROOM_EVENTS_BUFFER_SIZE)
+    }
+  }
+  return id
+}
+
+function replayRoomEventsSince(roomId, lastEventId) {
+  const key = String(roomId || '').trim()
+  const last = Number(lastEventId)
+  if (!key || !Number.isFinite(last) || last <= 0) return []
+  if (!isRoomEventBufferActive(key)) return []
+  const buf = roomEventBufferByRoom.get(key)
+  if (!buf || buf.length === 0) return []
+  return buf.filter((item) => Number(item?.id || 0) > last)
+}
+
 function broadcastRoomEvent(roomId, event, data) {
   const key = String(roomId || '').trim()
   if (!key) return 0
   const set = roomEventSubscribersByRoom.get(key)
-  if (!set || set.size === 0) return 0
+  const hasViewers = !!set && set.size > 0
+
+  // Only buffer events for rooms that have (or recently had) viewers.
+  const bufferActive = isRoomEventBufferActive(key)
+  if (!hasViewers && !bufferActive) return 0
+
+  const id = recordRoomEvent(key, event, data)
 
   let sent = 0
+  if (!hasViewers) return 0
   for (const client of Array.from(set)) {
-    const okWrite = writeSseEvent(client?.res, { event, data })
+    const okWrite = writeSseEvent(client?.res, { id, event, data })
     if (!okWrite) {
       try {
         set.delete(client)
@@ -1460,6 +1561,12 @@ const chatStore = createChatFileStore({
 })
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
+const roomEventBufferByRoom = new Map()
+const roomEventSeqByRoom = new Map()
+const roomEventBufferExpiryByRoom = new Map()
+const roomPublicChatActivityByRoom = new Map()
+const proactiveEmitInFlightByRoom = new Map()
+let proactiveLlmInFlight = 0
 const proactiveViewerTickStateByRoom = new Map()
 let proactiveViewerTickCursor = 0
 const marketOverviewProviderCn = createLiveJsonFileProvider({
@@ -1822,11 +1929,21 @@ chatService = createChatService({
   rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
   publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
   generateAgentMessageText: chatLlmResponder,
+  enableProactiveOnRead: !CHAT_PROACTIVE_VIEWER_TICK_ENABLED,
   onPublicAppend: (roomId, payload) => {
     try {
       const safeRoomId = String(roomId || '').trim()
       const msg = payload?.message
       if (!safeRoomId || !msg) return
+      try {
+        const previous = roomPublicChatActivityByRoom.get(safeRoomId) || { last_public_append_ms: 0, last_proactive_emit_ms: 0, recent_proactive_keys: [] }
+        roomPublicChatActivityByRoom.set(safeRoomId, {
+          ...previous,
+          last_public_append_ms: Number(msg?.created_ts_ms) || Date.now(),
+        })
+      } catch {
+        // ignore
+      }
       broadcastRoomEvent(safeRoomId, 'chat_public_append', {
         schema_version: 'room.chat_public_append.v1',
         room_id: safeRoomId,
@@ -1838,6 +1955,139 @@ chatService = createChatService({
     }
   },
 })
+
+function normalizeForProactiveDedupe(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[，,。.!！?？:：;；~`'"“”‘’\-_=+()\[\]{}<>\/\\]/g, '')
+    .trim()
+}
+
+function fallbackProactiveText({ roomContext, latestDecision }) {
+  const readiness = String(roomContext?.data_readiness?.level || '').toUpperCase() || ''
+  const symbolBrief = roomContext?.symbol_brief || null
+  const head = latestDecision?.decisions?.[0] || null
+  const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
+  const action = String(symbolBrief?.action || head?.action || '').trim()
+  const conf = Number.isFinite(Number(symbolBrief?.confidence ?? head?.confidence))
+    ? Number(symbolBrief?.confidence ?? head?.confidence).toFixed(2)
+    : ''
+
+  const bits = []
+  if (symbol && action) {
+    bits.push(`当前${symbol}倾向${String(action).toUpperCase()}`)
+  }
+  if (conf) {
+    bits.push(`置信度${conf}`)
+  }
+  if (readiness) {
+    bits.push(`数据就绪${readiness}`)
+  }
+  if (bits.length === 0) {
+    return '房间已连接，等待下一轮信号。'
+  }
+  return `${bits.join('，')}。`
+}
+
+async function maybeEmitProactivePublicMessageForRoom(roomId) {
+  if (!CHAT_PROACTIVE_VIEWER_TICK_ENABLED) return false
+  const safeRoomId = String(roomId || '').trim()
+  if (!safeRoomId) return false
+
+  const set = roomEventSubscribersByRoom.get(safeRoomId)
+  if (!set || set.size === 0) return false
+
+  const roomAgent = resolveRoomAgentForChat(safeRoomId)
+  if (!roomAgent || roomAgent.isRunning !== true) return false
+
+  if (proactiveEmitInFlightByRoom.get(safeRoomId) === true) return false
+  proactiveEmitInFlightByRoom.set(safeRoomId, true)
+
+  try {
+    const now = Date.now()
+    const intervalMs = Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000))
+
+    const previous = roomPublicChatActivityByRoom.get(safeRoomId) || {
+      last_public_append_ms: 0,
+      last_proactive_emit_ms: 0,
+      recent_proactive_keys: [],
+    }
+    const lastActivity = Math.max(Number(previous.last_public_append_ms || 0), Number(previous.last_proactive_emit_ms || 0))
+    if (now - lastActivity < intervalMs) return false
+
+    if (CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0 && proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
+      return false
+    }
+
+    const latest = agentRuntime?.getLatestDecisions?.(safeRoomId, 1) || []
+    const latestDecision = latest[0] || null
+    const roomContext = await buildRoomChatContext(safeRoomId)
+
+    let text = ''
+    if (chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0) {
+      proactiveLlmInFlight += 1
+      try {
+        const raw = await chatLlmResponder({
+          kind: 'proactive',
+          roomAgent,
+          roomContext,
+          latestDecision,
+          historyContext: null,
+          inboundMessage: null,
+        })
+        text = String(raw || '').trim()
+      } catch {
+        text = ''
+      } finally {
+        proactiveLlmInFlight = Math.max(0, proactiveLlmInFlight - 1)
+      }
+    }
+
+    if (!text) {
+      text = fallbackProactiveText({ roomContext, latestDecision })
+    }
+    text = String(text || '').trim()
+    if (!text) return false
+
+    const key = normalizeForProactiveDedupe(text)
+    const recentKeys = Array.isArray(previous.recent_proactive_keys) ? previous.recent_proactive_keys : []
+    if (key && recentKeys.includes(key)) {
+      roomPublicChatActivityByRoom.set(safeRoomId, {
+        ...previous,
+        last_proactive_emit_ms: now,
+      })
+      return false
+    }
+
+    const message = buildProactiveAgentMessage({
+      roomAgent,
+      roomId: safeRoomId,
+      text,
+      nowMs: now,
+      maxChars: CHAT_AGENT_MAX_CHARS,
+      maxSentences: CHAT_AGENT_MAX_SENTENCES,
+    })
+
+    await chatStore.appendPublic(safeRoomId, message)
+    roomPublicChatActivityByRoom.set(safeRoomId, {
+      last_public_append_ms: Number(message?.created_ts_ms) || now,
+      last_proactive_emit_ms: now,
+      recent_proactive_keys: key ? [...recentKeys, key].slice(-8) : recentKeys.slice(-8),
+    })
+
+    broadcastRoomEvent(safeRoomId, 'chat_public_append', {
+      schema_version: 'room.chat_public_append.v1',
+      room_id: safeRoomId,
+      ts_ms: Date.now(),
+      message,
+    })
+
+    return true
+  } finally {
+    proactiveEmitInFlightByRoom.set(safeRoomId, false)
+  }
+}
 
 function tickChatProactiveForRoomsWithViewers() {
   if (!CHAT_PROACTIVE_VIEWER_TICK_ENABLED) return
@@ -1874,9 +2124,7 @@ function tickChatProactiveForRoomsWithViewers() {
     proactiveViewerTickStateByRoom.set(roomId, now)
     processed += 1
 
-    // Trigger proactive generation via the existing chat service read path.
-    // This is best-effort and only runs when at least one viewer is connected via SSE.
-    Promise.resolve(chatService.getPublicMessages(roomId, { limit: 1, beforeTsMs: null })).catch(() => {})
+    Promise.resolve(maybeEmitProactivePublicMessageForRoom(roomId)).catch(() => {})
   }
 
   proactiveViewerTickCursor = (start + Math.max(1, advanced)) % roomIds.length
@@ -1989,6 +2237,15 @@ async function maybeEmitDecisionNarration({ trader, decision, context }) {
 
   try {
     await chatStore.appendPublic(roomId, message)
+    try {
+      const previous = roomPublicChatActivityByRoom.get(roomId) || { last_public_append_ms: 0, last_proactive_emit_ms: 0, recent_proactive_keys: [] }
+      roomPublicChatActivityByRoom.set(roomId, {
+        ...previous,
+        last_public_append_ms: Number(message?.created_ts_ms) || now,
+      })
+    } catch {
+      // ignore
+    }
     try {
       broadcastRoomEvent(roomId, 'chat_public_append', {
         schema_version: 'room.chat_public_append.v1',
@@ -2998,6 +3255,20 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
     }
     set.add(client)
 
+    markRoomEventBufferActive(roomId)
+
+    // Best-effort replay: if the browser reconnects with Last-Event-ID,
+    // replay buffered broadcast events so the client can catch up.
+    try {
+      const lastEventIdRaw = req.headers['last-event-id']
+      const missed = replayRoomEventsSince(roomId, lastEventIdRaw)
+      for (const item of missed) {
+        writeSseEvent(res, { id: item.id, event: item.event, data: item.data })
+      }
+    } catch {
+      // ignore
+    }
+
     const keepaliveTimer = setInterval(() => {
       try {
         if (res.writableEnded) return
@@ -3034,6 +3305,7 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
       }
       if (set.size === 0) {
         roomEventSubscribersByRoom.delete(roomId)
+        markRoomEventBufferExpiring(roomId, Date.now())
       }
     })
   } catch (error) {

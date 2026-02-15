@@ -177,3 +177,86 @@ test('room events SSE emits chat_public_append on public chat post', { timeout: 
   assert.equal(postRes.ok, true)
   assert.ok(text.includes('event: chat_public_append'))
 })
+
+test('room events SSE replays buffered events using Last-Event-ID', { timeout: 45000 }, async (t) => {
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      CHAT_LLM_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      ROOM_EVENTS_KEEPALIVE_MS: '5000',
+      ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS: '5000',
+      ROOM_EVENTS_BUFFER_TTL_MS: '60000',
+      CHAT_PROACTIVE_VIEWER_TICK_ENABLED: 'false',
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+  })
+
+  await waitForServer(baseUrl)
+
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_001/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(registerRes.ok, true)
+
+  const eventsRes1 = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=5000`)
+  assert.equal(eventsRes1.ok, true)
+
+  await fetch(`${baseUrl}/api/chat/rooms/t_001/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_session_id: 'usr_sess_test',
+      user_nickname: 'TestUser',
+      visibility: 'public',
+      message_type: 'public_plain',
+      text: 'first',
+    }),
+  })
+
+  const firstBlock = await readUntil(eventsRes1, (buf) => buf.includes('event: chat_public_append'), 6000)
+  const idMatch = firstBlock.match(/id:\s*(\d+)\n[\s\S]*?event: chat_public_append/)
+  assert.ok(idMatch && idMatch[1], 'expected id field before chat_public_append')
+  const firstId = Number(idMatch[1])
+  assert.ok(Number.isFinite(firstId) && firstId > 0)
+
+  await delay(150)
+
+  // Post while no SSE subscribers are connected; should be buffered for replay.
+  const postRes2 = await fetch(`${baseUrl}/api/chat/rooms/t_001/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_session_id: 'usr_sess_test',
+      user_nickname: 'TestUser',
+      visibility: 'public',
+      message_type: 'public_plain',
+      text: 'second',
+    }),
+  })
+  assert.equal(postRes2.ok, true)
+
+  const eventsRes2 = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=5000`, {
+    headers: {
+      'Last-Event-ID': String(firstId),
+    },
+  })
+  assert.equal(eventsRes2.ok, true)
+
+  const replayText = await readUntil(eventsRes2, (buf) => buf.includes('event: chat_public_append') && buf.includes('second'), 6000)
+  assert.ok(replayText.includes('event: chat_public_append'))
+  assert.ok(replayText.includes('second'))
+})

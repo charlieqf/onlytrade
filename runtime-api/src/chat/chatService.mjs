@@ -150,6 +150,7 @@ export function createChatService({
   shouldAgentReply = defaultShouldAgentReply,
   generateAgentMessageText = null,
   onPublicAppend = null,
+  enableProactiveOnRead = true,
 } = {}) {
   if (!store) {
     throw new Error('chat_store_required')
@@ -406,7 +407,7 @@ export function createChatService({
     }
 
     const roomAgent = ensureRoomAgent(safeRoomId)
-    if (beforeTsMs == null) {
+    if (enableProactiveOnRead && beforeTsMs == null) {
       await maybeEmitProactivePublicMessage(safeRoomId, roomAgent)
     }
     return store.readPublic(safeRoomId, limit, beforeTsMs)

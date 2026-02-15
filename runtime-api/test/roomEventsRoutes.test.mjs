@@ -121,3 +121,59 @@ test('room events SSE streams initial packet', { timeout: 45000 }, async (t) => 
   const text = await readUntil(res, (buf) => buf.includes('event: stream_packet'))
   assert.ok(text.includes('event: stream_packet'))
 })
+
+test('room events SSE emits chat_public_append on public chat post', { timeout: 45000 }, async (t) => {
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      CHAT_LLM_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      ROOM_EVENTS_KEEPALIVE_MS: '5000',
+      ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS: '5000',
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+  })
+
+  await waitForServer(baseUrl)
+
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_001/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(registerRes.ok, true)
+
+  const eventsRes = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=5000`)
+  assert.equal(eventsRes.ok, true)
+  assert.ok(String(eventsRes.headers.get('content-type') || '').includes('text/event-stream'))
+
+  await delay(100)
+
+  const postPromise = fetch(`${baseUrl}/api/chat/rooms/t_001/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_session_id: 'usr_sess_test',
+      user_nickname: 'TestUser',
+      visibility: 'public',
+      message_type: 'public_plain',
+      text: 'hello sse',
+    }),
+  })
+
+  const text = await readUntil(eventsRes, (buf) => buf.includes('event: chat_public_append'), 6000)
+  const postRes = await postPromise
+  assert.equal(postRes.ok, true)
+  assert.ok(text.includes('event: chat_public_append'))
+})

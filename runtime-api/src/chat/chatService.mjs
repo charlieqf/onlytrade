@@ -149,6 +149,7 @@ export function createChatService({
   chatContextTimeZone = process.env.CHAT_CONTEXT_TIMEZONE || 'Asia/Shanghai',
   shouldAgentReply = defaultShouldAgentReply,
   generateAgentMessageText = null,
+  onPublicAppend = null,
 } = {}) {
   if (!store) {
     throw new Error('chat_store_required')
@@ -167,6 +168,15 @@ export function createChatService({
   const safeProactivePublicIntervalMs = Math.max(10_000, Number(proactivePublicIntervalMs) || 90_000)
   const proactiveStateByRoom = new Map()
   const proactiveInFlightByRoom = new Map()
+
+  function emitPublicAppendBestEffort(roomId, payload) {
+    if (typeof onPublicAppend !== 'function') return
+    try {
+      Promise.resolve(onPublicAppend(roomId, payload)).catch(() => {})
+    } catch {
+      // ignore
+    }
+  }
 
   async function resolveRoomContextSafe(roomId) {
     try {
@@ -279,6 +289,7 @@ export function createChatService({
       })
 
       await store.appendPublic(roomId, proactiveMessage)
+      emitPublicAppendBestEffort(roomId, { message: proactiveMessage })
       proactiveStateByRoom.set(roomId, now)
     } finally {
       proactiveInFlightByRoom.set(roomId, false)
@@ -339,6 +350,7 @@ export function createChatService({
       await store.appendPrivate(safeRoomId, safeUserSessionId, userMessage)
     } else {
       await store.appendPublic(safeRoomId, userMessage)
+      emitPublicAppendBestEffort(safeRoomId, { message: userMessage })
     }
 
     let agentReply = null
@@ -357,7 +369,11 @@ export function createChatService({
         historyContext,
         nowMs: now,
       })
-      if (generatedText) {
+
+      // Mentions/DMs are expected to get an agent response. If the LLM
+      // returns empty/errored, still emit a short fallback reply.
+      const forceReply = safeMessageType === 'public_mention_agent' || safeMessageType === 'private_agent_dm'
+      if (generatedText || forceReply) {
         const nowReply = nowMs()
         agentReply = buildAgentReply({
           roomAgent,
@@ -372,6 +388,7 @@ export function createChatService({
           await store.appendPrivate(safeRoomId, safeUserSessionId, agentReply)
         } else {
           await store.appendPublic(safeRoomId, agentReply)
+          emitPublicAppendBestEffort(safeRoomId, { message: agentReply })
         }
       }
     }

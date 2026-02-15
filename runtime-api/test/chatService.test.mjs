@@ -135,6 +135,36 @@ test('includes sender_name for user and agent messages', async () => {
   assert.equal(result.agent_reply?.sender_name, 'HS300 Momentum')
 })
 
+test('mention replies even when llm returns empty', async () => {
+  const fake = createFakeStore()
+  const svc = createChatService({
+    store: fake.store,
+    resolveRoomAgent: () => ({
+      roomId: 't_001',
+      agentId: 't_001',
+      agentHandle: 'hs300_momentum',
+      agentName: 'HS300 Momentum',
+      isRunning: true,
+    }),
+    shouldAgentReply: () => true,
+    generateAgentMessageText: async () => '',
+  })
+
+  const result = await svc.postMessage({
+    roomId: 't_001',
+    userSessionId: 'usr_sess_1',
+    userNickname: 'TraderFox',
+    visibility: 'public',
+    text: '@agent ping',
+    messageType: 'public_mention_agent',
+  })
+
+  assert.equal(Boolean(result.agent_reply), true)
+  assert.equal(result.agent_reply.sender_type, 'agent')
+  assert.equal(result.agent_reply.agent_message_kind, 'reply')
+  assert.match(result.agent_reply.text, /收到|noted|ok/i)
+})
+
 test('agent reply uses today chat history context', async () => {
   const fake = createPersistentFakeStore([
     {

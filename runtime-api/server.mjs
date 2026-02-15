@@ -140,6 +140,18 @@ const CHAT_DECISION_NARRATION_MIN_INTERVAL_MS = Math.max(
 const CHAT_LLM_ENABLED = String(process.env.CHAT_LLM_ENABLED || String(AGENT_LLM_ENABLED)).toLowerCase() !== 'false'
 const CHAT_LLM_TIMEOUT_MS = Math.max(1000, Number(process.env.CHAT_LLM_TIMEOUT_MS || AGENT_LLM_TIMEOUT_MS))
 const CHAT_LLM_MAX_OUTPUT_TOKENS = Math.max(80, Number(process.env.CHAT_LLM_MAX_OUTPUT_TOKENS || 140))
+const CHAT_PROACTIVE_VIEWER_TICK_ENABLED = String(
+  process.env.CHAT_PROACTIVE_VIEWER_TICK_ENABLED || 'true'
+).toLowerCase() !== 'false'
+const CHAT_PROACTIVE_VIEWER_TICK_MS = Math.max(1000, Number(process.env.CHAT_PROACTIVE_VIEWER_TICK_MS || 2000))
+const CHAT_PROACTIVE_VIEWER_TICK_ROOMS_PER_INTERVAL = Math.max(
+  1,
+  Math.min(10, Number(process.env.CHAT_PROACTIVE_VIEWER_TICK_ROOMS_PER_INTERVAL || 2))
+)
+const CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS = Math.max(
+  2000,
+  Number(process.env.CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS || 5000)
+)
 
 const MARKET_OVERVIEW_PATH_CN = path.resolve(
   ROOT_DIR,
@@ -1417,6 +1429,7 @@ let replayEngineTimer = null
 let liveFileFrameProviderCn = null
 let liveFileFrameProviderUs = null
 let marketSessionGateTimer = null
+let proactiveViewerTickTimer = null
 let agentRuntimeManualPause = false
 let marketSessionGateState = {
   enabled: true,
@@ -1447,6 +1460,8 @@ const chatStore = createChatFileStore({
 })
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
+const proactiveViewerTickStateByRoom = new Map()
+let proactiveViewerTickCursor = 0
 const marketOverviewProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_OVERVIEW_PATH_CN,
   refreshMs: MARKET_OVERVIEW_REFRESH_MS,
@@ -1807,7 +1822,65 @@ chatService = createChatService({
   rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
   publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
   generateAgentMessageText: chatLlmResponder,
+  onPublicAppend: (roomId, payload) => {
+    try {
+      const safeRoomId = String(roomId || '').trim()
+      const msg = payload?.message
+      if (!safeRoomId || !msg) return
+      broadcastRoomEvent(safeRoomId, 'chat_public_append', {
+        schema_version: 'room.chat_public_append.v1',
+        room_id: safeRoomId,
+        ts_ms: Date.now(),
+        message: msg,
+      })
+    } catch {
+      // ignore
+    }
+  },
 })
+
+function tickChatProactiveForRoomsWithViewers() {
+  if (!CHAT_PROACTIVE_VIEWER_TICK_ENABLED) return
+  if (!chatService) return
+
+  const roomIds = Array.from(roomEventSubscribersByRoom.keys())
+  if (roomIds.length === 0) return
+
+  // Cleanup any stale tick state for rooms that no longer have subscribers.
+  if (proactiveViewerTickStateByRoom.size > roomIds.length * 2) {
+    const active = new Set(roomIds)
+    for (const key of Array.from(proactiveViewerTickStateByRoom.keys())) {
+      if (!active.has(key)) proactiveViewerTickStateByRoom.delete(key)
+    }
+  }
+
+  const now = Date.now()
+  const start = proactiveViewerTickCursor % roomIds.length
+  let processed = 0
+  let advanced = 0
+
+  for (let i = 0; i < roomIds.length; i++) {
+    if (processed >= CHAT_PROACTIVE_VIEWER_TICK_ROOMS_PER_INTERVAL) break
+    const idx = (start + i) % roomIds.length
+    const roomId = roomIds[idx]
+    advanced = i + 1
+
+    const set = roomEventSubscribersByRoom.get(roomId)
+    if (!set || set.size === 0) continue
+
+    const lastTick = Number(proactiveViewerTickStateByRoom.get(roomId) || 0)
+    if (now - lastTick < CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS) continue
+
+    proactiveViewerTickStateByRoom.set(roomId, now)
+    processed += 1
+
+    // Trigger proactive generation via the existing chat service read path.
+    // This is best-effort and only runs when at least one viewer is connected via SSE.
+    Promise.resolve(chatService.getPublicMessages(roomId, { limit: 1, beforeTsMs: null })).catch(() => {})
+  }
+
+  proactiveViewerTickCursor = (start + Math.max(1, advanced)) % roomIds.length
+}
 
 function toPct(value, digits = 2) {
   const n = Number(value)
@@ -1916,6 +1989,16 @@ async function maybeEmitDecisionNarration({ trader, decision, context }) {
 
   try {
     await chatStore.appendPublic(roomId, message)
+    try {
+      broadcastRoomEvent(roomId, 'chat_public_append', {
+        schema_version: 'room.chat_public_append.v1',
+        room_id: roomId,
+        ts_ms: Date.now(),
+        message,
+      })
+    } catch {
+      // ignore
+    }
     chatNarrationStateByRoom.set(roomId, {
       last_emit_ms: now,
       last_decision_ts: decisionTs,
@@ -2687,21 +2770,6 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
       messageType,
       text,
     })
-
-    try {
-      const msg = result?.message
-      if (msg?.visibility === 'public') {
-        broadcastRoomEvent(roomId, 'chat_public_append', {
-          schema_version: 'room.chat_public_append.v1',
-          room_id: roomId,
-          ts_ms: Date.now(),
-          message: msg,
-          agent_reply: result?.agent_reply || null,
-        })
-      }
-    } catch {
-      // ignore
-    }
 
     res.json(ok(result))
   } catch (error) {
@@ -3753,6 +3821,16 @@ agentRuntime = createInMemoryAgentRuntime({
 agentRuntime.start()
 await refreshAgentState()
 
+if (CHAT_PROACTIVE_VIEWER_TICK_ENABLED) {
+  proactiveViewerTickTimer = setInterval(() => {
+    try {
+      tickChatProactiveForRoomsWithViewers()
+    } catch {
+      // ignore
+    }
+  }, CHAT_PROACTIVE_VIEWER_TICK_MS)
+}
+
 if (killSwitchState.active) {
   replayEngine?.pause?.()
   agentRuntime?.pause?.()
@@ -3770,6 +3848,10 @@ if (AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file') {
 
 function handleShutdown() {
   agentRuntime?.stop()
+  if (proactiveViewerTickTimer) {
+    clearInterval(proactiveViewerTickTimer)
+    proactiveViewerTickTimer = null
+  }
   if (marketSessionGateTimer) {
     clearInterval(marketSessionGateTimer)
     marketSessionGateTimer = null

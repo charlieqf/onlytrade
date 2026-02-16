@@ -17,6 +17,15 @@ type RoomSseState = {
   last_event_ts_ms: number | null
 }
 
+type DigitalPersonRenderMode = 'canvas' | 'video' | 'placeholder'
+type DigitalPersonStatus = 'offline' | 'idle' | 'speaking'
+type DigitalPersonState = {
+  render_mode: DigitalPersonRenderMode
+  status: DigitalPersonStatus
+  last_speaking_ts_ms: number | null
+  last_source: 'agent_message' | 'manual' | null
+}
+
 function formatTime(tsMs: number | null | undefined) {
   const n = Number(tsMs)
   if (!Number.isFinite(n) || n <= 0) return '--:--:--'
@@ -84,6 +93,160 @@ function safeText(value: any, maxLen = 160) {
   const text = String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
   if (!text) return ''
   return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text
+}
+
+function parseStreamingParams() {
+  const params = new URLSearchParams(window.location.search)
+  const mode = String(params.get('dp') || '').trim().toLowerCase()
+  const videoUrl = String(params.get('dp_video') || params.get('video') || '').trim()
+
+  let renderMode: DigitalPersonRenderMode = 'canvas'
+  if (mode === 'video') renderMode = 'video'
+  if (mode === 'placeholder') renderMode = 'placeholder'
+
+  return {
+    renderMode,
+    videoUrl,
+  }
+}
+
+function DigitalPersonViewport({
+  trader,
+  state,
+  videoUrl,
+  language,
+}: {
+  trader: TraderInfo
+  state: DigitalPersonState
+  videoUrl: string
+  language: Language
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const lastTsRef = useRef<number>(0)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const draw = (ts: number) => {
+      const w = canvas.clientWidth
+      const h = canvas.clientHeight
+      if (w <= 0 || h <= 0) {
+        rafRef.current = window.requestAnimationFrame(draw)
+        return
+      }
+
+      if (canvas.width !== Math.floor(w * devicePixelRatio) || canvas.height !== Math.floor(h * devicePixelRatio)) {
+        canvas.width = Math.floor(w * devicePixelRatio)
+        canvas.height = Math.floor(h * devicePixelRatio)
+      }
+
+      lastTsRef.current = ts
+      const t = ts / 1000
+
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0)
+      ctx.clearRect(0, 0, w, h)
+
+      // Background gradient.
+      const g = ctx.createLinearGradient(0, 0, w, h)
+      g.addColorStop(0, 'rgba(240,185,11,0.14)')
+      g.addColorStop(0.55, 'rgba(0,0,0,0.0)')
+      g.addColorStop(1, 'rgba(14,203,129,0.10)')
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, w, h)
+
+      // Subtle vignette.
+      const vg = ctx.createRadialGradient(w * 0.5, h * 0.45, Math.min(w, h) * 0.08, w * 0.5, h * 0.45, Math.max(w, h) * 0.6)
+      vg.addColorStop(0, 'rgba(0,0,0,0.0)')
+      vg.addColorStop(1, 'rgba(0,0,0,0.55)')
+      ctx.fillStyle = vg
+      ctx.fillRect(0, 0, w, h)
+
+      // Avatar silhouette.
+      const cx = w * 0.5
+      const cy = h * 0.52
+      const pulse = state.status === 'speaking' ? 1 + 0.03 * Math.sin(t * 10) : 1
+      const headR = Math.min(w, h) * 0.13 * pulse
+      const bodyR = Math.min(w, h) * 0.22
+
+      ctx.save()
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'
+      ctx.beginPath()
+      ctx.arc(cx, cy - headR * 1.15, headR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.ellipse(cx, cy + bodyR * 0.1, bodyR * 0.9, bodyR * 0.72, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+
+      // Speaking indicator wave.
+      if (state.status === 'speaking') {
+        ctx.save()
+        ctx.globalAlpha = 0.9
+        ctx.strokeStyle = 'rgba(240,185,11,0.85)'
+        ctx.lineWidth = 2
+        const y = cy + bodyR * 0.55
+        ctx.beginPath()
+        const amp = 6 + 3 * Math.sin(t * 8)
+        for (let x = cx - 80; x <= cx + 80; x += 8) {
+          const yy = y + Math.sin((x * 0.05) + t * 10) * amp
+          if (x === cx - 80) ctx.moveTo(x, yy)
+          else ctx.lineTo(x, yy)
+        }
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      // Frame again.
+      rafRef.current = window.requestAnimationFrame(draw)
+    }
+
+    rafRef.current = window.requestAnimationFrame(draw)
+    return () => {
+      if (rafRef.current != null) {
+        window.cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+    }
+  }, [state.status])
+
+  return (
+    <div className="absolute inset-0">
+      {/* Video render target (optional) */}
+      {state.render_mode === 'video' ? (
+        <video
+          className="absolute inset-0 w-full h-full object-cover"
+          playsInline
+          muted
+          autoPlay
+          loop
+          src={videoUrl || undefined}
+        />
+      ) : null}
+
+      {/* Canvas render target (default) */}
+      {state.render_mode === 'canvas' ? (
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      ) : null}
+
+      {/* Placeholder render target */}
+      {state.render_mode === 'placeholder' ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="rounded-2xl border border-white/10 bg-black/35 px-4 py-3">
+            <div className="text-sm font-bold text-nofx-text-main">{trader.trader_name}</div>
+            <div className="text-[11px] font-mono text-nofx-text-muted">
+              {language === 'zh' ? '数字人占位（未启用）' : 'Digital person placeholder (disabled)'}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function DecisionHero({
@@ -286,11 +449,15 @@ function DigitalPersonStage({
   mode,
   messages,
   language,
+  digitalPerson,
+  videoUrl,
 }: {
   trader: TraderInfo
   mode: ChatMode
   messages: ChatMessage[]
   language: Language
+  digitalPerson: DigitalPersonState
+  videoUrl: string
 }) {
   return (
     <div className="relative rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
@@ -305,6 +472,8 @@ function DigitalPersonStage({
       >
         <div className="aspect-[9/16] sm:aspect-[16/9]">
           <div className="absolute inset-0">
+            <DigitalPersonViewport trader={trader} state={digitalPerson} videoUrl={videoUrl} language={language} />
+
             <div className="absolute inset-0 opacity-30"
               style={{
                 backgroundImage:
@@ -331,7 +500,7 @@ function DigitalPersonStage({
                 {language === 'zh' ? '摄像头: 关闭' : 'Camera: off'}
               </div>
               <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[11px] font-mono text-nofx-text-muted">
-                {language === 'zh' ? '语音: TTS' : 'Voice: TTS'}
+                {language === 'zh' ? '数字人:' : 'Digital:'} {digitalPerson.status}
               </div>
             </div>
 
@@ -368,6 +537,14 @@ export function StreamingRoomPage({
   const [chatMode, setChatMode] = useState<ChatMode>('danmu')
   const roomId = selectedTrader.trader_id
 
+  const streamingParams = useMemo(() => parseStreamingParams(), [])
+  const [digitalPerson, setDigitalPerson] = useState<DigitalPersonState>(() => ({
+    render_mode: streamingParams.renderMode,
+    status: 'idle',
+    last_speaking_ts_ms: null,
+    last_source: null,
+  }))
+
   const { data: chatData } = useSWR(
     roomId ? ['room-public-chat', roomId] : null,
     () => api.getRoomPublicMessages(roomId, 80),
@@ -381,6 +558,46 @@ export function StreamingRoomPage({
     const rows = Array.isArray(chatData) ? chatData : []
     return [...rows].sort((a, b) => Number(a?.created_ts_ms || 0) - Number(b?.created_ts_ms || 0)).slice(-80)
   }, [chatData])
+
+  // Auto speaking detection: if a fresh agent message arrives, mark speaking for a short window.
+  useEffect(() => {
+    const lastAgent = [...publicMessages].reverse().find((m) => m?.sender_type === 'agent' && String(m?.text || '').trim())
+    const ts = Number(lastAgent?.created_ts_ms || 0)
+    if (!Number.isFinite(ts) || ts <= 0) return
+
+    setDigitalPerson((prev) => {
+      if ((prev.last_speaking_ts_ms || 0) >= ts) return prev
+      return {
+        ...prev,
+        status: 'speaking',
+        last_speaking_ts_ms: ts,
+        last_source: 'agent_message',
+      }
+    })
+
+    const timer = window.setTimeout(() => {
+      setDigitalPerson((prev) => {
+        if (prev.status !== 'speaking') return prev
+        return { ...prev, status: 'idle' }
+      })
+    }, 4200)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [publicMessages])
+
+  useEffect(() => {
+    const sseStatus = roomSseState?.status
+    if (!sseStatus) return
+    setDigitalPerson((prev) => {
+      if (sseStatus === 'error') return { ...prev, status: 'offline' }
+      if (prev.status === 'offline' && (sseStatus === 'connected' || sseStatus === 'reconnecting' || sseStatus === 'connecting')) {
+        return { ...prev, status: 'idle' }
+      }
+      return prev
+    })
+  }, [roomSseState?.status])
 
   const decision: DecisionRecord | null = useMemo(() => {
     const fromPacket = (streamPacket as any)?.decision_latest || null
@@ -500,6 +717,8 @@ export function StreamingRoomPage({
                     mode={chatMode}
                     messages={publicMessages}
                     language={language}
+                    digitalPerson={digitalPerson}
+                    videoUrl={streamingParams.videoUrl}
                   />
 
                   {/* Decision hero */}

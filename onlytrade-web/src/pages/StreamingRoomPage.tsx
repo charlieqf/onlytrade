@@ -57,33 +57,208 @@ function senderLabel(message: ChatMessage) {
   return message.sender_type === 'agent' ? 'Agent' : 'Viewer'
 }
 
+function hashString(value: string) {
+  let h = 2166136261
+  const s = String(value || '')
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function colorForSender(sender: string) {
+  const palette = [
+    '#F0B90B', // gold
+    '#0ECB81', // green
+    '#60A5FA', // blue
+    '#F97316', // orange
+    '#A78BFA', // violet
+    '#F472B6', // pink
+  ]
+  const idx = hashString(sender) % palette.length
+  return palette[idx]
+}
+
+function safeText(value: any, maxLen = 160) {
+  const text = String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
+  if (!text) return ''
+  return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text
+}
+
+function DecisionHero({
+  decision,
+  streamPacket,
+  language,
+}: {
+  decision: DecisionRecord | null
+  streamPacket?: RoomStreamPacket
+  language: Language
+}) {
+  const head = decision?.decisions?.[0] || null
+  const tone = actionTone(head?.action)
+
+  const symbol = String(head?.symbol || (streamPacket as any)?.room_context?.symbol_brief?.symbol || '--')
+  const qty = Number.isFinite(Number(head?.quantity)) ? Number(head?.quantity) : null
+  const lev = Number.isFinite(Number(head?.leverage)) ? Number(head?.leverage) : null
+  const px = Number.isFinite(Number(head?.price)) ? Number(head?.price) : null
+  const sl = Number.isFinite(Number(head?.stop_loss)) ? Number(head?.stop_loss) : null
+  const tp = Number.isFinite(Number(head?.take_profit)) ? Number(head?.take_profit) : null
+  const conf = Number.isFinite(Number(head?.confidence)) ? Number(head?.confidence) : null
+
+  const reasoningPrimary = safeText(head?.reasoning || '')
+  const steps = Array.isArray(decision?.reasoning_steps_cn) ? decision!.reasoning_steps_cn.map((s) => safeText(s, 140)).filter(Boolean) : []
+  const bullets = steps.length ? steps.slice(0, 3) : (reasoningPrimary ? [] : compactReasoning(decision).split('/').map((s) => safeText(s, 140)).filter(Boolean).slice(0, 3))
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/35 p-5 sm:p-6 shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs font-mono text-nofx-text-muted">
+            {decision ? `cycle ${decision.cycle_number} | ${decision.timestamp}` : (language === 'zh' ? '等待下一轮决策…' : 'Waiting for next decision…')}
+          </div>
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <span className={`px-3 py-1 rounded-full border text-xs font-bold tracking-wide ${tone.cls}`}>{tone.label}</span>
+            <span className="text-2xl sm:text-3xl font-black text-nofx-text-main">{symbol}</span>
+            {conf != null && (
+              <span className="text-xs font-mono text-nofx-text-muted">conf {conf.toFixed(2)}</span>
+            )}
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+              <div className="text-[10px] font-mono text-nofx-text-muted">qty</div>
+              <div className="text-sm font-bold text-nofx-text-main">{qty != null ? formatQuantity(qty) : '--'}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+              <div className="text-[10px] font-mono text-nofx-text-muted">leverage</div>
+              <div className="text-sm font-bold text-nofx-text-main">{lev != null ? `${lev}x` : '--'}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+              <div className="text-[10px] font-mono text-nofx-text-muted">price</div>
+              <div className="text-sm font-bold text-nofx-text-main">{px != null ? formatPrice(px) : '--'}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+              <div className="text-[10px] font-mono text-nofx-text-muted">risk</div>
+              <div className="text-[11px] font-mono text-nofx-text-main">
+                {sl != null ? `SL ${formatPrice(sl)}` : 'SL --'}
+                <span className="opacity-50"> · </span>
+                {tp != null ? `TP ${formatPrice(tp)}` : 'TP --'}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+            <div className="text-[10px] font-mono text-nofx-text-muted">AI reasoning</div>
+            {reasoningPrimary ? (
+              <div className="mt-1 text-sm text-nofx-text-main leading-relaxed opacity-95">{reasoningPrimary}</div>
+            ) : null}
+            {bullets.length ? (
+              <div className="mt-2 space-y-1 text-sm text-nofx-text-main">
+                {bullets.map((line, idx) => (
+                  <div key={`${idx}-${line}`} className="opacity-95">· {line}</div>
+                ))}
+              </div>
+            ) : (!reasoningPrimary ? (
+              <div className="mt-1 text-sm text-nofx-text-muted opacity-70">
+                {language === 'zh' ? '暂无解读。' : 'No reasoning yet.'}
+              </div>
+            ) : null)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
-  const [items, setItems] = useState<Array<{ id: string; text: string; top: number; createdMs: number; tone: 'agent' | 'user' }>>([])
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [items, setItems] = useState<Array<{ id: string; text: string; topPx: number; createdMs: number; color: string; speedMs: number }>>([])
   const seenRef = useRef<Set<string>>(new Set())
+  const laneNextFreeMsRef = useRef<number[]>([])
+  const perSenderLastEmitRef = useRef<Map<string, number>>(new Map())
+  const lastGlobalEmitRef = useRef<number>(0)
+
+  const computeLaneTopPx = (laneIdx: number) => {
+    const el = containerRef.current
+    const height = el?.clientHeight || 320
+    const safeTopPad = 14
+    const safeBotPad = 18
+    const usable = Math.max(120, height - safeTopPad - safeBotPad)
+    const laneCount = Math.max(6, Math.min(12, Math.floor(usable / 28)))
+    const laneH = usable / laneCount
+    const idx = Math.max(0, Math.min(laneIdx, laneCount - 1))
+    return safeTopPad + idx * laneH
+  }
+
+  const pickLane = (now: number) => {
+    const el = containerRef.current
+    const height = el?.clientHeight || 320
+    const usable = Math.max(120, height - 14 - 18)
+    const laneCount = Math.max(6, Math.min(12, Math.floor(usable / 28)))
+    const nextFree = laneNextFreeMsRef.current
+    while (nextFree.length < laneCount) nextFree.push(0)
+    if (nextFree.length > laneCount) nextFree.splice(laneCount)
+
+    let bestIdx = 0
+    let bestAt = Number(nextFree[0] || 0)
+    for (let i = 1; i < laneCount; i++) {
+      const t = Number(nextFree[i] || 0)
+      if (t <= now) return i
+      if (t < bestAt) {
+        bestAt = t
+        bestIdx = i
+      }
+    }
+    return bestIdx
+  }
 
   useEffect(() => {
+    const now = Date.now()
     const seen = seenRef.current
-    const fresh = [] as Array<{ id: string; text: string; top: number; createdMs: number; tone: 'agent' | 'user' }>
-    for (const msg of messages.slice(-12)) {
+    const perSender = perSenderLastEmitRef.current
+
+    const fresh: Array<{ id: string; text: string; topPx: number; createdMs: number; color: string; speedMs: number }> = []
+    for (const msg of messages.slice(-20)) {
+      if (fresh.length >= 3) break
       const id = String(msg?.id || '')
       if (!id || seen.has(id)) continue
       seen.add(id)
 
-      const text = String(msg?.text || '').trim()
+      const sender = senderLabel(msg)
+      const text = safeText(msg?.text || '', 120)
       if (!text) continue
 
-      const tone = msg?.sender_type === 'agent' ? 'agent' : 'user'
-      // Keep safe margins so danmu doesn't overlap key UI.
-      const top = 8 + Math.floor(Math.random() * 62)
-      fresh.push({ id, text: `${senderLabel(msg)}: ${text}`, top, createdMs: Date.now(), tone })
+      // Global and per-sender rate limits to keep danmu readable.
+      const lastGlobal = Number(lastGlobalEmitRef.current || 0)
+      if (now - lastGlobal < 260) continue
+      const lastSender = Number(perSender.get(sender) || 0)
+      if (now - lastSender < 1200) continue
+
+      const laneIdx = pickLane(now)
+      const topPx = computeLaneTopPx(laneIdx)
+
+      const full = `${sender}: ${text}`
+      const color = msg?.sender_type === 'agent' ? '#F0B90B' : colorForSender(sender)
+      const base = 8200
+      const speedMs = Math.min(12_000, Math.max(7200, base + full.length * 24))
+
+      // Reserve lane until the animation is done.
+      const nextFree = laneNextFreeMsRef.current
+      nextFree[laneIdx] = now + speedMs * 0.92
+
+      perSender.set(sender, now)
+      lastGlobalEmitRef.current = now
+      fresh.push({ id, text: full, topPx, createdMs: now, color, speedMs })
     }
+
     if (fresh.length) {
-      setItems((prev) => [...prev, ...fresh].slice(-40))
+      setItems((prev) => [...prev, ...fresh].slice(-22))
     }
   }, [messages])
 
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+    <div ref={containerRef} className="absolute inset-0 pointer-events-none overflow-hidden">
       <AnimatePresence>
         {items.map((item) => (
           <motion.div
@@ -91,14 +266,9 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
             initial={{ x: '110%', opacity: 0 }}
             animate={{ x: '-120%', opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 9.5, ease: 'linear' }}
-            style={{ top: `${item.top}%` }}
-            className={
-              `absolute left-0 whitespace-nowrap rounded-full px-3 py-1 text-sm shadow-[0_10px_35px_rgba(0,0,0,0.35)] `
-              + (item.tone === 'agent'
-                ? 'bg-black/55 border border-nofx-gold/25 text-nofx-gold'
-                : 'bg-black/45 border border-white/10 text-nofx-text-main')
-            }
+            transition={{ duration: item.speedMs / 1000, ease: 'linear' }}
+            style={{ top: item.topPx, color: item.color, borderColor: `${item.color}55` }}
+            className="absolute left-0 whitespace-nowrap rounded-full px-3 py-1 text-sm bg-black/50 border shadow-[0_12px_38px_rgba(0,0,0,0.40)]"
             onAnimationComplete={() => {
               setItems((prev) => prev.filter((x) => x.id !== item.id))
             }}
@@ -107,6 +277,79 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
           </motion.div>
         ))}
       </AnimatePresence>
+    </div>
+  )
+}
+
+function DigitalPersonStage({
+  trader,
+  mode,
+  messages,
+  language,
+}: {
+  trader: TraderInfo
+  mode: ChatMode
+  messages: ChatMessage[]
+  language: Language
+}) {
+  return (
+    <div className="relative rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
+      <div
+        className="relative"
+        style={{
+          background:
+            'radial-gradient(1200px 500px at 20% 10%, rgba(240,185,11,0.10) 0%, rgba(0,0,0,0) 55%),'
+            + 'radial-gradient(900px 420px at 85% 30%, rgba(14,203,129,0.08) 0%, rgba(0,0,0,0) 60%),'
+            + 'linear-gradient(180deg, rgba(0,0,0,0.20) 0%, rgba(0,0,0,0.55) 100%)',
+        }}
+      >
+        <div className="aspect-[9/16] sm:aspect-[16/9]">
+          <div className="absolute inset-0">
+            <div className="absolute inset-0 opacity-30"
+              style={{
+                backgroundImage:
+                  'linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px),'
+                  + 'linear-gradient(180deg, rgba(255,255,255,0.04) 1px, transparent 1px)',
+                backgroundSize: '28px 28px',
+              }}
+            />
+
+            <div className="absolute left-4 top-4 flex items-center gap-2">
+              <div className="w-9 h-9 rounded-2xl border border-white/10 bg-black/35 flex items-center justify-center">
+                <span className="text-xs font-bold text-nofx-gold">AI</span>
+              </div>
+              <div>
+                <div className="text-sm font-bold text-nofx-text-main">{trader.trader_name}</div>
+                <div className="text-[11px] font-mono text-nofx-text-muted">
+                  {language === 'zh' ? '数字人位（占位）' : 'Digital person slot (placeholder)'}
+                </div>
+              </div>
+            </div>
+
+            <div className="absolute right-4 top-4 flex flex-col gap-2">
+              <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[11px] font-mono text-nofx-text-muted">
+                {language === 'zh' ? '摄像头: 关闭' : 'Camera: off'}
+              </div>
+              <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[11px] font-mono text-nofx-text-muted">
+                {language === 'zh' ? '语音: TTS' : 'Voice: TTS'}
+              </div>
+            </div>
+
+            <div className="absolute left-4 bottom-4 right-4">
+              <div className="rounded-2xl border border-white/10 bg-black/35 px-4 py-3">
+                <div className="text-[11px] font-mono text-nofx-text-muted">stage</div>
+                <div className="mt-1 text-sm text-nofx-text-main opacity-95">
+                  {language === 'zh'
+                    ? '这里将展示数字人 / 视频画面；弹幕叠加在此区域。'
+                    : 'Digital person / video renders here; danmu overlays this region.'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {mode === 'danmu' && <DanmuOverlay messages={messages} />}
+        </div>
+      </div>
     </div>
   )
 }
@@ -145,9 +388,6 @@ export function StreamingRoomPage({
     const latest = Array.isArray((streamPacket as any)?.decisions_latest) ? (streamPacket as any).decisions_latest : []
     return latest[0] || null
   }, [streamPacket])
-
-  const head = decision?.decisions?.[0] || null
-  const tone = actionTone(head?.action)
 
   const fuel = useMemo(() => {
     const readiness = (streamPacket as any)?.room_context?.data_readiness
@@ -254,98 +494,64 @@ export function StreamingRoomPage({
 
                 {/* Main content area */}
                 <div className="relative p-4 sm:p-6">
+                  {/* Digital person / video stage */}
+                  <DigitalPersonStage
+                    trader={selectedTrader}
+                    mode={chatMode}
+                    messages={publicMessages}
+                    language={language}
+                  />
+
                   {/* Decision hero */}
-                  <div className="rounded-2xl border border-white/10 bg-black/35 p-5 sm:p-6 shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="text-xs font-mono text-nofx-text-muted">
-                          {decision ? `cycle ${decision.cycle_number} | ${decision.timestamp}` : (language === 'zh' ? '等待下一轮决策…' : 'Waiting for next decision…')}
-                        </div>
-                        <div className="mt-3 flex items-center gap-3 flex-wrap">
-                          <span className={`px-3 py-1 rounded-full border text-xs font-bold tracking-wide ${tone.cls}`}>{tone.label}</span>
-                          <span className="text-2xl sm:text-3xl font-black text-nofx-text-main">
-                            {String(head?.symbol || streamPacket?.room_context?.symbol_brief?.symbol || '--')}
-                          </span>
-                          {Number.isFinite(Number(head?.confidence)) && (
-                            <span className="text-xs font-mono text-nofx-text-muted">
-                              conf {Number(head?.confidence).toFixed(2)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-3 text-sm sm:text-base text-nofx-text-main leading-relaxed opacity-95">
-                          {compactReasoning(decision) || (language === 'zh' ? '暂无解读。' : 'No reasoning yet.')}
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 text-right">
-                        <div className="text-[11px] font-mono text-nofx-text-muted">
-                          {language === 'zh' ? '燃料' : 'FUEL'}
-                        </div>
-                        <div
-                          className={
-                            'mt-1 inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold border '
-                            + (fuel.level === 'ERROR'
-                              ? 'bg-nofx-red/15 text-nofx-red border-nofx-red/25'
-                              : fuel.level === 'WARN'
-                                ? 'bg-nofx-gold/15 text-nofx-gold border-nofx-gold/25'
-                                : 'bg-nofx-green/15 text-nofx-green border-nofx-green/25')
-                          }
-                          title={fuel.reasons.join(' / ')}
-                        >
-                          DATA:{fuel.level}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Mini bet line */}
-                    <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                        <div className="text-[10px] font-mono text-nofx-text-muted">equity</div>
-                        <div className="text-sm font-bold text-nofx-text-main">
-                          {account ? formatPrice(account.total_balance) : '--'}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                        <div className="text-[10px] font-mono text-nofx-text-muted">unreal pnl</div>
-                        <div className={`text-sm font-bold ${Number(account?.total_unrealized_profit || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
-                          {account ? formatPrice(account.total_unrealized_profit) : '--'}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                        <div className="text-[10px] font-mono text-nofx-text-muted">positions</div>
-                        <div className="text-sm font-bold text-nofx-text-main">
-                          {account ? String(account.position_count) : String(positions.length)}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                        <div className="text-[10px] font-mono text-nofx-text-muted">margin</div>
-                        <div className="text-sm font-bold text-nofx-text-main">
-                          {account ? `${Math.round(Number(account.margin_used_pct || 0) * 100)}%` : '--'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {featuredPos && (
-                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-[10px] font-mono text-nofx-text-muted">
-                              {language === 'zh' ? '当前下注 (最大波动)' : 'Featured bet (largest swing)'}
-                            </div>
-                            <div className="text-sm font-bold text-nofx-text-main truncate">
-                              {featuredPos.symbol} · {String(featuredPos.side || '').toUpperCase()} · {formatQuantity(featuredPos.quantity)}
-                            </div>
-                          </div>
-                          <div className={`text-sm font-bold ${Number(featuredPos.unrealized_pnl || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
-                            {formatPrice(featuredPos.unrealized_pnl)}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                  <div className="mt-4">
+                    <DecisionHero decision={decision} streamPacket={streamPacket} language={language} />
                   </div>
 
-                  {/* Danmu overlay */}
-                  {chatMode === 'danmu' && <DanmuOverlay messages={publicMessages} />}
+                  {/* Bet summary */}
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                      <div className="text-[10px] font-mono text-nofx-text-muted">equity</div>
+                      <div className="text-sm font-bold text-nofx-text-main">
+                        {account ? formatPrice(account.total_balance) : '--'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                      <div className="text-[10px] font-mono text-nofx-text-muted">unreal pnl</div>
+                      <div className={`text-sm font-bold ${Number(account?.total_unrealized_profit || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
+                        {account ? formatPrice(account.total_unrealized_profit) : '--'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                      <div className="text-[10px] font-mono text-nofx-text-muted">positions</div>
+                      <div className="text-sm font-bold text-nofx-text-main">
+                        {account ? String(account.position_count) : String(positions.length)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                      <div className="text-[10px] font-mono text-nofx-text-muted">margin</div>
+                      <div className="text-sm font-bold text-nofx-text-main">
+                        {account ? `${Math.round(Number(account.margin_used_pct || 0) * 100)}%` : '--'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {featuredPos && (
+                    <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-mono text-nofx-text-muted">
+                            {language === 'zh' ? '当前下注 (最大波动)' : 'Featured bet (largest swing)'}
+                          </div>
+                          <div className="text-sm font-bold text-nofx-text-main truncate">
+                            {featuredPos.symbol} · {String(featuredPos.side || '').toUpperCase()} · {formatQuantity(featuredPos.quantity)}
+                          </div>
+                        </div>
+                        <div className={`text-sm font-bold ${Number(featuredPos.unrealized_pnl || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}>
+                          {formatPrice(featuredPos.unrealized_pnl)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Fuel cards */}
                   <div className="mt-4 grid gap-3 md:grid-cols-2">

@@ -105,6 +105,7 @@ export default function HeaderBar({
               const navTabs: { page: Page; path: string; label: string; requiresAuth: boolean }[] = [
                 { page: 'lobby', path: '/lobby', label: language === 'zh' ? '大厅' : 'Lobby', requiresAuth: false },
                 { page: 'room', path: '/room', label: language === 'zh' ? '房间' : 'Room', requiresAuth: false },
+                { page: 'stream', path: '/stream', label: language === 'zh' ? '直播间' : 'Stream', requiresAuth: false },
                 { page: 'leaderboard', path: '/leaderboard', label: t('realtimeNav', language), requiresAuth: false },
               ]
 

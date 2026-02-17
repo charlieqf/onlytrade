@@ -65,7 +65,10 @@ describe('HttpClient', () => {
 
   it('on 401 with loginRequired=true: clears auth, stores returnUrl, dispatches unauthorized, redirects', async () => {
     localStorage.setItem('auth_token', 'tok_123')
-    localStorage.setItem('auth_user', JSON.stringify({ id: 'u1', email: 'e@example.com' }))
+    localStorage.setItem(
+      'auth_user',
+      JSON.stringify({ id: 'u1', email: 'e@example.com' })
+    )
 
     const unauthorizedSpy = vi.fn()
     window.addEventListener('unauthorized', unauthorizedSpy)
@@ -113,7 +116,9 @@ describe('HttpClient', () => {
       },
     }
 
-    await expect(lastResponseErrorInterceptor!(err)).rejects.toThrow('No auth required')
+    await expect(lastResponseErrorInterceptor!(err)).rejects.toThrow(
+      'No auth required'
+    )
     expect(pushStateSpy).not.toHaveBeenCalled()
 
     pushStateSpy.mockRestore()

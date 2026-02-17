@@ -132,7 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             message: data.message,
             qrCodeURL: data.qr_code_url,
             otpSecret: data.otp_secret,
-            email: data.email
+            email: data.email,
           }
         }
         // Check for OTP verification required (normal login flow)
@@ -143,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             requiresOTP: true,
             message: data.message,
             qrCodeURL: data.qr_code_url,
-            otpSecret: data.otp_secret
+            otpSecret: data.otp_secret,
           }
         }
         // Unexpected success response
@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           message: data.error,
           qrCodeURL: data.qr_code_url,
           otpSecret: data.otp_secret,
-          userID: data.user_id
+          userID: data.user_id,
         }
       }
     } catch (error) {
@@ -241,13 +241,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         message: result.message || 'Registration failed',
       }
     } catch (error) {
-      console.error('Auth register error:', error);
+      console.error('Auth register error:', error)
       // Re-throw if it's a critical error, or return structured error
       // Since httpClient throws on 500, we should return a structured error response
       // to let the UI display it gracefully without crashing.
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Detailed server error'
+        message:
+          error instanceof Error ? error.message : 'Detailed server error',
       }
     }
   }

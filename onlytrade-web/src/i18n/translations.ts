@@ -324,12 +324,14 @@ export const translations = {
     fetchBalanceEditModeOnly: 'Only can fetch current balance in edit mode',
     balanceFetched: 'Current balance fetched',
     balanceFetchFailed: 'Failed to fetch balance',
-    balanceFetchNetworkError: 'Failed to fetch balance, please check network connection',
+    balanceFetchNetworkError:
+      'Failed to fetch balance, please check network connection',
     saving: 'Saving...',
     saveSuccess: 'Saved successfully',
     saveFailed: 'Save failed',
     editTraderConfig: 'Edit Trader Configuration',
-    selectStrategyAndConfigParams: 'Select Strategy and Configure Basic Parameters',
+    selectStrategyAndConfigParams:
+      'Select Strategy and Configure Basic Parameters',
     basicConfig: 'Basic Configuration',
     traderNameRequired: 'Trader Name *',
     enterTraderNamePlaceholder: 'Enter trader name',
@@ -354,12 +356,15 @@ export const translations = {
     competitionDisplay: 'Show in Competition',
     show: 'Show',
     hide: 'Hide',
-    hiddenInCompetition: 'This trader will not be shown in the competition page when hidden',
+    hiddenInCompetition:
+      'This trader will not be shown in the competition page when hidden',
     initialBalanceLabel: 'Initial Balance ($)',
     fetching: 'Fetching...',
     fetchCurrentBalance: 'Fetch Current Balance',
-    balanceUpdateHint: 'Used to manually update the initial balance baseline (e.g., after deposit/withdrawal)',
-    autoFetchBalanceInfo: 'The system will automatically fetch your account equity as the initial balance',
+    balanceUpdateHint:
+      'Used to manually update the initial balance baseline (e.g., after deposit/withdrawal)',
+    autoFetchBalanceInfo:
+      'The system will automatically fetch your account equity as the initial balance',
     fetchingBalance: 'Fetching balance...',
     editTrader: 'Save Changes',
     createTraderButton: 'Create Trader',
@@ -1782,8 +1787,7 @@ export const translations = {
     noExchangesConfigured: '暂无已配置的交易所',
     signalSource: '信号源',
     signalSourceConfig: '信号源配置',
-    ai500Description:
-      '用于获取 AI500 数据源的 API 地址，留空则不使用此数据源',
+    ai500Description: '用于获取 AI500 数据源的 API 地址，留空则不使用此数据源',
     oiTopDescription: '用于获取持仓量排行数据的API地址，留空则不使用此信号源',
     information: '说明',
     signalSourceInfo1:

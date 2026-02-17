@@ -8,7 +8,15 @@ export type CnSessionPhase =
   | 'close_auction'
   | 'closed'
 
-export type CnBarInterval = '1m' | '5m' | '15m' | '30m' | '60m' | '1h' | '4h' | '1d'
+export type CnBarInterval =
+  | '1m'
+  | '5m'
+  | '15m'
+  | '30m'
+  | '60m'
+  | '1h'
+  | '4h'
+  | '1d'
 
 export interface MarketBarFrameV1 {
   schema_version: 'market.bar.v1'
@@ -84,6 +92,8 @@ export function barFrameToLegacyKline(frame: MarketBarFrameV1): LegacyKline {
   }
 }
 
-export function barFramesToLegacyKlines(frames: MarketBarFrameV1[]): LegacyKline[] {
+export function barFramesToLegacyKlines(
+  frames: MarketBarFrameV1[]
+): LegacyKline[] {
   return frames.map(barFrameToLegacyKline)
 }

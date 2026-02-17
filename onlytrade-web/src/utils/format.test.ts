@@ -51,7 +51,9 @@ describe('format utils', () => {
       expect(formatSignedPercentDisplay(Number.NaN)).toBe('—')
       expect(formatSignedPercentDisplay(Number.POSITIVE_INFINITY)).toBe('—')
       expect(formatSignedPercentDisplay(Number.NEGATIVE_INFINITY)).toBe('—')
-      expect(formatSignedPercentDisplay(Number.NaN, 2, 'MISSING')).toBe('MISSING')
+      expect(formatSignedPercentDisplay(Number.NaN, 2, 'MISSING')).toBe(
+        'MISSING'
+      )
     })
   })
 })

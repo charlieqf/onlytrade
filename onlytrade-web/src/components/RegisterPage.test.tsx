@@ -7,7 +7,10 @@ import { LanguageProvider } from '../contexts/LanguageContext'
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
     register: vi.fn(async () => ({ success: false, message: 'not used' })),
-    completeRegistration: vi.fn(async () => ({ success: false, message: 'not used' })),
+    completeRegistration: vi.fn(async () => ({
+      success: false,
+      message: 'not used',
+    })),
   }),
 }))
 
@@ -38,7 +41,9 @@ describe('RegisterPage', () => {
       </LanguageProvider>
     )
 
-    expect(await screen.findByTestId('page-registration-disabled')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('page-registration-disabled')
+    ).toBeInTheDocument()
   })
 
   it('renders registration form when registration is enabled', async () => {
@@ -54,6 +59,8 @@ describe('RegisterPage', () => {
     )
 
     expect(await screen.findByTestId('page-register')).toBeInTheDocument()
-    expect(screen.queryByTestId('page-registration-disabled')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('page-registration-disabled')
+    ).not.toBeInTheDocument()
   })
 })

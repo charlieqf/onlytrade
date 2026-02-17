@@ -55,11 +55,21 @@ function senderLabel(message: ChatMessage) {
   return message.sender_type === 'agent' ? 'Agent' : 'You'
 }
 
-export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, userNickname, roomSseState }: RoomPublicChatPanelProps) {
+export function RoomPublicChatPanel({
+  roomId,
+  roomAgentName,
+  userSessionId,
+  userNickname,
+  roomSseState,
+}: RoomPublicChatPanelProps) {
   const [text, setText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const [activeMention, setActiveMention] = useState<null | { start: number; query: string; cursor: number }>(null)
+  const [activeMention, setActiveMention] = useState<null | {
+    start: number
+    query: string
+    cursor: number
+  }>(null)
 
   const { data, error, isLoading, mutate } = useSWR(
     roomId ? ['room-public-chat', roomId] : null,
@@ -72,7 +82,9 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
 
   const messages = useMemo(() => {
     if (!Array.isArray(data)) return []
-    return [...data].sort((a, b) => Number(a.created_ts_ms) - Number(b.created_ts_ms))
+    return [...data].sort(
+      (a, b) => Number(a.created_ts_ms) - Number(b.created_ts_ms)
+    )
   }, [data])
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -85,7 +97,10 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
     el.scrollTop = el.scrollHeight
   }, [messages.length])
 
-  const agentHandle = useMemo(() => normalizeAgentHandle(roomAgentName), [roomAgentName])
+  const agentHandle = useMemo(
+    () => normalizeAgentHandle(roomAgentName),
+    [roomAgentName]
+  )
   const mentionTokens = useMemo(() => {
     const tokens = ['agent', agentHandle].filter(Boolean)
     return Array.from(new Set(tokens))
@@ -105,7 +120,9 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
       {
         token: agentHandle,
         label: `@${agentHandle}`,
-        hint: roomAgentName ? `Agent handle for ${roomAgentName}` : 'Agent handle',
+        hint: roomAgentName
+          ? `Agent handle for ${roomAgentName}`
+          : 'Agent handle',
       },
     ].filter((item) => item.token)
     return Array.from(new Map(options.map((opt) => [opt.token, opt])).values())
@@ -115,7 +132,11 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
     if (!activeMention) return []
     const q = String(activeMention.query || '').toLowerCase()
     if (!q) return mentionOptions
-    return mentionOptions.filter((opt) => opt.token.toLowerCase().startsWith(q) || opt.label.toLowerCase().includes(q))
+    return mentionOptions.filter(
+      (opt) =>
+        opt.token.toLowerCase().startsWith(q) ||
+        opt.label.toLowerCase().includes(q)
+    )
   }, [activeMention, mentionOptions])
 
   function applyMention(token: string) {
@@ -143,7 +164,10 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
     if (effectiveType === 'public_plain' && mentionRegex.test(payloadText)) {
       effectiveType = 'public_mention_agent'
     }
-    if (effectiveType === 'public_mention_agent' && !mentionRegex.test(payloadText)) {
+    if (
+      effectiveType === 'public_mention_agent' &&
+      !mentionRegex.test(payloadText)
+    ) {
       payloadText = `@agent ${payloadText}`
     }
 
@@ -165,18 +189,21 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
   }
 
   const sseStatus = roomSseState?.status || 'connecting'
-  const sseClass = sseStatus === 'connected'
-    ? 'text-[11px] font-mono text-nofx-green'
-    : sseStatus === 'reconnecting'
-      ? 'text-[11px] font-mono text-nofx-gold'
-      : sseStatus === 'error'
-        ? 'text-[11px] font-mono text-nofx-red'
-        : 'text-[11px] font-mono text-nofx-text-muted'
+  const sseClass =
+    sseStatus === 'connected'
+      ? 'text-[11px] font-mono text-nofx-green'
+      : sseStatus === 'reconnecting'
+        ? 'text-[11px] font-mono text-nofx-gold'
+        : sseStatus === 'error'
+          ? 'text-[11px] font-mono text-nofx-red'
+          : 'text-[11px] font-mono text-nofx-text-muted'
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-nofx-text-muted">Public</span>
+        <span className="text-xs uppercase tracking-wide text-nofx-text-muted">
+          Public
+        </span>
         <div className="flex items-center gap-2">
           <span className={sseClass}>SSE: {sseStatus}</span>
           {roomSseState?.last_event_ts_ms && (
@@ -184,23 +211,47 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
               last {formatMessageTime(roomSseState.last_event_ts_ms)}
             </span>
           )}
-          <span className="text-[11px] text-nofx-text-muted">{messages.length} messages</span>
+          <span className="text-[11px] text-nofx-text-muted">
+            {messages.length} messages
+          </span>
         </div>
       </div>
 
-      <div ref={scrollContainerRef} className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2">
-        {isLoading && <div className="text-xs text-nofx-text-muted">Loading public timeline...</div>}
-        {error && <div className="text-xs text-nofx-red">Failed to load public timeline.</div>}
+      <div
+        ref={scrollContainerRef}
+        className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2"
+      >
+        {isLoading && (
+          <div className="text-xs text-nofx-text-muted">
+            Loading public timeline...
+          </div>
+        )}
+        {error && (
+          <div className="text-xs text-nofx-red">
+            Failed to load public timeline.
+          </div>
+        )}
         {!isLoading && !error && messages.length === 0 && (
-          <div className="text-xs text-nofx-text-muted">No public messages yet.</div>
+          <div className="text-xs text-nofx-text-muted">
+            No public messages yet.
+          </div>
         )}
         {messages.map((message) => (
-          <div key={message.id} className="rounded border border-white/10 bg-black/40 px-2 py-1.5">
+          <div
+            key={message.id}
+            className="rounded border border-white/10 bg-black/40 px-2 py-1.5"
+          >
             <div className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="font-semibold text-nofx-text-main">{senderLabel(message)}</span>
-              <span className="text-nofx-text-muted">{formatMessageTime(message.created_ts_ms)}</span>
+              <span className="font-semibold text-nofx-text-main">
+                {senderLabel(message)}
+              </span>
+              <span className="text-nofx-text-muted">
+                {formatMessageTime(message.created_ts_ms)}
+              </span>
             </div>
-            <div className="text-xs text-nofx-text-main mt-1 break-words">{message.text}</div>
+            <div className="text-xs text-nofx-text-main mt-1 break-words">
+              {message.text}
+            </div>
           </div>
         ))}
       </div>
@@ -233,8 +284,14 @@ export function RoomPublicChatPanel({ roomId, roomAgentName, userSessionId, user
                 onClick={() => applyMention(opt.token)}
                 className="w-full text-left px-3 py-2 hover:bg-white/10 transition-colors"
               >
-                <div className="text-xs font-semibold text-nofx-text-main">{opt.label}</div>
-                {opt.hint && <div className="text-[11px] text-nofx-text-muted mt-0.5">{opt.hint}</div>}
+                <div className="text-xs font-semibold text-nofx-text-main">
+                  {opt.label}
+                </div>
+                {opt.hint && (
+                  <div className="text-[11px] text-nofx-text-muted mt-0.5">
+                    {opt.hint}
+                  </div>
+                )}
               </button>
             ))}
           </div>

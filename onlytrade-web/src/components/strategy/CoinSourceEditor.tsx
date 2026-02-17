@@ -1,5 +1,15 @@
 import { useState } from 'react'
-import { Plus, X, Database, TrendingUp, TrendingDown, List, Ban, Zap, Shuffle } from 'lucide-react'
+import {
+  Plus,
+  X,
+  Database,
+  TrendingUp,
+  TrendingDown,
+  List,
+  Ban,
+  Zap,
+  Shuffle,
+} from 'lucide-react'
 import type { CoinSourceConfig } from '../../types'
 
 interface CoinSourceEditorProps {
@@ -34,7 +44,10 @@ export function CoinSourceEditor({
       oiTopLimit: { zh: '数量上限', en: 'Limit' },
       useOILow: { zh: '启用 OI 持仓减少榜', en: 'Enable OI Decrease' },
       oiLowLimit: { zh: '数量上限', en: 'Limit' },
-      staticDesc: { zh: '手动指定交易币种列表', en: 'Manually specify trading coins' },
+      staticDesc: {
+        zh: '手动指定交易币种列表',
+        en: 'Manually specify trading coins',
+      },
       ai500Desc: {
         zh: '使用 AI500 智能筛选的热门币种',
         en: 'Use AI500 smart-filtered popular coins',
@@ -51,15 +64,24 @@ export function CoinSourceEditor({
         zh: '组合多种数据源',
         en: 'Combine multiple sources',
       },
-      mixedConfig: { zh: '组合数据源配置', en: 'Combined Sources Configuration' },
+      mixedConfig: {
+        zh: '组合数据源配置',
+        en: 'Combined Sources Configuration',
+      },
       mixedSummary: { zh: '已选组合', en: 'Selected Sources' },
       maxCoins: { zh: '最多', en: 'Up to' },
       coins: { zh: '个币种', en: 'coins' },
       dataSourceConfig: { zh: '数据源配置', en: 'Data Source Configuration' },
       excludedCoins: { zh: '排除币种', en: 'Excluded Coins' },
-      excludedCoinsDesc: { zh: '这些币种将从所有数据源中排除，不会被交易', en: 'These coins will be excluded from all sources and will not be traded' },
+      excludedCoinsDesc: {
+        zh: '这些币种将从所有数据源中排除，不会被交易',
+        en: 'These coins will be excluded from all sources and will not be traded',
+      },
       addExcludedCoin: { zh: '添加排除', en: 'Add Excluded' },
-      nofxosNote: { zh: '使用 NofxOS API Key（在指标配置中设置）', en: 'Uses NofxOS API Key (set in Indicators config)' },
+      nofxosNote: {
+        zh: '使用 NofxOS API Key（在指标配置中设置）',
+        en: 'Uses NofxOS API Key (set in Indicators config)',
+      },
     }
     return translations[key]?.[language] || key
   }
@@ -82,15 +104,21 @@ export function CoinSourceEditor({
       totalLimit += config.ai500_limit || 10
     }
     if (config.use_oi_top) {
-      sources.push(`${language === 'zh' ? 'OI增' : 'OI↑'}(${config.oi_top_limit || 10})`)
+      sources.push(
+        `${language === 'zh' ? 'OI增' : 'OI↑'}(${config.oi_top_limit || 10})`
+      )
       totalLimit += config.oi_top_limit || 10
     }
     if (config.use_oi_low) {
-      sources.push(`${language === 'zh' ? 'OI减' : 'OI↓'}(${config.oi_low_limit || 10})`)
+      sources.push(
+        `${language === 'zh' ? 'OI减' : 'OI↓'}(${config.oi_low_limit || 10})`
+      )
       totalLimit += config.oi_low_limit || 10
     }
     if ((config.static_coins || []).length > 0) {
-      sources.push(`${language === 'zh' ? '自定义' : 'Custom'}(${config.static_coins?.length || 0})`)
+      sources.push(
+        `${language === 'zh' ? '自定义' : 'Custom'}(${config.static_coins?.length || 0})`
+      )
       totalLimit += config.static_coins?.length || 0
     }
 
@@ -100,19 +128,44 @@ export function CoinSourceEditor({
   // xyz dex assets (stocks, forex, commodities) - should NOT get USDT suffix
   const xyzDexAssets = new Set([
     // Stocks
-    'TSLA', 'NVDA', 'AAPL', 'MSFT', 'META', 'AMZN', 'GOOGL', 'AMD', 'COIN', 'NFLX',
-    'PLTR', 'HOOD', 'INTC', 'MSTR', 'TSM', 'ORCL', 'MU', 'RIVN', 'COST', 'LLY',
-    'CRCL', 'SKHX', 'SNDK',
+    'TSLA',
+    'NVDA',
+    'AAPL',
+    'MSFT',
+    'META',
+    'AMZN',
+    'GOOGL',
+    'AMD',
+    'COIN',
+    'NFLX',
+    'PLTR',
+    'HOOD',
+    'INTC',
+    'MSTR',
+    'TSM',
+    'ORCL',
+    'MU',
+    'RIVN',
+    'COST',
+    'LLY',
+    'CRCL',
+    'SKHX',
+    'SNDK',
     // Forex
-    'EUR', 'JPY',
+    'EUR',
+    'JPY',
     // Commodities
-    'GOLD', 'SILVER',
+    'GOLD',
+    'SILVER',
     // Index
     'XYZ100',
   ])
 
   const isXyzDexAsset = (symbol: string): boolean => {
-    const base = symbol.toUpperCase().replace(/^XYZ:/, '').replace(/USDT$|USD$|-USDC$/, '')
+    const base = symbol
+      .toUpperCase()
+      .replace(/^XYZ:/, '')
+      .replace(/USDT$|USD$|-USDC$/, '')
     return xyzDexAssets.has(base)
   }
 
@@ -124,7 +177,9 @@ export function CoinSourceEditor({
     let formattedSymbol: string
     if (isXyzDexAsset(symbol)) {
       // Remove xyz: prefix (case-insensitive) and any USD suffixes
-      const base = symbol.replace(/^xyz:/i, '').replace(/USDT$|USD$|-USDC$/i, '')
+      const base = symbol
+        .replace(/^xyz:/i, '')
+        .replace(/USDT$|USD$|-USDC$/i, '')
       formattedSymbol = `xyz:${base}`
     } else {
       formattedSymbol = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`
@@ -154,7 +209,9 @@ export function CoinSourceEditor({
     // For xyz dex assets, use xyz: prefix without USDT
     let formattedSymbol: string
     if (isXyzDexAsset(symbol)) {
-      const base = symbol.replace(/^xyz:/i, '').replace(/USDT$|USD$|-USDC$/i, '')
+      const base = symbol
+        .replace(/^xyz:/i, '')
+        .replace(/USDT$|USD$|-USDC$/i, '')
       formattedSymbol = `xyz:${base}`
     } else {
       formattedSymbol = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`
@@ -179,9 +236,7 @@ export function CoinSourceEditor({
 
   // NofxOS badge component
   const NofxOSBadge = () => (
-    <span
-      className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30"
-    >
+    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
       NofxOS
     </span>
   )
@@ -199,13 +254,17 @@ export function CoinSourceEditor({
               key={value}
               onClick={() =>
                 !disabled &&
-                onChange({ ...config, source_type: value as CoinSourceConfig['source_type'] })
+                onChange({
+                  ...config,
+                  source_type: value as CoinSourceConfig['source_type'],
+                })
               }
               disabled={disabled}
-              className={`p-4 rounded-lg border transition-all ${config.source_type === value
-                ? 'ring-2 ring-nofx-gold bg-nofx-gold/10'
-                : 'hover:bg-white/5 bg-nofx-bg'
-                } border-nofx-gold/20`}
+              className={`p-4 rounded-lg border transition-all ${
+                config.source_type === value
+                  ? 'ring-2 ring-nofx-gold bg-nofx-gold/10'
+                  : 'hover:bg-white/5 bg-nofx-bg'
+              } border-nofx-gold/20`}
             >
               <Icon className="w-6 h-6 mx-auto mb-2" style={{ color }} />
               <div className="text-sm font-medium text-nofx-text">
@@ -322,9 +381,7 @@ export function CoinSourceEditor({
 
       {/* AI500 Options - only for ai500 mode */}
       {config.source_type === 'ai500' && (
-        <div
-          className="p-4 rounded-lg bg-nofx-gold/5 border border-nofx-gold/20"
-        >
+        <div className="p-4 rounded-lg bg-nofx-gold/5 border border-nofx-gold/20">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-nofx-gold" />
@@ -341,7 +398,8 @@ export function CoinSourceEditor({
                 type="checkbox"
                 checked={config.use_ai500}
                 onChange={(e) =>
-                  !disabled && onChange({ ...config, use_ai500: e.target.checked })
+                  !disabled &&
+                  onChange({ ...config, use_ai500: e.target.checked })
                 }
                 disabled={disabled}
                 className="w-5 h-5 rounded accent-nofx-gold"
@@ -358,13 +416,18 @@ export function CoinSourceEditor({
                   value={config.ai500_limit || 10}
                   onChange={(e) =>
                     !disabled &&
-                    onChange({ ...config, ai500_limit: parseInt(e.target.value) || 10 })
+                    onChange({
+                      ...config,
+                      ai500_limit: parseInt(e.target.value) || 10,
+                    })
                   }
                   disabled={disabled}
                   className="px-3 py-1.5 rounded bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                 >
-                  {[5, 10, 15, 20, 30, 50].map(n => (
-                    <option key={n} value={n}>{n}</option>
+                  {[5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -379,14 +442,13 @@ export function CoinSourceEditor({
 
       {/* OI Top Options - only for oi_top mode */}
       {config.source_type === 'oi_top' && (
-        <div
-          className="p-4 rounded-lg bg-nofx-success/5 border border-nofx-success/20"
-        >
+        <div className="p-4 rounded-lg bg-nofx-success/5 border border-nofx-success/20">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-nofx-success" />
               <span className="text-sm font-medium text-nofx-text">
-                OI {language === 'zh' ? '持仓增加榜' : 'Increase'} {t('dataSourceConfig')}
+                OI {language === 'zh' ? '持仓增加榜' : 'Increase'}{' '}
+                {t('dataSourceConfig')}
               </span>
               <NofxOSBadge />
             </div>
@@ -398,7 +460,8 @@ export function CoinSourceEditor({
                 type="checkbox"
                 checked={config.use_oi_top}
                 onChange={(e) =>
-                  !disabled && onChange({ ...config, use_oi_top: e.target.checked })
+                  !disabled &&
+                  onChange({ ...config, use_oi_top: e.target.checked })
                 }
                 disabled={disabled}
                 className="w-5 h-5 rounded accent-nofx-success"
@@ -415,13 +478,18 @@ export function CoinSourceEditor({
                   value={config.oi_top_limit || 10}
                   onChange={(e) =>
                     !disabled &&
-                    onChange({ ...config, oi_top_limit: parseInt(e.target.value) || 10 })
+                    onChange({
+                      ...config,
+                      oi_top_limit: parseInt(e.target.value) || 10,
+                    })
                   }
                   disabled={disabled}
                   className="px-3 py-1.5 rounded bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                 >
-                  {[5, 10, 15, 20, 30, 50].map(n => (
-                    <option key={n} value={n}>{n}</option>
+                  {[5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -436,14 +504,13 @@ export function CoinSourceEditor({
 
       {/* OI Low Options - only for oi_low mode */}
       {config.source_type === 'oi_low' && (
-        <div
-          className="p-4 rounded-lg bg-nofx-danger/5 border border-nofx-danger/20"
-        >
+        <div className="p-4 rounded-lg bg-nofx-danger/5 border border-nofx-danger/20">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <TrendingDown className="w-4 h-4 text-nofx-danger" />
               <span className="text-sm font-medium text-nofx-text">
-                OI {language === 'zh' ? '持仓减少榜' : 'Decrease'} {t('dataSourceConfig')}
+                OI {language === 'zh' ? '持仓减少榜' : 'Decrease'}{' '}
+                {t('dataSourceConfig')}
               </span>
               <NofxOSBadge />
             </div>
@@ -455,7 +522,8 @@ export function CoinSourceEditor({
                 type="checkbox"
                 checked={config.use_oi_low}
                 onChange={(e) =>
-                  !disabled && onChange({ ...config, use_oi_low: e.target.checked })
+                  !disabled &&
+                  onChange({ ...config, use_oi_low: e.target.checked })
                 }
                 disabled={disabled}
                 className="w-5 h-5 rounded accent-red-500"
@@ -472,13 +540,18 @@ export function CoinSourceEditor({
                   value={config.oi_low_limit || 10}
                   onChange={(e) =>
                     !disabled &&
-                    onChange({ ...config, oi_low_limit: parseInt(e.target.value) || 10 })
+                    onChange({
+                      ...config,
+                      oi_low_limit: parseInt(e.target.value) || 10,
+                    })
                   }
                   disabled={disabled}
                   className="px-3 py-1.5 rounded bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                 >
-                  {[5, 10, 15, 20, 30, 50].map(n => (
-                    <option key={n} value={n}>{n}</option>
+                  {[5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -510,19 +583,27 @@ export function CoinSourceEditor({
                   ? 'bg-nofx-gold/10 border-nofx-gold/50'
                   : 'bg-nofx-bg border-nofx-border hover:border-nofx-gold/30'
               }`}
-              onClick={() => !disabled && onChange({ ...config, use_ai500: !config.use_ai500 })}
+              onClick={() =>
+                !disabled &&
+                onChange({ ...config, use_ai500: !config.use_ai500 })
+              }
             >
               <div className="flex items-center gap-2 mb-2">
                 <input
                   type="checkbox"
                   checked={config.use_ai500}
-                  onChange={(e) => !disabled && onChange({ ...config, use_ai500: e.target.checked })}
+                  onChange={(e) =>
+                    !disabled &&
+                    onChange({ ...config, use_ai500: e.target.checked })
+                  }
                   disabled={disabled}
                   className="w-4 h-4 rounded accent-nofx-gold"
                   onClick={(e) => e.stopPropagation()}
                 />
                 <Database className="w-4 h-4 text-nofx-gold" />
-                <span className="text-sm font-medium text-nofx-text">AI500</span>
+                <span className="text-sm font-medium text-nofx-text">
+                  AI500
+                </span>
                 <NofxOSBadge />
               </div>
               {config.use_ai500 && (
@@ -532,14 +613,21 @@ export function CoinSourceEditor({
                     value={config.ai500_limit || 10}
                     onChange={(e) => {
                       e.stopPropagation()
-                      !disabled && onChange({ ...config, ai500_limit: parseInt(e.target.value) || 10 })
+                      if (!disabled) {
+                        onChange({
+                          ...config,
+                          ai500_limit: parseInt(e.target.value) || 10,
+                        })
+                      }
                     }}
                     disabled={disabled}
                     className="px-2 py-1 rounded text-xs bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {[5, 10, 15, 20, 30, 50].map(n => (
-                      <option key={n} value={n}>{n}</option>
+                    {[5, 10, 15, 20, 30, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -553,13 +641,19 @@ export function CoinSourceEditor({
                   ? 'bg-nofx-success/10 border-nofx-success/50'
                   : 'bg-nofx-bg border-nofx-border hover:border-nofx-success/30'
               }`}
-              onClick={() => !disabled && onChange({ ...config, use_oi_top: !config.use_oi_top })}
+              onClick={() =>
+                !disabled &&
+                onChange({ ...config, use_oi_top: !config.use_oi_top })
+              }
             >
               <div className="flex items-center gap-2 mb-2">
                 <input
                   type="checkbox"
                   checked={config.use_oi_top}
-                  onChange={(e) => !disabled && onChange({ ...config, use_oi_top: e.target.checked })}
+                  onChange={(e) =>
+                    !disabled &&
+                    onChange({ ...config, use_oi_top: e.target.checked })
+                  }
                   disabled={disabled}
                   className="w-4 h-4 rounded accent-nofx-success"
                   onClick={(e) => e.stopPropagation()}
@@ -579,14 +673,21 @@ export function CoinSourceEditor({
                     value={config.oi_top_limit || 10}
                     onChange={(e) => {
                       e.stopPropagation()
-                      !disabled && onChange({ ...config, oi_top_limit: parseInt(e.target.value) || 10 })
+                      if (!disabled) {
+                        onChange({
+                          ...config,
+                          oi_top_limit: parseInt(e.target.value) || 10,
+                        })
+                      }
                     }}
                     disabled={disabled}
                     className="px-2 py-1 rounded text-xs bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {[5, 10, 15, 20, 30, 50].map(n => (
-                      <option key={n} value={n}>{n}</option>
+                    {[5, 10, 15, 20, 30, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -600,13 +701,19 @@ export function CoinSourceEditor({
                   ? 'bg-nofx-danger/10 border-nofx-danger/50'
                   : 'bg-nofx-bg border-nofx-border hover:border-nofx-danger/30'
               }`}
-              onClick={() => !disabled && onChange({ ...config, use_oi_low: !config.use_oi_low })}
+              onClick={() =>
+                !disabled &&
+                onChange({ ...config, use_oi_low: !config.use_oi_low })
+              }
             >
               <div className="flex items-center gap-2 mb-2">
                 <input
                   type="checkbox"
                   checked={config.use_oi_low}
-                  onChange={(e) => !disabled && onChange({ ...config, use_oi_low: e.target.checked })}
+                  onChange={(e) =>
+                    !disabled &&
+                    onChange({ ...config, use_oi_low: e.target.checked })
+                  }
                   disabled={disabled}
                   className="w-4 h-4 rounded accent-red-500"
                   onClick={(e) => e.stopPropagation()}
@@ -626,14 +733,21 @@ export function CoinSourceEditor({
                     value={config.oi_low_limit || 10}
                     onChange={(e) => {
                       e.stopPropagation()
-                      !disabled && onChange({ ...config, oi_low_limit: parseInt(e.target.value) || 10 })
+                      if (!disabled) {
+                        onChange({
+                          ...config,
+                          oi_low_limit: parseInt(e.target.value) || 10,
+                        })
+                      }
                     }}
                     disabled={disabled}
                     className="px-2 py-1 rounded text-xs bg-nofx-bg border border-nofx-gold/20 text-nofx-text"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {[5, 10, 15, 20, 30, 50].map(n => (
-                      <option key={n} value={n}>{n}</option>
+                    {[5, 10, 15, 20, 30, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -720,7 +834,9 @@ export function CoinSourceEditor({
             return (
               <div className="p-2 rounded bg-nofx-bg border border-nofx-border">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-nofx-text-muted">{t('mixedSummary')}:</span>
+                  <span className="text-nofx-text-muted">
+                    {t('mixedSummary')}:
+                  </span>
                   <span className="text-nofx-text font-medium">
                     {sources.join(' + ')}
                   </span>

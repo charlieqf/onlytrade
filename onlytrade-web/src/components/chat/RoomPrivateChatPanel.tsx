@@ -20,13 +20,19 @@ function senderLabel(message: ChatMessage) {
   return message.sender_type === 'agent' ? 'Agent' : 'You'
 }
 
-export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: RoomPrivateChatPanelProps) {
+export function RoomPrivateChatPanel({
+  roomId,
+  userSessionId,
+  userNickname,
+}: RoomPrivateChatPanelProps) {
   const [text, setText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   const { data, error, isLoading, mutate } = useSWR(
-    roomId && userSessionId ? ['room-private-chat', roomId, userSessionId] : null,
+    roomId && userSessionId
+      ? ['room-private-chat', roomId, userSessionId]
+      : null,
     () => api.getRoomPrivateMessages(roomId, userSessionId, 50),
     {
       refreshInterval: 2500,
@@ -36,7 +42,9 @@ export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: Ro
 
   const messages = useMemo(() => {
     if (!Array.isArray(data)) return []
-    return [...data].sort((a, b) => Number(a.created_ts_ms) - Number(b.created_ts_ms))
+    return [...data].sort(
+      (a, b) => Number(a.created_ts_ms) - Number(b.created_ts_ms)
+    )
   }, [data])
 
   useEffect(() => {
@@ -68,23 +76,49 @@ export function RoomPrivateChatPanel({ roomId, userSessionId, userNickname }: Ro
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-nofx-text-muted">Private</span>
-        <span className="text-[11px] text-nofx-text-muted">{messages.length} messages</span>
+        <span className="text-xs uppercase tracking-wide text-nofx-text-muted">
+          Private
+        </span>
+        <span className="text-[11px] text-nofx-text-muted">
+          {messages.length} messages
+        </span>
       </div>
 
-      <div ref={scrollContainerRef} className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2">
-        {isLoading && <div className="text-xs text-nofx-text-muted">Loading private timeline...</div>}
-        {error && <div className="text-xs text-nofx-red">Failed to load private timeline.</div>}
+      <div
+        ref={scrollContainerRef}
+        className="h-56 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 space-y-2"
+      >
+        {isLoading && (
+          <div className="text-xs text-nofx-text-muted">
+            Loading private timeline...
+          </div>
+        )}
+        {error && (
+          <div className="text-xs text-nofx-red">
+            Failed to load private timeline.
+          </div>
+        )}
         {!isLoading && !error && messages.length === 0 && (
-          <div className="text-xs text-nofx-text-muted">No private messages yet.</div>
+          <div className="text-xs text-nofx-text-muted">
+            No private messages yet.
+          </div>
         )}
         {messages.map((message) => (
-          <div key={message.id} className="rounded border border-white/10 bg-black/40 px-2 py-1.5">
+          <div
+            key={message.id}
+            className="rounded border border-white/10 bg-black/40 px-2 py-1.5"
+          >
             <div className="flex items-center justify-between gap-2 text-[11px]">
-              <span className="font-semibold text-nofx-text-main">{senderLabel(message)}</span>
-              <span className="text-nofx-text-muted">{formatMessageTime(message.created_ts_ms)}</span>
+              <span className="font-semibold text-nofx-text-main">
+                {senderLabel(message)}
+              </span>
+              <span className="text-nofx-text-muted">
+                {formatMessageTime(message.created_ts_ms)}
+              </span>
             </div>
-            <div className="text-xs text-nofx-text-main mt-1 break-words">{message.text}</div>
+            <div className="text-xs text-nofx-text-main mt-1 break-words">
+              {message.text}
+            </div>
           </div>
         ))}
       </div>

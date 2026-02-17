@@ -55,11 +55,14 @@ function getShortName(fullName: string): string {
 }
 
 // AI Provider configuration - default models and API links
-const AI_PROVIDER_CONFIG: Record<string, {
-  defaultModel: string
-  apiUrl: string
-  apiName: string
-}> = {
+const AI_PROVIDER_CONFIG: Record<
+  string,
+  {
+    defaultModel: string
+    apiUrl: string
+    apiName: string
+  }
+> = {
   deepseek: {
     defaultModel: 'deepseek-chat',
     apiUrl: 'https://platform.deepseek.com/api_keys',
@@ -102,12 +105,17 @@ interface AITradersPageProps {
 }
 
 // Helper function to get exchange display name from exchange ID (UUID)
-function getExchangeDisplayName(exchangeId: string | undefined, exchanges: Exchange[]): string {
+function getExchangeDisplayName(
+  exchangeId: string | undefined,
+  exchanges: Exchange[]
+): string {
   if (!exchangeId) return 'Unknown'
-  const exchange = exchanges.find(e => e.id === exchangeId)
+  const exchange = exchanges.find((e) => e.id === exchangeId)
   if (!exchange) return exchangeId.substring(0, 8).toUpperCase() + '...' // Show truncated UUID if not found
   const typeName = exchange.exchange_type?.toUpperCase() || exchange.name
-  return exchange.account_name ? `${typeName} - ${exchange.account_name}` : typeName
+  return exchange.account_name
+    ? `${typeName} - ${exchange.account_name}`
+    : typeName
 }
 
 // Helper function to check if exchange is a perp-dex type (wallet-based)
@@ -152,13 +160,17 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const [allModels, setAllModels] = useState<AIModel[]>([])
   const [allExchanges, setAllExchanges] = useState<Exchange[]>([])
   const [supportedModels, setSupportedModels] = useState<AIModel[]>([])
-  const [visibleTraderAddresses, setVisibleTraderAddresses] = useState<Set<string>>(new Set())
-  const [visibleExchangeAddresses, setVisibleExchangeAddresses] = useState<Set<string>>(new Set())
+  const [visibleTraderAddresses, setVisibleTraderAddresses] = useState<
+    Set<string>
+  >(new Set())
+  const [visibleExchangeAddresses, setVisibleExchangeAddresses] = useState<
+    Set<string>
+  >(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   // Toggle wallet address visibility for a trader
   const toggleTraderAddressVisibility = (traderId: string) => {
-    setVisibleTraderAddresses(prev => {
+    setVisibleTraderAddresses((prev) => {
       const next = new Set(prev)
       if (next.has(traderId)) {
         next.delete(traderId)
@@ -171,7 +183,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   // Toggle wallet address visibility for an exchange
   const toggleExchangeAddressVisibility = (exchangeId: string) => {
-    setVisibleExchangeAddresses(prev => {
+    setVisibleExchangeAddresses((prev) => {
       const next = new Set(prev)
       if (next.has(exchangeId)) {
         next.delete(exchangeId)
@@ -193,7 +205,11 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
-  const { data: traders, mutate: mutateTraders, isLoading: isTradersLoading } = useSWR<TraderInfo[]>(
+  const {
+    data: traders,
+    mutate: mutateTraders,
+    isLoading: isTradersLoading,
+  } = useSWR<TraderInfo[]>(
     'traders',
     async () => {
       try {
@@ -209,15 +225,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   useEffect(() => {
     const loadConfigs = async () => {
       try {
-        const [
-          modelConfigs,
-          exchangeConfigs,
-          supportedModels,
-        ] = await Promise.all([
-          api.getModelConfigs(),
-          api.getExchangeConfigs(),
-          api.getSupportedModels(),
-        ])
+        const [modelConfigs, exchangeConfigs, supportedModels] =
+          await Promise.all([
+            api.getModelConfigs(),
+            api.getExchangeConfigs(),
+            api.getSupportedModels(),
+          ])
         setAllModels(modelConfigs)
         setAllExchanges(exchangeConfigs)
         setSupportedModels(supportedModels)
@@ -302,7 +315,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   // 检查交易所被哪些交易员使用
   const getExchangeUsageInfo = (exchangeId: string) => {
-    const usingTraders = traders?.filter((t) => t.exchange_id === exchangeId) || []
+    const usingTraders =
+      traders?.filter((t) => t.exchange_id === exchangeId) || []
     const runningCount = usingTraders.filter((t) => t.is_running).length
     const totalCount = usingTraders.length
     return { runningCount, totalCount, usingTraders }
@@ -398,7 +412,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       }
 
       console.log('🔥 handleSaveEditTrader - data:', data)
-      console.log('🔥 handleSaveEditTrader - data.strategy_id:', data.strategy_id)
+      console.log(
+        '🔥 handleSaveEditTrader - data.strategy_id:',
+        data.strategy_id
+      )
       console.log('🔥 handleSaveEditTrader - request:', request)
 
       await toast.promise(api.updateTrader(editingTrader.trader_id, request), {
@@ -461,7 +478,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
-  const handleToggleCompetition = async (traderId: string, currentShowInCompetition: boolean) => {
+  const handleToggleCompetition = async (
+    traderId: string,
+    currentShowInCompetition: boolean
+  ) => {
     try {
       const newValue = !currentShowInCompetition
       await toast.promise(api.toggleCompetition(traderId, newValue), {
@@ -616,12 +636,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           allModels?.map((m) =>
             m.id === modelId
               ? {
-                ...m,
-                apiKey,
-                customApiUrl: customApiUrl || '',
-                customModelName: customModelName || '',
-                enabled: true,
-              }
+                  ...m,
+                  apiKey,
+                  customApiUrl: customApiUrl || '',
+                  customModelName: customModelName || '',
+                  enabled: true,
+                }
               : m
           ) || []
       } else {
@@ -684,9 +704,16 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
     try {
       await toast.promise(api.deleteExchange(exchangeId), {
-        loading: language === 'zh' ? '正在删除交易所账户…' : 'Deleting exchange account...',
-        success: language === 'zh' ? '交易所账户已删除' : 'Exchange account deleted',
-        error: language === 'zh' ? '删除交易所账户失败' : 'Failed to delete exchange account',
+        loading:
+          language === 'zh'
+            ? '正在删除交易所账户…'
+            : 'Deleting exchange account...',
+        success:
+          language === 'zh' ? '交易所账户已删除' : 'Exchange account deleted',
+        error:
+          language === 'zh'
+            ? '删除交易所账户失败'
+            : 'Failed to delete exchange account',
       })
 
       // 重新获取用户配置以确保数据同步
@@ -748,9 +775,16 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         }
 
         await toast.promise(api.updateExchangeConfigsEncrypted(request), {
-          loading: language === 'zh' ? '正在更新交易所配置…' : 'Updating exchange config...',
-          success: language === 'zh' ? '交易所配置已更新' : 'Exchange config updated',
-          error: language === 'zh' ? '更新交易所配置失败' : 'Failed to update exchange config',
+          loading:
+            language === 'zh'
+              ? '正在更新交易所配置…'
+              : 'Updating exchange config...',
+          success:
+            language === 'zh' ? '交易所配置已更新' : 'Exchange config updated',
+          error:
+            language === 'zh'
+              ? '更新交易所配置失败'
+              : 'Failed to update exchange config',
         })
       } else {
         // 创建新账户
@@ -773,9 +807,16 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         }
 
         await toast.promise(api.createExchangeEncrypted(createRequest), {
-          loading: language === 'zh' ? '正在创建交易所账户…' : 'Creating exchange account...',
-          success: language === 'zh' ? '交易所账户已创建' : 'Exchange account created',
-          error: language === 'zh' ? '创建交易所账户失败' : 'Failed to create exchange account',
+          loading:
+            language === 'zh'
+              ? '正在创建交易所账户…'
+              : 'Creating exchange account...',
+          success:
+            language === 'zh' ? '交易所账户已创建' : 'Exchange account created',
+          error:
+            language === 'zh'
+              ? '创建交易所账户失败'
+              : 'Failed to create exchange account',
         })
       }
 
@@ -850,7 +891,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
             <button
               onClick={() => setShowCreateModal(true)}
-              disabled={configuredModels.length === 0 || configuredExchanges.length === 0}
+              disabled={
+                configuredModels.length === 0 ||
+                configuredExchanges.length === 0
+              }
               className="group relative px-6 py-2 rounded text-xs font-bold font-mono uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden bg-nofx-gold text-black hover:bg-yellow-400 shadow-[0_0_20px_rgba(240,185,11,0.2)] hover:shadow-[0_0_30px_rgba(240,185,11,0.4)]"
             >
               <span className="relative z-10 flex items-center gap-2">
@@ -880,16 +924,24 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                 return (
                   <div
                     key={model.id}
-                    className={`group relative flex items-center justify-between p-3 rounded-md transition-all border border-transparent ${inUse ? 'opacity-80' : 'hover:bg-white/5 hover:border-white/10 cursor-pointer'
-                      } bg-black/20`}
+                    className={`group relative flex items-center justify-between p-3 rounded-md transition-all border border-transparent ${
+                      inUse
+                        ? 'opacity-80'
+                        : 'hover:bg-white/5 hover:border-white/10 cursor-pointer'
+                    } bg-black/20`}
                     onClick={() => handleModelClick(model.id)}
                   >
                     <div className="flex items-center gap-4">
                       <div className="relative">
                         <div className="absolute inset-0 bg-indigo-500/20 rounded-full blur-sm group-hover:bg-indigo-500/30 transition-all"></div>
                         <div className="w-10 h-10 rounded-full flex items-center justify-center bg-black border border-white/10 relative z-10">
-                          {getModelIcon(model.provider || model.id, { width: 20, height: 20 }) || (
-                            <span className="text-xs font-bold text-indigo-400">{getShortName(model.name)[0]}</span>
+                          {getModelIcon(model.provider || model.id, {
+                            width: 20,
+                            height: 20,
+                          }) || (
+                            <span className="text-xs font-bold text-indigo-400">
+                              {getShortName(model.name)[0]}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -899,17 +951,22 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                           {getShortName(model.name)}
                         </div>
                         <div className="text-[10px] text-zinc-500 font-mono flex items-center gap-2">
-                          {model.customModelName || AI_PROVIDER_CONFIG[model.provider]?.defaultModel || ''}
+                          {model.customModelName ||
+                            AI_PROVIDER_CONFIG[model.provider]?.defaultModel ||
+                            ''}
                         </div>
                       </div>
                     </div>
 
                     <div className="text-right">
                       {usageInfo.totalCount > 0 ? (
-                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${usageInfo.runningCount > 0
-                          ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-                          }`}>
+                        <span
+                          className={`text-[10px] font-mono px-2 py-1 rounded border ${
+                            usageInfo.runningCount > 0
+                              ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                              : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                          }`}
+                        >
                           {usageInfo.runningCount}/{usageInfo.totalCount} ACTIVE
                         </span>
                       ) : (
@@ -925,7 +982,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               {configuredModels.length === 0 && (
                 <div className="text-center py-10 border border-dashed border-zinc-800 rounded-lg bg-black/20">
                   <Brain className="w-8 h-8 mx-auto mb-3 text-zinc-700" />
-                  <div className="text-xs font-mono text-zinc-500 uppercase tracking-widest">{t('noModelsConfigured', language)}</div>
+                  <div className="text-xs font-mono text-zinc-500 uppercase tracking-widest">
+                    {t('noModelsConfigured', language)}
+                  </div>
                 </div>
               )}
             </div>
@@ -947,21 +1006,28 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                 return (
                   <div
                     key={exchange.id}
-                    className={`group relative flex items-center justify-between p-3 rounded-md transition-all border border-transparent ${inUse ? 'opacity-80' : 'hover:bg-white/5 hover:border-white/10 cursor-pointer'
-                      } bg-black/20`}
+                    className={`group relative flex items-center justify-between p-3 rounded-md transition-all border border-transparent ${
+                      inUse
+                        ? 'opacity-80'
+                        : 'hover:bg-white/5 hover:border-white/10 cursor-pointer'
+                    } bg-black/20`}
                     onClick={() => handleExchangeClick(exchange.id)}
                   >
                     <div className="flex items-center gap-4 min-w-0">
                       <div className="relative">
                         <div className="absolute inset-0 bg-yellow-500/20 rounded-full blur-sm group-hover:bg-yellow-500/30 transition-all"></div>
                         <div className="w-10 h-10 rounded-full flex items-center justify-center bg-black border border-white/10 relative z-10">
-                          {getExchangeIcon(exchange.exchange_type || exchange.id, { width: 20, height: 20 })}
+                          {getExchangeIcon(
+                            exchange.exchange_type || exchange.id,
+                            { width: 20, height: 20 }
+                          )}
                         </div>
                       </div>
 
                       <div className="min-w-0">
                         <div className="font-mono text-sm text-zinc-200 group-hover:text-nofx-gold transition-colors truncate">
-                          {exchange.exchange_type?.toUpperCase() || getShortName(exchange.name)}
+                          {exchange.exchange_type?.toUpperCase() ||
+                            getShortName(exchange.name)}
                           <span className="text-[10px] text-zinc-500 ml-2 border border-zinc-800 px-1 rounded">
                             {exchange.account_name || 'DEFAULT'}
                           </span>
@@ -975,37 +1041,67 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                     <div className="flex flex-col items-end gap-1">
                       {/* Wallet Address Display Logic */}
                       {(() => {
-                        const walletAddr = exchange.hyperliquidWalletAddr || exchange.asterUser || exchange.lighterWalletAddr
+                        const walletAddr =
+                          exchange.hyperliquidWalletAddr ||
+                          exchange.asterUser ||
+                          exchange.lighterWalletAddr
                         if (exchange.type !== 'dex' || !walletAddr) return null
-                        const isVisible = visibleExchangeAddresses.has(exchange.id)
+                        const isVisible = visibleExchangeAddresses.has(
+                          exchange.id
+                        )
                         const isCopied = copiedId === `exchange-${exchange.id}`
 
                         return (
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <div
+                            className="flex items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <span className="text-[10px] font-mono text-zinc-400 bg-black/40 px-1.5 py-0.5 rounded border border-zinc-800">
-                              {isVisible ? walletAddr : truncateAddress(walletAddr)}
+                              {isVisible
+                                ? walletAddr
+                                : truncateAddress(walletAddr)}
                             </span>
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleExchangeAddressVisibility(exchange.id) }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleExchangeAddressVisibility(exchange.id)
+                              }}
                               className="text-zinc-600 hover:text-zinc-300"
                             >
-                              {isVisible ? <EyeOff size={10} /> : <Eye size={10} />}
+                              {isVisible ? (
+                                <EyeOff size={10} />
+                              ) : (
+                                <Eye size={10} />
+                              )}
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleCopyAddress(`exchange-${exchange.id}`, walletAddr) }}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleCopyAddress(
+                                  `exchange-${exchange.id}`,
+                                  walletAddr
+                                )
+                              }}
                               className="text-zinc-600 hover:text-nofx-gold"
                             >
-                              {isCopied ? <Check size={10} className="text-green-500" /> : <Copy size={10} />}
+                              {isCopied ? (
+                                <Check size={10} className="text-green-500" />
+                              ) : (
+                                <Copy size={10} />
+                              )}
                             </button>
                           </div>
                         )
                       })()}
 
                       {usageInfo.totalCount > 0 ? (
-                        <span className={`text-[10px] font-mono px-2 py-1 rounded border ${usageInfo.runningCount > 0
-                          ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-                          }`}>
+                        <span
+                          className={`text-[10px] font-mono px-2 py-1 rounded border ${
+                            usageInfo.runningCount > 0
+                              ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                              : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                          }`}
+                        >
                           {usageInfo.runningCount}/{usageInfo.totalCount} ACTIVE
                         </span>
                       ) : (
@@ -1020,7 +1116,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               {configuredExchanges.length === 0 && (
                 <div className="text-center py-10 border border-dashed border-zinc-800 rounded-lg bg-black/20">
                   <Landmark className="w-8 h-8 mx-auto mb-3 text-zinc-700" />
-                  <div className="text-xs font-mono text-zinc-500 uppercase tracking-widest">{t('noExchangesConfigured', language)}</div>
+                  <div className="text-xs font-mono text-zinc-500 uppercase tracking-widest">
+                    {t('noExchangesConfigured', language)}
+                  </div>
                 </div>
               )}
             </div>
@@ -1111,7 +1209,11 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                         {getModelDisplayName(
                           trader.ai_model.split('_').pop() || trader.ai_model
                         )}{' '}
-                        Model • {getExchangeDisplayName(trader.exchange_id, allExchanges)}
+                        Model •{' '}
+                        {getExchangeDisplayName(
+                          trader.exchange_id,
+                          allExchanges
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1119,12 +1221,18 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                   <div className="flex items-center gap-3 md:gap-4 flex-wrap md:flex-nowrap">
                     {/* Wallet Address for Perp-DEX - placed before status for alignment */}
                     {(() => {
-                      const exchange = allExchanges.find(e => e.id === trader.exchange_id)
+                      const exchange = allExchanges.find(
+                        (e) => e.id === trader.exchange_id
+                      )
                       const walletAddr = getWalletAddress(exchange)
-                      const isPerpDex = isPerpDexExchange(exchange?.exchange_type)
+                      const isPerpDex = isPerpDexExchange(
+                        exchange?.exchange_type
+                      )
                       if (!isPerpDex || !walletAddr) return null
 
-                      const isVisible = visibleTraderAddresses.has(trader.trader_id)
+                      const isVisible = visibleTraderAddresses.has(
+                        trader.trader_id
+                      )
                       const isCopied = copiedId === trader.trader_id
 
                       return (
@@ -1135,8 +1243,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                             border: '1px solid rgba(240, 185, 11, 0.2)',
                           }}
                         >
-                          <span className="text-xs font-mono" style={{ color: '#F0B90B' }}>
-                            {isVisible ? walletAddr : truncateAddress(walletAddr)}
+                          <span
+                            className="text-xs font-mono"
+                            style={{ color: '#F0B90B' }}
+                          >
+                            {isVisible
+                              ? walletAddr
+                              : truncateAddress(walletAddr)}
                           </span>
                           <button
                             type="button"
@@ -1145,12 +1258,26 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                               toggleTraderAddressVisibility(trader.trader_id)
                             }}
                             className="p-0.5 rounded hover:bg-gray-700 transition-colors"
-                            title={isVisible ? (language === 'zh' ? '隐藏' : 'Hide') : (language === 'zh' ? '显示' : 'Show')}
+                            title={
+                              isVisible
+                                ? language === 'zh'
+                                  ? '隐藏'
+                                  : 'Hide'
+                                : language === 'zh'
+                                  ? '显示'
+                                  : 'Show'
+                            }
                           >
                             {isVisible ? (
-                              <EyeOff className="w-3 h-3" style={{ color: '#848E9C' }} />
+                              <EyeOff
+                                className="w-3 h-3"
+                                style={{ color: '#848E9C' }}
+                              />
                             ) : (
-                              <Eye className="w-3 h-3" style={{ color: '#848E9C' }} />
+                              <Eye
+                                className="w-3 h-3"
+                                style={{ color: '#848E9C' }}
+                              />
                             )}
                           </button>
                           <button
@@ -1163,9 +1290,15 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                             title={language === 'zh' ? '复制' : 'Copy'}
                           >
                             {isCopied ? (
-                              <Check className="w-3 h-3" style={{ color: '#0ECB81' }} />
+                              <Check
+                                className="w-3 h-3"
+                                style={{ color: '#0ECB81' }}
+                              />
                             ) : (
-                              <Copy className="w-3 h-3" style={{ color: '#848E9C' }} />
+                              <Copy
+                                className="w-3 h-3"
+                                style={{ color: '#848E9C' }}
+                              />
                             )}
                           </button>
                         </div>
@@ -1177,20 +1310,21 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       {t('status', language)}
                     </div> */}
                       <div
-                        className={`px-2 md:px-3 py-1 rounded text-xs font-bold ${trader.is_running
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
-                          }`}
+                        className={`px-2 md:px-3 py-1 rounded text-xs font-bold ${
+                          trader.is_running
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
                         style={
                           trader.is_running
                             ? {
-                              background: 'rgba(14, 203, 129, 0.1)',
-                              color: '#0ECB81',
-                            }
+                                background: 'rgba(14, 203, 129, 0.1)',
+                                color: '#0ECB81',
+                              }
                             : {
-                              background: 'rgba(246, 70, 93, 0.1)',
-                              color: '#F6465D',
-                            }
+                                background: 'rgba(246, 70, 93, 0.1)',
+                                color: '#F6465D',
+                              }
                         }
                       >
                         {trader.is_running
@@ -1208,7 +1342,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                           } else {
                             // 使用 slug 格式: name-id前4位
                             const slug = `${trader.trader_name}-${trader.trader_id.slice(0, 4)}`
-                            navigate(`/dashboard?trader=${encodeURIComponent(slug)}`)
+                            navigate(
+                              `/dashboard?trader=${encodeURIComponent(slug)}`
+                            )
                           }
                         }}
                         className="px-2 md:px-3 py-1.5 md:py-2 rounded text-xs md:text-sm font-semibold transition-all hover:scale-105 flex items-center gap-1 whitespace-nowrap"
@@ -1247,13 +1383,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                         style={
                           trader.is_running
                             ? {
-                              background: 'rgba(246, 70, 93, 0.1)',
-                              color: '#F6465D',
-                            }
+                                background: 'rgba(246, 70, 93, 0.1)',
+                                color: '#F6465D',
+                              }
                             : {
-                              background: 'rgba(14, 203, 129, 0.1)',
-                              color: '#0ECB81',
-                            }
+                                background: 'rgba(14, 203, 129, 0.1)',
+                                color: '#0ECB81',
+                              }
                         }
                       >
                         {trader.is_running
@@ -1262,20 +1398,29 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                       </button>
 
                       <button
-                        onClick={() => handleToggleCompetition(trader.trader_id, trader.show_in_competition ?? true)}
+                        onClick={() =>
+                          handleToggleCompetition(
+                            trader.trader_id,
+                            trader.show_in_competition ?? true
+                          )
+                        }
                         className="px-2 md:px-3 py-1.5 md:py-2 rounded text-xs md:text-sm font-semibold transition-all hover:scale-105 whitespace-nowrap flex items-center gap-1"
                         style={
                           trader.show_in_competition !== false
                             ? {
-                              background: 'rgba(14, 203, 129, 0.1)',
-                              color: '#0ECB81',
-                            }
+                                background: 'rgba(14, 203, 129, 0.1)',
+                                color: '#0ECB81',
+                              }
                             : {
-                              background: 'rgba(132, 142, 156, 0.1)',
-                              color: '#848E9C',
-                            }
+                                background: 'rgba(132, 142, 156, 0.1)',
+                                color: '#848E9C',
+                              }
                         }
-                        title={trader.show_in_competition !== false ? '在竞技场显示' : '在竞技场隐藏'}
+                        title={
+                          trader.show_in_competition !== false
+                            ? '在竞技场显示'
+                            : '在竞技场隐藏'
+                        }
                       >
                         {trader.show_in_competition !== false ? (
                           <Eye className="w-3 h-3 md:w-4 md:h-4" />
@@ -1313,15 +1458,15 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               </div>
               {(configuredModels.length === 0 ||
                 configuredExchanges.length === 0) && (
-                  <div className="text-xs md:text-sm text-yellow-500">
-                    {configuredModels.length === 0 &&
-                      configuredExchanges.length === 0
-                      ? t('configureModelsAndExchangesFirst', language)
-                      : configuredModels.length === 0
-                        ? t('configureModelsFirst', language)
-                        : t('configureExchangesFirst', language)}
-                  </div>
-                )}
+                <div className="text-xs md:text-sm text-yellow-500">
+                  {configuredModels.length === 0 &&
+                  configuredExchanges.length === 0
+                    ? t('configureModelsAndExchangesFirst', language)
+                    : configuredModels.length === 0
+                      ? t('configureModelsFirst', language)
+                      : t('configureExchangesFirst', language)}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1390,7 +1535,13 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 }
 
 // Step indicator component for Model Config
-function ModelStepIndicator({ currentStep, labels }: { currentStep: number; labels: string[] }) {
+function ModelStepIndicator({
+  currentStep,
+  labels,
+}: {
+  currentStep: number
+  labels: string[]
+}) {
   return (
     <div className="flex items-center justify-center gap-2 mb-6">
       {labels.map((label, index) => (
@@ -1399,7 +1550,12 @@ function ModelStepIndicator({ currentStep, labels }: { currentStep: number; labe
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all"
               style={{
-                background: index < currentStep ? '#0ECB81' : index === currentStep ? '#8B5CF6' : '#2B3139',
+                background:
+                  index < currentStep
+                    ? '#0ECB81'
+                    : index === currentStep
+                      ? '#8B5CF6'
+                      : '#2B3139',
                 color: index <= currentStep ? '#000' : '#848E9C',
               }}
             >
@@ -1415,7 +1571,9 @@ function ModelStepIndicator({ currentStep, labels }: { currentStep: number; labe
           {index < labels.length - 1 && (
             <div
               className="w-8 h-0.5 mx-1"
-              style={{ background: index < currentStep ? '#0ECB81' : '#2B3139' }}
+              style={{
+                background: index < currentStep ? '#0ECB81' : '#2B3139',
+              }}
             />
           )}
         </React.Fragment>
@@ -1448,8 +1606,13 @@ function ModelCard({
     >
       <div className="relative">
         <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-black border border-white/10">
-          {getModelIcon(model.provider || model.id, { width: 32, height: 32 }) || (
-            <span className="text-lg font-bold" style={{ color: '#A78BFA' }}>{model.name[0]}</span>
+          {getModelIcon(model.provider || model.id, {
+            width: 32,
+            height: 32,
+          }) || (
+            <span className="text-lg font-bold" style={{ color: '#A78BFA' }}>
+              {model.name[0]}
+            </span>
           )}
         </div>
         {selected && (
@@ -1540,31 +1703,59 @@ function ModelConfigModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedModelId || !apiKey.trim()) return
-    onSave(selectedModelId, apiKey.trim(), baseUrl.trim() || undefined, modelName.trim() || undefined)
+    onSave(
+      selectedModelId,
+      apiKey.trim(),
+      baseUrl.trim() || undefined,
+      modelName.trim() || undefined
+    )
   }
 
   const availableModels = allModels || []
-  const configuredIds = new Set(configuredModels?.map(m => m.id) || [])
-  const stepLabels = language === 'zh' ? ['选择模型', '配置 API'] : ['Select Model', 'Configure API']
+  const configuredIds = new Set(configuredModels?.map((m) => m.id) || [])
+  const stepLabels =
+    language === 'zh'
+      ? ['选择模型', '配置 API']
+      : ['Select Model', 'Configure API']
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto backdrop-blur-sm">
       <div
         className="rounded-2xl w-full max-w-2xl relative my-8 shadow-2xl"
-        style={{ background: 'linear-gradient(180deg, #1E2329 0%, #181A20 100%)', maxHeight: 'calc(100vh - 4rem)' }}
+        style={{
+          background: 'linear-gradient(180deg, #1E2329 0%, #181A20 100%)',
+          maxHeight: 'calc(100vh - 4rem)',
+        }}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 pb-2">
           <div className="flex items-center gap-3">
             {currentStep > 0 && !editingModelId && (
-              <button type="button" onClick={handleBack} className="p-2 rounded-lg hover:bg-white/10 transition-colors">
-                <svg className="w-5 h-5" style={{ color: '#848E9C' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <button
+                type="button"
+                onClick={handleBack}
+                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <svg
+                  className="w-5 h-5"
+                  style={{ color: '#848E9C' }}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 19l-7-7 7-7"
+                  />
                 </svg>
               </button>
             )}
             <h3 className="text-xl font-bold" style={{ color: '#EAECEF' }}>
-              {editingModelId ? t('editAIModel', language) : t('addAIModel', language)}
+              {editingModelId
+                ? t('editAIModel', language)
+                : t('addAIModel', language)}
             </h3>
           </div>
           <div className="flex items-center gap-2">
@@ -1578,7 +1769,12 @@ function ModelConfigModal({
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 transition-colors" style={{ color: '#848E9C' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              style={{ color: '#848E9C' }}
+            >
               ✕
             </button>
           </div>
@@ -1592,12 +1788,20 @@ function ModelConfigModal({
         )}
 
         {/* Content */}
-        <div className="px-6 pb-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 16rem)' }}>
+        <div
+          className="px-6 pb-6 overflow-y-auto"
+          style={{ maxHeight: 'calc(100vh - 16rem)' }}
+        >
           {/* Step 0: Select Model */}
           {currentStep === 0 && !editingModelId && (
             <div className="space-y-4">
-              <div className="text-sm font-semibold" style={{ color: '#EAECEF' }}>
-                {language === 'zh' ? '选择 AI 模型提供商' : 'Choose Your AI Provider'}
+              <div
+                className="text-sm font-semibold"
+                style={{ color: '#EAECEF' }}
+              >
+                {language === 'zh'
+                  ? '选择 AI 模型提供商'
+                  : 'Choose Your AI Provider'}
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                 {availableModels.map((model) => (
@@ -1610,8 +1814,13 @@ function ModelConfigModal({
                   />
                 ))}
               </div>
-              <div className="text-xs text-center pt-2" style={{ color: '#848E9C' }}>
-                {language === 'zh' ? '带金色标记的模型已配置' : 'Models with gold badge are already configured'}
+              <div
+                className="text-xs text-center pt-2"
+                style={{ color: '#848E9C' }}
+              >
+                {language === 'zh'
+                  ? '带金色标记的模型已配置'
+                  : 'Models with gold badge are already configured'}
               </div>
             </div>
           )}
@@ -1620,18 +1829,34 @@ function ModelConfigModal({
           {(currentStep === 1 || editingModelId) && selectedModel && (
             <form onSubmit={handleSubmit} className="space-y-5">
               {/* Selected Model Header */}
-              <div className="p-4 rounded-xl flex items-center gap-4" style={{ background: '#0B0E11', border: '1px solid #2B3139' }}>
+              <div
+                className="p-4 rounded-xl flex items-center gap-4"
+                style={{ background: '#0B0E11', border: '1px solid #2B3139' }}
+              >
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-black border border-white/10">
-                  {getModelIcon(selectedModel.provider || selectedModel.id, { width: 32, height: 32 }) || (
-                    <span className="text-lg font-bold" style={{ color: '#A78BFA' }}>{selectedModel.name[0]}</span>
+                  {getModelIcon(selectedModel.provider || selectedModel.id, {
+                    width: 32,
+                    height: 32,
+                  }) || (
+                    <span
+                      className="text-lg font-bold"
+                      style={{ color: '#A78BFA' }}
+                    >
+                      {selectedModel.name[0]}
+                    </span>
                   )}
                 </div>
                 <div className="flex-1">
-                  <div className="font-semibold text-lg" style={{ color: '#EAECEF' }}>
+                  <div
+                    className="font-semibold text-lg"
+                    style={{ color: '#EAECEF' }}
+                  >
                     {getShortName(selectedModel.name)}
                   </div>
                   <div className="text-xs" style={{ color: '#848E9C' }}>
-                    {selectedModel.provider} • {AI_PROVIDER_CONFIG[selectedModel.provider]?.defaultModel || selectedModel.id}
+                    {selectedModel.provider} •{' '}
+                    {AI_PROVIDER_CONFIG[selectedModel.provider]?.defaultModel ||
+                      selectedModel.id}
                   </div>
                 </div>
                 {AI_PROVIDER_CONFIG[selectedModel.provider] && (
@@ -1640,10 +1865,19 @@ function ModelConfigModal({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all hover:scale-105"
-                    style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
+                    style={{
+                      background: 'rgba(139, 92, 246, 0.1)',
+                      border: '1px solid rgba(139, 92, 246, 0.3)',
+                    }}
                   >
-                    <ExternalLink className="w-4 h-4" style={{ color: '#A78BFA' }} />
-                    <span className="text-sm font-medium" style={{ color: '#A78BFA' }}>
+                    <ExternalLink
+                      className="w-4 h-4"
+                      style={{ color: '#A78BFA' }}
+                    />
+                    <span
+                      className="text-sm font-medium"
+                      style={{ color: '#A78BFA' }}
+                    >
                       {language === 'zh' ? '获取 API Key' : 'Get API Key'}
                     </span>
                   </a>
@@ -1652,7 +1886,13 @@ function ModelConfigModal({
 
               {/* Kimi Warning */}
               {selectedModel.provider === 'kimi' && (
-                <div className="p-4 rounded-xl" style={{ background: 'rgba(246, 70, 93, 0.1)', border: '1px solid rgba(246, 70, 93, 0.3)' }}>
+                <div
+                  className="p-4 rounded-xl"
+                  style={{
+                    background: 'rgba(246, 70, 93, 0.1)',
+                    border: '1px solid rgba(246, 70, 93, 0.3)',
+                  }}
+                >
                   <div className="flex items-start gap-2">
                     <span style={{ fontSize: '16px' }}>⚠️</span>
                     <div className="text-sm" style={{ color: '#F6465D' }}>
@@ -1664,9 +1904,23 @@ function ModelConfigModal({
 
               {/* API Key */}
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-semibold" style={{ color: '#EAECEF' }}>
-                  <svg className="w-4 h-4" style={{ color: '#A78BFA' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                <label
+                  className="flex items-center gap-2 text-sm font-semibold"
+                  style={{ color: '#EAECEF' }}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    style={{ color: '#A78BFA' }}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                    />
                   </svg>
                   API Key *
                 </label>
@@ -1676,16 +1930,34 @@ function ModelConfigModal({
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder={t('enterAPIKey', language)}
                   className="w-full px-4 py-3 rounded-xl"
-                  style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+                  style={{
+                    background: '#0B0E11',
+                    border: '1px solid #2B3139',
+                    color: '#EAECEF',
+                  }}
                   required
                 />
               </div>
 
               {/* Custom Base URL */}
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-semibold" style={{ color: '#EAECEF' }}>
-                  <svg className="w-4 h-4" style={{ color: '#A78BFA' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                <label
+                  className="flex items-center gap-2 text-sm font-semibold"
+                  style={{ color: '#EAECEF' }}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    style={{ color: '#A78BFA' }}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                    />
                   </svg>
                   {t('customBaseURL', language)}
                 </label>
@@ -1695,7 +1967,11 @@ function ModelConfigModal({
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder={t('customBaseURLPlaceholder', language)}
                   className="w-full px-4 py-3 rounded-xl"
-                  style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+                  style={{
+                    background: '#0B0E11',
+                    border: '1px solid #2B3139',
+                    color: '#EAECEF',
+                  }}
                 />
                 <div className="text-xs" style={{ color: '#848E9C' }}>
                   {t('leaveBlankForDefault', language)}
@@ -1704,9 +1980,23 @@ function ModelConfigModal({
 
               {/* Custom Model Name */}
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm font-semibold" style={{ color: '#EAECEF' }}>
-                  <svg className="w-4 h-4" style={{ color: '#A78BFA' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                <label
+                  className="flex items-center gap-2 text-sm font-semibold"
+                  style={{ color: '#EAECEF' }}
+                >
+                  <svg
+                    className="w-4 h-4"
+                    style={{ color: '#A78BFA' }}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
+                    />
                   </svg>
                   {t('customModelName', language)}
                 </label>
@@ -1716,7 +2006,11 @@ function ModelConfigModal({
                   onChange={(e) => setModelName(e.target.value)}
                   placeholder={t('customModelNamePlaceholder', language)}
                   className="w-full px-4 py-3 rounded-xl"
-                  style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+                  style={{
+                    background: '#0B0E11',
+                    border: '1px solid #2B3139',
+                    color: '#EAECEF',
+                  }}
                 />
                 <div className="text-xs" style={{ color: '#848E9C' }}>
                   {t('leaveBlankForDefaultModel', language)}
@@ -1724,8 +2018,17 @@ function ModelConfigModal({
               </div>
 
               {/* Info Box */}
-              <div className="p-4 rounded-xl" style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
-                <div className="text-sm font-semibold mb-2 flex items-center gap-2" style={{ color: '#A78BFA' }}>
+              <div
+                className="p-4 rounded-xl"
+                style={{
+                  background: 'rgba(139, 92, 246, 0.1)',
+                  border: '1px solid rgba(139, 92, 246, 0.2)',
+                }}
+              >
+                <div
+                  className="text-sm font-semibold mb-2 flex items-center gap-2"
+                  style={{ color: '#A78BFA' }}
+                >
                   <Brain className="w-4 h-4" />
                   {t('information', language)}
                 </div>
@@ -1738,8 +2041,17 @@ function ModelConfigModal({
 
               {/* Buttons */}
               <div className="flex gap-3 pt-4">
-                <button type="button" onClick={handleBack} className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all hover:bg-white/5" style={{ background: '#2B3139', color: '#848E9C' }}>
-                  {editingModelId ? t('cancel', language) : (language === 'zh' ? '返回' : 'Back')}
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all hover:bg-white/5"
+                  style={{ background: '#2B3139', color: '#848E9C' }}
+                >
+                  {editingModelId
+                    ? t('cancel', language)
+                    : language === 'zh'
+                      ? '返回'
+                      : 'Back'}
                 </button>
                 <button
                   type="submit"
@@ -1748,8 +2060,18 @@ function ModelConfigModal({
                   style={{ background: '#8B5CF6', color: '#fff' }}
                 >
                   {t('saveConfig', language)}
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M14 5l7 7m0 0l-7 7m7-7H3"
+                    />
                   </svg>
                 </button>
               </div>

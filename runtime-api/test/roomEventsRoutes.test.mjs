@@ -82,6 +82,35 @@ async function readUntil(res, predicate, timeoutMs = 3000) {
   return buffer
 }
 
+function countEventBlocks(text, eventName) {
+  const safe = String(text || '')
+  const name = String(eventName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (!name) return 0
+  const matches = safe.match(new RegExp(`event:\\s*${name}`, 'g'))
+  return Array.isArray(matches) ? matches.length : 0
+}
+
+function extractEventIds(text, eventName) {
+  const target = String(eventName || '').trim()
+  if (!target) return []
+  const blocks = String(text || '').split(/\r?\n\r?\n/)
+  const out = []
+
+  for (const block of blocks) {
+    if (!block) continue
+    const lines = block.split(/\r?\n/).map((line) => String(line || '').trim())
+    const hasEvent = lines.some((line) => line === `event: ${target}`)
+    if (!hasEvent) continue
+    const idLine = lines.find((line) => line.startsWith('id:'))
+    if (!idLine) continue
+    const match = idLine.match(/^id:\s*(\d+)$/)
+    if (!match) continue
+    out.push(Number(match[1]))
+  }
+
+  return out.filter((id) => Number.isFinite(id) && id > 0)
+}
+
 test('room events SSE streams initial packet', { timeout: 45000 }, async (t) => {
   const port = await getFreePort()
   const baseUrl = `http://127.0.0.1:${port}`
@@ -259,4 +288,122 @@ test('room events SSE replays buffered events using Last-Event-ID', { timeout: 4
   const replayText = await readUntil(eventsRes2, (buf) => buf.includes('event: chat_public_append') && buf.includes('second'), 6000)
   assert.ok(replayText.includes('event: chat_public_append'))
   assert.ok(replayText.includes('second'))
+})
+
+test('room events SSE replays buffered stream_packet events', { timeout: 60000 }, async (t) => {
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      CHAT_LLM_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      ROOM_EVENTS_KEEPALIVE_MS: '5000',
+      ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS: '2000',
+      ROOM_EVENTS_BUFFER_TTL_MS: '60000',
+      CHAT_PROACTIVE_VIEWER_TICK_ENABLED: 'false',
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+  })
+
+  await waitForServer(baseUrl)
+
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_001/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(registerRes.ok, true)
+
+  // Keep one subscriber connected so timer packets continue while we reconnect.
+  const keeperRes = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=2000`)
+  assert.equal(keeperRes.ok, true)
+
+  const probeRes = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=2000`)
+  assert.equal(probeRes.ok, true)
+  const firstText = await readUntil(probeRes, (buf) => buf.includes('event: stream_packet'), 6000)
+  const packetIds = extractEventIds(firstText, 'stream_packet')
+  assert.ok(packetIds.length >= 1)
+  const firstId = Number(packetIds[0])
+
+  // Let at least one timer packet be emitted after firstId while keeper is connected.
+  await delay(2600)
+
+  const replayRes = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=2000`, {
+    headers: {
+      'Last-Event-ID': String(firstId),
+    },
+  })
+  assert.equal(replayRes.ok, true)
+
+  // Replay + initial push should both arrive quickly; without replay we'd usually only see one.
+  const replayText = await readUntil(replayRes, (buf) => countEventBlocks(buf, 'stream_packet') >= 2, 1200)
+  assert.ok(countEventBlocks(replayText, 'stream_packet') >= 2)
+  assert.ok(replayText.includes('event: stream_packet'))
+
+  // Cleanup keeper connection.
+  await readUntil(keeperRes, () => false, 50)
+})
+
+test('room stream_packet singleflight keeps max concurrency at 1', { timeout: 60000 }, async (t) => {
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      CHAT_LLM_ENABLED: 'false',
+      CHAT_PROACTIVE_VIEWER_TICK_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      ROOM_EVENTS_TEST_MODE: 'true',
+      ROOM_EVENTS_KEEPALIVE_MS: '5000',
+      ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS: '2000',
+      ROOM_EVENTS_PACKET_BUILD_DELAY_MS: '3500',
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+  })
+
+  await waitForServer(baseUrl)
+
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_001/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(registerRes.ok, true)
+
+  const eventsRes = await fetch(`${baseUrl}/api/rooms/t_001/events?decision_limit=1&interval_ms=2000`)
+  assert.equal(eventsRes.ok, true)
+  assert.ok(String(eventsRes.headers.get('content-type') || '').includes('text/event-stream'))
+
+  const streamText = await readUntil(eventsRes, () => false, 8500)
+
+  const statsRes = await fetch(`${baseUrl}/api/_test/rooms/t_001/packet-build-stats`)
+  assert.equal(statsRes.ok, true)
+  const statsBody = await statsRes.json()
+  assert.equal(statsBody.success, true)
+  const stats = statsBody.data || {}
+
+  assert.equal(Number(stats.max_concurrency), 1)
+  assert.ok(Number(stats.timer_skip_count) >= 1)
+
+  const packetCount = countEventBlocks(streamText, 'stream_packet')
+  assert.ok(packetCount <= 3)
 })

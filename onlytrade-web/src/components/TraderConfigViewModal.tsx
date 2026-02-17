@@ -89,10 +89,7 @@ export function TraderConfigViewModal({
               🤖 基础信息
             </h3>
             <div className="space-y-3">
-              <InfoRow
-                label="交易员名称"
-                value={traderData.trader_name}
-              />
+              <InfoRow label="交易员名称" value={traderData.trader_name} />
               <InfoRow
                 label="AI模型"
                 value={getShortName(traderData.ai_model).toUpperCase()}

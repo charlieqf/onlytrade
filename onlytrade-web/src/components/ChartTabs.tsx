@@ -32,7 +32,12 @@ const INTERVALS: { value: Interval; label: string }[] = [
   { value: '1d', label: '1d' },
 ]
 
-export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: ChartTabsProps) {
+export function ChartTabs({
+  traderId,
+  selectedSymbol,
+  updateKey,
+  exchangeId,
+}: ChartTabsProps) {
   const { language } = useLanguage()
   const [activeTab, setActiveTab] = useState<ChartTab>('equity')
   const [chartSymbol, setChartSymbol] = useState<string>('600519.SH')
@@ -54,7 +59,9 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
       .then((data) => {
         const list = Array.isArray(data?.symbols) ? data.symbols : []
         if (list.length > 0) {
-          const sorted = [...list].sort((a: SymbolInfo, b: SymbolInfo) => a.symbol.localeCompare(b.symbol))
+          const sorted = [...list].sort((a: SymbolInfo, b: SymbolInfo) =>
+            a.symbol.localeCompare(b.symbol)
+          )
           setAvailableSymbols(sorted)
           return
         }
@@ -76,7 +83,10 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
   // 点击外部关闭下拉
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setShowDropdown(false)
       }
     }
@@ -85,12 +95,15 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
   }, [])
 
   // 过滤后的币种列表
-  const filteredSymbols = availableSymbols.filter(s =>
-    s.symbol.toLowerCase().includes(searchFilter.toLowerCase()) ||
-    s.name.toLowerCase().includes(searchFilter.toLowerCase())
+  const filteredSymbols = availableSymbols.filter(
+    (s) =>
+      s.symbol.toLowerCase().includes(searchFilter.toLowerCase()) ||
+      s.name.toLowerCase().includes(searchFilter.toLowerCase())
   )
 
-  const selectedSymbolInfo = availableSymbols.find((item) => item.symbol === chartSymbol)
+  const selectedSymbolInfo = availableSymbols.find(
+    (item) => item.symbol === chartSymbol
+  )
 
   // 当从外部选择币种时，自动切换到K线图
   useEffect(() => {
@@ -111,8 +124,13 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
   }
 
   return (
-    <div className={`nofx-glass rounded-lg border border-white/5 relative z-10 w-full flex flex-col transition-all duration-300 ${typeof window !== 'undefined' && window.innerWidth < 768 ? 'h-[500px]' : 'h-[600px]'
-      }`}>
+    <div
+      className={`nofx-glass rounded-lg border border-white/5 relative z-10 w-full flex flex-col transition-all duration-300 ${
+        typeof window !== 'undefined' && window.innerWidth < 768
+          ? 'h-[500px]'
+          : 'h-[600px]'
+      }`}
+    >
       {/* 
         Premium Professional Toolbar 
         Mobile: Single row, horizontal scroll with gradient mask
@@ -126,25 +144,31 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
         <div className="flex flex-wrap items-center gap-1">
           <button
             onClick={() => setActiveTab('equity')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${activeTab === 'equity'
-              ? 'bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_10px_rgba(240,185,11,0.1)]'
-              : 'text-nofx-text-muted hover:text-nofx-text-main hover:bg-white/5'
-              }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${
+              activeTab === 'equity'
+                ? 'bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_10px_rgba(240,185,11,0.1)]'
+                : 'text-nofx-text-muted hover:text-nofx-text-main hover:bg-white/5'
+            }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">{t('accountEquityCurve', language)}</span>
+            <span className="hidden md:inline">
+              {t('accountEquityCurve', language)}
+            </span>
             <span className="md:hidden">Eq</span>
           </button>
 
           <button
             onClick={() => setActiveTab('kline')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${activeTab === 'kline'
-              ? 'bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_10px_rgba(240,185,11,0.1)]'
-              : 'text-nofx-text-muted hover:text-nofx-text-main hover:bg-white/5'
-              }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${
+              activeTab === 'kline'
+                ? 'bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_10px_rgba(240,185,11,0.1)]'
+                : 'text-nofx-text-muted hover:text-nofx-text-main hover:bg-white/5'
+            }`}
           >
             <CandlestickChart className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">{t('marketChart', language)}</span>
+            <span className="hidden md:inline">
+              {t('marketChart', language)}
+            </span>
             <span className="md:hidden">Kline</span>
           </button>
 
@@ -169,9 +193,13 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                 >
                   <span>{chartSymbol}</span>
                   {selectedSymbolInfo?.name && (
-                    <span className="text-[9px] opacity-55 hidden md:inline">{selectedSymbolInfo.name}</span>
+                    <span className="text-[9px] opacity-55 hidden md:inline">
+                      {selectedSymbolInfo.name}
+                    </span>
                   )}
-                  <ChevronDown className={`w-3 h-3 text-nofx-text-muted transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+                  <ChevronDown
+                    className={`w-3 h-3 text-nofx-text-muted transition-transform ${showDropdown ? 'rotate-180' : ''}`}
+                  />
                 </button>
                 {showDropdown && (
                   <div className="absolute top-full right-0 mt-2 w-64 bg-[#0B0E11] border border-white/10 rounded-lg shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] z-50 overflow-hidden nofx-glass ring-1 ring-white/5">
@@ -182,7 +210,11 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                           type="text"
                           value={searchFilter}
                           onChange={(e) => setSearchFilter(e.target.value)}
-                          placeholder={language === 'zh' ? '搜索代码...' : 'Search symbol...'}
+                          placeholder={
+                            language === 'zh'
+                              ? '搜索代码...'
+                              : 'Search symbol...'
+                          }
                           className="flex-1 bg-transparent text-[11px] text-white placeholder-gray-600 focus:outline-none font-mono"
                           autoFocus
                         />
@@ -192,11 +224,17 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                       {filteredSymbols.map((s) => (
                         <button
                           key={s.symbol}
-                          onClick={() => { setChartSymbol(s.symbol); setShowDropdown(false); setSearchFilter('') }}
+                          onClick={() => {
+                            setChartSymbol(s.symbol)
+                            setShowDropdown(false)
+                            setSearchFilter('')
+                          }}
                           className={`w-full px-3 py-2 text-left text-[11px] font-mono hover:bg-white/5 transition-all flex items-center justify-between ${chartSymbol === s.symbol ? 'bg-nofx-gold/10 text-nofx-gold' : 'text-nofx-text-muted'}`}
                         >
                           <span>{s.symbol}</span>
-                          <span className="text-[10px] opacity-75">{s.name}</span>
+                          <span className="text-[10px] opacity-75">
+                            {s.name}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -211,10 +249,11 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                 <button
                   key={int.value}
                   onClick={() => setInterval(int.value)}
-                  className={`px-2 py-1 text-[10px] font-medium transition-all ${interval === int.value
-                    ? 'bg-nofx-gold/20 text-nofx-gold'
-                    : 'text-nofx-text-muted hover:text-white hover:bg-white/5'
-                    }`}
+                  className={`px-2 py-1 text-[10px] font-medium transition-all ${
+                    interval === int.value
+                      ? 'bg-nofx-gold/20 text-nofx-gold'
+                      : 'text-nofx-text-muted hover:text-white hover:bg-white/5'
+                  }`}
                 >
                   {int.label}
                 </button>
@@ -222,7 +261,10 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
             </div>
 
             {/* Quick Input - Hidden on mobile, dropdown search is enough */}
-            <form onSubmit={handleSymbolSubmit} className="hidden md:flex items-center shrink-0">
+            <form
+              onSubmit={handleSymbolSubmit}
+              className="hidden md:flex items-center shrink-0"
+            >
               <input
                 type="text"
                 value={symbolInput}
@@ -230,7 +272,10 @@ export function ChartTabs({ traderId, selectedSymbol, updateKey, exchangeId }: C
                 placeholder="Sym"
                 className="w-16 px-2 py-1 bg-black/40 border border-white/10 rounded-l text-[10px] text-white placeholder-gray-600 focus:outline-none focus:border-nofx-gold/50 font-mono transition-colors"
               />
-              <button type="submit" className="px-2 py-1 bg-white/5 border border-white/10 border-l-0 rounded-r text-[10px] text-nofx-text-muted hover:text-white hover:bg-white/10 transition-all">
+              <button
+                type="submit"
+                className="px-2 py-1 bg-white/5 border border-white/10 border-l-0 rounded-r text-[10px] text-nofx-text-muted hover:text-white hover:bg-white/10 transition-all"
+              >
                 Go
               </button>
             </form>

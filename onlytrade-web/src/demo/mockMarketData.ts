@@ -19,20 +19,31 @@ function hashSymbol(symbol: string): number {
 
 function intervalMs(interval: CnBarInterval): number {
   switch (interval) {
-    case '1m': return 60_000
-    case '5m': return 5 * 60_000
-    case '15m': return 15 * 60_000
-    case '30m': return 30 * 60_000
-    case '60m': return 60 * 60_000
-    case '1h': return 60 * 60_000
-    case '4h': return 4 * 60 * 60_000
-    case '1d': return 24 * 60 * 60_000
-    default: return 5 * 60_000
+    case '1m':
+      return 60_000
+    case '5m':
+      return 5 * 60_000
+    case '15m':
+      return 15 * 60_000
+    case '30m':
+      return 30 * 60_000
+    case '60m':
+      return 60 * 60_000
+    case '1h':
+      return 60 * 60_000
+    case '4h':
+      return 4 * 60 * 60_000
+    case '1d':
+      return 24 * 60 * 60_000
+    default:
+      return 5 * 60_000
   }
 }
 
 function tradingDayString(tsMs: number): string {
-  return new Date(tsMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
+  return new Date(tsMs).toLocaleDateString('en-CA', {
+    timeZone: 'Asia/Shanghai',
+  })
 }
 
 function getCnSessionPhase(tsMs: number): CnSessionPhase {
@@ -46,9 +57,9 @@ function getCnSessionPhase(tsMs: number): CnSessionPhase {
   const [hh, mm] = hm.split(':').map(Number)
   const mins = hh * 60 + mm
 
-  if (mins >= 555 && mins < 570) return 'pre_open'      // 09:15-09:30
+  if (mins >= 555 && mins < 570) return 'pre_open' // 09:15-09:30
   if (mins >= 570 && mins < 690) return 'continuous_am' // 09:30-11:30
-  if (mins >= 690 && mins < 780) return 'lunch_break'   // 11:30-13:00
+  if (mins >= 690 && mins < 780) return 'lunch_break' // 11:30-13:00
   if (mins >= 780 && mins < 900) return 'continuous_pm' // 13:00-15:00
   if (mins >= 900 && mins < 915) return 'close_auction' // 15:00-15:15
   return 'closed'
@@ -85,7 +96,7 @@ export function generateMockBarFrames(params: {
     const end = start + step
 
     const drift = Math.sin((safeLimit - i) / 12) * (base * 0.001)
-    const noise = ((seed + i * 17) % 11 - 5) * (base * 0.0006)
+    const noise = (((seed + i * 17) % 11) - 5) * (base * 0.0006)
 
     const open = prev
     const close = Math.max(0.1, open + drift + noise)

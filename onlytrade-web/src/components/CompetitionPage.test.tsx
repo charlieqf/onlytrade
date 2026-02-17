@@ -65,7 +65,9 @@ describe('CompetitionPage', () => {
     )
 
     expect(await screen.findByTestId('page-leaderboard')).toBeInTheDocument()
-    expect(screen.getByTestId('competition-leader-pnl-pct')).toHaveTextContent('—')
+    expect(screen.getByTestId('competition-leader-pnl-pct')).toHaveTextContent(
+      '—'
+    )
     expect(screen.queryByText(/NaN%/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Infinity%/i)).not.toBeInTheDocument()
   })

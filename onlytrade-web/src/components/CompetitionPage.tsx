@@ -68,26 +68,20 @@ export function CompetitionPage() {
           {/* Competition Header - 精简版 */}
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
             <div className="flex items-center gap-3 md:gap-4">
-              <div
-                className="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center bg-black/60 border border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]"
-              >
-                <Trophy
-                  className="w-6 h-6 md:w-7 md:h-7 text-nofx-gold"
-                />
+              <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center bg-black/60 border border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]">
+                <Trophy className="w-6 h-6 md:w-7 md:h-7 text-nofx-gold" />
               </div>
               <div>
-                <h1
-                  className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white"
-                >
+                <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white">
                   {language === 'zh' ? '房间排行榜' : 'Room Leaderboard'}
-                  <span
-                    className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20"
-                  >
+                  <span className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20">
                     0 {language === 'zh' ? '个交易员' : 'traders'}
                   </span>
                 </h1>
                 <p className="text-xs text-zinc-400">
-                  {language === 'zh' ? '实时交易表现对比' : 'Realtime trading performance comparison'}
+                  {language === 'zh'
+                    ? '实时交易表现对比'
+                    : 'Realtime trading performance comparison'}
                 </p>
               </div>
             </div>
@@ -95,9 +89,7 @@ export function CompetitionPage() {
 
           {/* Empty State */}
           <div className="bg-black/40 border border-white/10 rounded-xl p-16 text-center backdrop-blur-md">
-            <Trophy
-              className="w-16 h-16 mx-auto mb-4 text-zinc-700"
-            />
+            <Trophy className="w-16 h-16 mx-auto mb-4 text-zinc-700" />
             <h3 className="text-lg font-bold mb-2 text-white">
               {t('noTraders', language)}
             </h3>
@@ -121,12 +113,18 @@ export function CompetitionPage() {
   const leader = sortedTraders[0]
   const replayProgressPct = competition.replay?.day_bar_count
     ? Math.max(
-      0,
-      Math.min(
-        100,
-        Number((((competition.replay.day_bar_index || 0) / competition.replay.day_bar_count) * 100).toFixed(1))
+        0,
+        Math.min(
+          100,
+          Number(
+            (
+              ((competition.replay.day_bar_index || 0) /
+                competition.replay.day_bar_count) *
+              100
+            ).toFixed(1)
+          )
+        )
       )
-    )
     : null
 
   return (
@@ -138,36 +136,29 @@ export function CompetitionPage() {
         {/* Competition Header - 精简版 */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-0">
           <div className="flex items-center gap-3 md:gap-4">
-            <div
-              className="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center bg-black/60 border border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]"
-            >
-              <Trophy
-                className="w-6 h-6 md:w-7 md:h-7 text-nofx-gold"
-              />
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center bg-black/60 border border-nofx-gold/30 shadow-[0_0_15px_rgba(240,185,11,0.2)]">
+              <Trophy className="w-6 h-6 md:w-7 md:h-7 text-nofx-gold" />
             </div>
             <div>
-              <h1
-                className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white"
-              >
+              <h1 className="text-xl md:text-2xl font-bold flex items-center gap-2 text-white">
                 {language === 'zh' ? '房间排行榜' : 'Room Leaderboard'}
-                <span
-                  className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20"
-                >
-                  {competition.count} {language === 'zh' ? '个交易员' : 'traders'}
+                <span className="text-xs font-normal px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20">
+                  {competition.count}{' '}
+                  {language === 'zh' ? '个交易员' : 'traders'}
                 </span>
               </h1>
               <p className="text-xs text-zinc-400">
-                {language === 'zh' ? '按虚拟收益率排序，实时刷新。' : 'Sorted by virtual returns, refreshed live.'}
+                {language === 'zh'
+                  ? '按虚拟收益率排序，实时刷新。'
+                  : 'Sorted by virtual returns, refreshed live.'}
               </p>
             </div>
           </div>
-            <div className="text-left md:text-right w-full md:w-auto">
-              <div className="text-xs mb-1 text-zinc-400">
-                {language === 'zh' ? '当前领先' : 'Current Leader'}
-              </div>
-            <div
-              className="text-base md:text-lg font-bold text-nofx-gold"
-            >
+          <div className="text-left md:text-right w-full md:w-auto">
+            <div className="text-xs mb-1 text-zinc-400">
+              {language === 'zh' ? '当前领先' : 'Current Leader'}
+            </div>
+            <div className="text-base md:text-lg font-bold text-nofx-gold">
               {leader?.trader_name}
             </div>
             <div
@@ -182,17 +173,28 @@ export function CompetitionPage() {
             <div className="text-[11px] text-zinc-400 mt-2 space-y-0.5">
               <div>
                 {language === 'zh' ? '回放交易日' : 'Replay Day'}:
-                <span className="text-zinc-200 ml-1">{competition.replay?.trading_day || '--'}</span>
+                <span className="text-zinc-200 ml-1">
+                  {competition.replay?.trading_day || '--'}
+                </span>
               </div>
               <div>
                 {language === 'zh' ? '日序' : 'Day'}:
-                <span className="text-zinc-200 ml-1">{competition.replay?.day_index ?? '--'}</span>
-                <span className="ml-1">/ {competition.replay?.day_count ?? '--'}</span>
+                <span className="text-zinc-200 ml-1">
+                  {competition.replay?.day_index ?? '--'}
+                </span>
+                <span className="ml-1">
+                  / {competition.replay?.day_count ?? '--'}
+                </span>
               </div>
               <div>
                 {language === 'zh' ? '日内进度' : 'In-day'}:
-                <span className="text-zinc-200 ml-1">{competition.replay?.day_bar_index ?? '--'} / {competition.replay?.day_bar_count ?? '--'}</span>
-                <span className="ml-1">({replayProgressPct != null ? `${replayProgressPct}%` : '--'})</span>
+                <span className="text-zinc-200 ml-1">
+                  {competition.replay?.day_bar_index ?? '--'} /{' '}
+                  {competition.replay?.day_bar_count ?? '--'}
+                </span>
+                <span className="ml-1">
+                  ({replayProgressPct != null ? `${replayProgressPct}%` : '--'})
+                </span>
               </div>
             </div>
           </div>
@@ -206,9 +208,7 @@ export function CompetitionPage() {
             style={{ animationDelay: '0.1s' }}
           >
             <div className="flex items-center justify-between mb-6">
-              <h2
-                className="text-lg font-bold flex items-center gap-2 text-white"
-              >
+              <h2 className="text-lg font-bold flex items-center gap-2 text-white">
                 {language === 'zh' ? '收益曲线对比' : 'Performance Curves'}
               </h2>
               <div className="text-xs text-zinc-400">
@@ -224,14 +224,10 @@ export function CompetitionPage() {
             style={{ animationDelay: '0.1s' }}
           >
             <div className="flex items-center justify-between mb-6">
-              <h2
-                className="text-lg font-bold flex items-center gap-2 text-white"
-              >
+              <h2 className="text-lg font-bold flex items-center gap-2 text-white">
                 {language === 'zh' ? '排行明细' : 'Leaderboard Details'}
               </h2>
-              <div
-                className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_8px_rgba(240,185,11,0.1)]"
-              >
+              <div className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 shadow-[0_0_8px_rgba(240,185,11,0.1)]">
                 {language === 'zh' ? 'Demo Live' : 'Demo Live'}
               </div>
             </div>
@@ -266,13 +262,14 @@ export function CompetitionPage() {
                         <div
                           className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                           style={{
-                            background: index === 0
-                              ? 'linear-gradient(135deg, #F0B90B 0%, #FCD535 100%)'
-                              : index === 1
-                                ? 'linear-gradient(135deg, #C0C0C0 0%, #E8E8E8 100%)'
-                                : index === 2
-                                  ? 'linear-gradient(135deg, #CD7F32 0%, #E8A64C 100%)'
-                                  : '#2B3139',
+                            background:
+                              index === 0
+                                ? 'linear-gradient(135deg, #F0B90B 0%, #FCD535 100%)'
+                                : index === 1
+                                  ? 'linear-gradient(135deg, #C0C0C0 0%, #E8E8E8 100%)'
+                                  : index === 2
+                                    ? 'linear-gradient(135deg, #CD7F32 0%, #E8A64C 100%)'
+                                    : '#2B3139',
                             color: index < 3 ? '#000' : '#848E9C',
                           }}
                         >
@@ -326,13 +323,14 @@ export function CompetitionPage() {
                           <div
                             className="text-base md:text-lg font-bold mono"
                             style={{
-                              color:
-                                totalPnl >= 0
-                                  ? '#0ECB81'
-                                  : '#F6465D',
+                              color: totalPnl >= 0 ? '#0ECB81' : '#F6465D',
                             }}
                           >
-                            {formatSignedPercentDisplay(trader.total_pnl_pct, 2, '—')}
+                            {formatSignedPercentDisplay(
+                              trader.total_pnl_pct,
+                              2,
+                              '—'
+                            )}
                           </div>
                           <div
                             className="text-xs mono"
@@ -355,7 +353,9 @@ export function CompetitionPage() {
                             {trader.position_count}
                           </div>
                           <div className="text-xs" style={{ color: '#848E9C' }}>
-                            {language === 'zh' ? `占用 ${trader.margin_used_pct.toFixed(1)}%` : `Use ${trader.margin_used_pct.toFixed(1)}%`}
+                            {language === 'zh'
+                              ? `占用 ${trader.margin_used_pct.toFixed(1)}%`
+                              : `Use ${trader.margin_used_pct.toFixed(1)}%`}
                           </div>
                         </div>
 
@@ -366,13 +366,13 @@ export function CompetitionPage() {
                             style={
                               trader.is_running
                                 ? {
-                                  background: 'rgba(14, 203, 129, 0.1)',
-                                  color: '#0ECB81',
-                                }
+                                    background: 'rgba(14, 203, 129, 0.1)',
+                                    color: '#0ECB81',
+                                  }
                                 : {
-                                  background: 'rgba(246, 70, 93, 0.1)',
-                                  color: '#F6465D',
-                                }
+                                    background: 'rgba(246, 70, 93, 0.1)',
+                                    color: '#F6465D',
+                                  }
                             }
                           >
                             {trader.is_running ? '●' : '○'}
@@ -393,9 +393,21 @@ export function CompetitionPage() {
             {language === 'zh' ? '模拟规则' : 'Simulation Rules'}
           </div>
           <ul className="text-xs text-zinc-300 space-y-1">
-            <li>{language === 'zh' ? '收益与排名来自虚拟交易账户（非真实资金）。' : 'Returns and ranking come from virtual accounts (no real funds).'}</li>
-            <li>{language === 'zh' ? '交易逻辑使用固定规则：下一根K线开盘成交 + 固定滑点。' : 'Trade logic uses fixed rules: next-bar-open fills + fixed slippage.'}</li>
-            <li>{language === 'zh' ? 'A股约束：100股一手，T+1。' : 'A-share constraints: 100-share lots and T+1.'}</li>
+            <li>
+              {language === 'zh'
+                ? '收益与排名来自虚拟交易账户（非真实资金）。'
+                : 'Returns and ranking come from virtual accounts (no real funds).'}
+            </li>
+            <li>
+              {language === 'zh'
+                ? '交易逻辑使用固定规则：下一根K线开盘成交 + 固定滑点。'
+                : 'Trade logic uses fixed rules: next-bar-open fills + fixed slippage.'}
+            </li>
+            <li>
+              {language === 'zh'
+                ? 'A股约束：100股一手，T+1。'
+                : 'A-share constraints: 100-share lots and T+1.'}
+            </li>
           </ul>
         </div>
 
@@ -405,9 +417,7 @@ export function CompetitionPage() {
             className="bg-black/40 border border-white/10 rounded-xl p-6 backdrop-blur-md animate-slide-in"
             style={{ animationDelay: '0.3s' }}
           >
-            <h2
-              className="text-lg font-bold mb-6 flex items-center gap-2 text-white"
-            >
+            <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-white">
               {t('headToHead', language)}
             </h2>
             <div className="grid grid-cols-2 gap-4">
@@ -431,16 +441,16 @@ export function CompetitionPage() {
                     style={
                       isWinning
                         ? {
-                          background:
-                            'linear-gradient(135deg, rgba(14, 203, 129, 0.08) 0%, rgba(14, 203, 129, 0.02) 100%)',
-                          border: '2px solid rgba(14, 203, 129, 0.3)',
-                          boxShadow: '0 3px 15px rgba(14, 203, 129, 0.12)',
-                        }
+                            background:
+                              'linear-gradient(135deg, rgba(14, 203, 129, 0.08) 0%, rgba(14, 203, 129, 0.02) 100%)',
+                            border: '2px solid rgba(14, 203, 129, 0.3)',
+                            boxShadow: '0 3px 15px rgba(14, 203, 129, 0.12)',
+                          }
                         : {
-                          background: '#0B0E11',
-                          border: '1px solid #2B3139',
-                          boxShadow: '0 1px 4px rgba(0, 0, 0, 0.3)',
-                        }
+                            background: '#0B0E11',
+                            border: '1px solid #2B3139',
+                            boxShadow: '0 1px 4px rgba(0, 0, 0, 0.3)',
+                          }
                     }
                   >
                     <div className="text-center">
@@ -458,7 +468,10 @@ export function CompetitionPage() {
                       <div
                         className="text-sm md:text-base font-bold mb-2"
                         style={{
-                          color: getTraderColor(sortedTraders, trader.trader_id),
+                          color: getTraderColor(
+                            sortedTraders,
+                            trader.trader_id
+                          ),
                         }}
                       >
                         {trader.trader_name}
@@ -467,10 +480,16 @@ export function CompetitionPage() {
                         className="text-lg md:text-2xl font-bold mono mb-1"
                         style={{
                           color:
-                            (trader.total_pnl ?? 0) >= 0 ? '#0ECB81' : '#F6465D',
+                            (trader.total_pnl ?? 0) >= 0
+                              ? '#0ECB81'
+                              : '#F6465D',
                         }}
                       >
-                        {formatSignedPercentDisplay(trader.total_pnl_pct, 2, '—')}
+                        {formatSignedPercentDisplay(
+                          trader.total_pnl_pct,
+                          2,
+                          '—'
+                        )}
                       </div>
                       {hasValidData && isWinning && gap > 0 && (
                         <div

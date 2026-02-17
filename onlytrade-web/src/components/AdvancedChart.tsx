@@ -35,11 +35,11 @@ interface OrderMarker {
 interface OpenOrder {
   order_id: string
   symbol: string
-  side: string          // BUY/SELL
+  side: string // BUY/SELL
   position_side: string // LONG/SHORT
-  type: string          // LIMIT/STOP_MARKET/TAKE_PROFIT_MARKET
-  price: number         // 限价单价格
-  stop_price: number    // 触发价格 (止损/止盈)
+  type: string // LIMIT/STOP_MARKET/TAKE_PROFIT_MARKET
+  price: number // 限价单价格
+  stop_price: number // 触发价格 (止损/止盈)
   quantity: number
   status: string
 }
@@ -125,7 +125,9 @@ export function AdvancedChart({
   const indicatorSeriesRef = useRef<Map<string, ISeriesApi<any>>>(new Map())
   const seriesMarkersRef = useRef<any>(null) // Markers primitive for v5
   const currentMarkersDataRef = useRef<any[]>([]) // 存储当前的标记数据
-  const klineDataRef = useRef<Map<number, { volume: number; quoteVolume: number }>>(new Map()) // 存储 kline 额外数据
+  const klineDataRef = useRef<
+    Map<number, { volume: number; quoteVolume: number }>
+  >(new Map()) // 存储 kline 额外数据
   const priceLinesRef = useRef<any[]>([]) // 存储挂单价格线
 
   const [loading, setLoading] = useState(true)
@@ -143,19 +145,55 @@ export function AdvancedChart({
     priceChangePercent: number
     high: number
     low: number
-    volume: number      // 数量（BTC/股数）
+    volume: number // 数量（BTC/股数）
     quoteVolume: number // 成交额（USDT/USD）
   } | null>(null)
 
   // 指标配置
   const [indicators, setIndicators] = useState<IndicatorConfig[]>([
     { id: 'volume', name: 'Volume', enabled: true, color: '#3B82F6' },
-    { id: 'ma5', name: 'MA5', enabled: false, color: '#FF6B6B', params: { period: 5 } },
-    { id: 'ma10', name: 'MA10', enabled: false, color: '#4ECDC4', params: { period: 10 } },
-    { id: 'ma20', name: 'MA20', enabled: false, color: '#FFD93D', params: { period: 20 } },
-    { id: 'ma60', name: 'MA60', enabled: false, color: '#95E1D3', params: { period: 60 } },
-    { id: 'ema12', name: 'EMA12', enabled: false, color: '#A8E6CF', params: { period: 12 } },
-    { id: 'ema26', name: 'EMA26', enabled: false, color: '#FFD3B6', params: { period: 26 } },
+    {
+      id: 'ma5',
+      name: 'MA5',
+      enabled: false,
+      color: '#FF6B6B',
+      params: { period: 5 },
+    },
+    {
+      id: 'ma10',
+      name: 'MA10',
+      enabled: false,
+      color: '#4ECDC4',
+      params: { period: 10 },
+    },
+    {
+      id: 'ma20',
+      name: 'MA20',
+      enabled: false,
+      color: '#FFD93D',
+      params: { period: 20 },
+    },
+    {
+      id: 'ma60',
+      name: 'MA60',
+      enabled: false,
+      color: '#95E1D3',
+      params: { period: 60 },
+    },
+    {
+      id: 'ema12',
+      name: 'EMA12',
+      enabled: false,
+      color: '#A8E6CF',
+      params: { period: 12 },
+    },
+    {
+      id: 'ema26',
+      name: 'EMA26',
+      enabled: false,
+      color: '#FFD3B6',
+      params: { period: 26 },
+    },
     { id: 'bb', name: 'Bollinger Bands', enabled: false, color: '#9B59B6' },
   ])
 
@@ -177,7 +215,11 @@ export function AdvancedChart({
         quoteVolume: number
       }> = []
 
-      if (framesResult.success && framesResult.data?.frames && Array.isArray(framesResult.data.frames)) {
+      if (
+        framesResult.success &&
+        framesResult.data?.frames &&
+        Array.isArray(framesResult.data.frames)
+      ) {
         rawData = framesResult.data.frames.map((frame: any) => ({
           time: Math.floor(frame.window.start_ts_ms / 1000) as UTCTimestamp,
           open: frame.bar.open,
@@ -208,12 +250,17 @@ export function AdvancedChart({
 
       // 按时间排序并去重（lightweight-charts 要求数据按时间升序且无重复）
       const sortedData = rawData.sort((a: any, b: any) => a.time - b.time)
-      const dedupedData = sortedData.filter((item: any, index: number, arr: any[]) =>
-        index === 0 || item.time !== arr[index - 1].time
+      const dedupedData = sortedData.filter(
+        (item: any, index: number, arr: any[]) =>
+          index === 0 || item.time !== arr[index - 1].time
       )
 
       if (DEBUG_CHART && rawData.length !== dedupedData.length) {
-        console.warn('[AdvancedChart] Removed', rawData.length - dedupedData.length, 'duplicate klines')
+        console.warn(
+          '[AdvancedChart] Removed',
+          rawData.length - dedupedData.length,
+          'duplicate klines'
+        )
       }
 
       return dedupedData
@@ -260,13 +307,15 @@ export function AdvancedChart({
     if (match) {
       const currentYear = new Date().getFullYear()
       const [_, month, day, hour, minute] = match
-      const date = new Date(Date.UTC(
-        currentYear,
-        parseInt(month) - 1,
-        parseInt(day),
-        parseInt(hour),
-        parseInt(minute)
-      ))
+      const date = new Date(
+        Date.UTC(
+          currentYear,
+          parseInt(month) - 1,
+          parseInt(day),
+          parseInt(hour),
+          parseInt(minute)
+        )
+      )
       const timestamp = Math.floor(date.getTime() / 1000)
       dlog('[AdvancedChart] Parsed as custom format:', timeStr, '→', timestamp)
       return timestamp
@@ -277,11 +326,21 @@ export function AdvancedChart({
   }
 
   // 获取订单数据
-  const fetchOrders = async (traderID: string, symbol: string): Promise<OrderMarker[]> => {
+  const fetchOrders = async (
+    traderID: string,
+    symbol: string
+  ): Promise<OrderMarker[]> => {
     try {
-      dlog('[AdvancedChart] Fetching orders for trader:', traderID, 'symbol:', symbol)
+      dlog(
+        '[AdvancedChart] Fetching orders for trader:',
+        traderID,
+        'symbol:',
+        symbol
+      )
       // 获取已成交的订单，增加到200条以显示更多历史订单
-      const result = await httpClient.get(`/api/orders?trader_id=${traderID}&symbol=${symbol}&status=FILLED&limit=200`)
+      const result = await httpClient.get(
+        `/api/orders?trader_id=${traderID}&symbol=${symbol}&status=FILLED&limit=200`
+      )
 
       dlog('[AdvancedChart] Orders API response:', result)
 
@@ -300,8 +359,16 @@ export function AdvancedChart({
         dlog('[AdvancedChart] Processing order:', order)
 
         // 处理字段名：支持PascalCase和snake_case
-        const filledAt = order.filled_at || order.FilledAt || order.created_at || order.CreatedAt
-        const avgPrice = order.avg_fill_price || order.AvgFillPrice || order.price || order.Price
+        const filledAt =
+          order.filled_at ||
+          order.FilledAt ||
+          order.created_at ||
+          order.CreatedAt
+        const avgPrice =
+          order.avg_fill_price ||
+          order.AvgFillPrice ||
+          order.price ||
+          order.Price
         const orderAction = order.order_action || order.OrderAction
         const side = (order.side || order.Side)?.toLowerCase() // BUY/SELL
         const symbol = order.symbol || order.Symbol
@@ -309,7 +376,10 @@ export function AdvancedChart({
         // 跳过没有成交时间或价格的订单
         if (!filledAt || !avgPrice || avgPrice === 0) {
           if (DEBUG_CHART) {
-            console.warn('[AdvancedChart] Skipping order - missing data:', { filledAt, avgPrice })
+            console.warn('[AdvancedChart] Skipping order - missing data:', {
+              filledAt,
+              avgPrice,
+            })
           }
           return
         }
@@ -317,7 +387,10 @@ export function AdvancedChart({
         const timeSeconds = parseCustomTime(filledAt)
         if (timeSeconds === 0) {
           if (DEBUG_CHART) {
-            console.warn('[AdvancedChart] Skipping order - invalid time:', filledAt)
+            console.warn(
+              '[AdvancedChart] Skipping order - invalid time:',
+              filledAt
+            )
           }
           return
         }
@@ -345,7 +418,7 @@ export function AdvancedChart({
           side: positionSide,
           rawSide: side,
           action,
-          orderAction
+          orderAction,
         })
 
         markers.push({
@@ -367,10 +440,20 @@ export function AdvancedChart({
   }
 
   // 获取交易所挂单 (止盈止损订单)
-  const fetchOpenOrders = async (traderID: string, symbol: string): Promise<OpenOrder[]> => {
+  const fetchOpenOrders = async (
+    traderID: string,
+    symbol: string
+  ): Promise<OpenOrder[]> => {
     try {
-      dlog('[AdvancedChart] Fetching open orders for trader:', traderID, 'symbol:', symbol)
-      const result = await httpClient.get(`/api/open-orders?trader_id=${traderID}&symbol=${symbol}`)
+      dlog(
+        '[AdvancedChart] Fetching open orders for trader:',
+        traderID,
+        'symbol:',
+        symbol
+      )
+      const result = await httpClient.get(
+        `/api/open-orders?trader_id=${traderID}&symbol=${symbol}`
+      )
 
       dlog('[AdvancedChart] Open orders API response:', result)
 
@@ -521,7 +604,10 @@ export function AdvancedChart({
       const candleData = data as any
 
       // 从存储的数据中获取 volume 和 quoteVolume
-      const klineExtra = klineDataRef.current.get(param.time as number) || { volume: 0, quoteVolume: 0 }
+      const klineExtra = klineDataRef.current.get(param.time as number) || {
+        volume: 0,
+        quoteVolume: 0,
+      }
 
       setTooltipData({
         time: param.time,
@@ -542,7 +628,6 @@ export function AdvancedChart({
     }
   }, []) // Chart is created once, ResizeObserver handles dimension changes
 
-
   // 加载数据和指标
   useEffect(() => {
     // 当 symbol 或 interval 改变时，重置初始加载标志（以便自动适配新数据）
@@ -562,7 +647,12 @@ export function AdvancedChart({
     const loadData = async (isRefresh = false) => {
       if (!candlestickSeriesRef.current) return
 
-      dlog('[AdvancedChart] Loading data for', symbol, interval, isRefresh ? '(refresh)' : '')
+      dlog(
+        '[AdvancedChart] Loading data for',
+        symbol,
+        interval,
+        isRefresh ? '(refresh)' : ''
+      )
       // 只在首次加载时显示 loading，刷新时不显示避免闪烁
       if (!isRefresh) {
         setLoading(true)
@@ -578,7 +668,10 @@ export function AdvancedChart({
         // 存储 volume/quoteVolume 数据供 tooltip 使用
         klineDataRef.current.clear()
         klineData.forEach((k: any) => {
-          klineDataRef.current.set(k.time, { volume: k.volume || 0, quoteVolume: k.quoteVolume || 0 })
+          klineDataRef.current.set(k.time, {
+            volume: k.volume || 0,
+            quoteVolume: k.quoteVolume || 0,
+          })
         })
 
         // 1.5 计算行情统计数据
@@ -614,12 +707,17 @@ export function AdvancedChart({
 
         // 2. 显示成交量
         if (volumeSeriesRef.current) {
-          const volumeEnabled = indicators.find(i => i.id === 'volume')?.enabled
+          const volumeEnabled = indicators.find(
+            (i) => i.id === 'volume'
+          )?.enabled
           if (volumeEnabled) {
             const volumeData = klineData.map((k: Kline) => ({
               time: k.time as UTCTimestamp,
               value: k.volume || 0,
-              color: k.close >= k.open ? 'rgba(14, 203, 129, 0.5)' : 'rgba(246, 70, 93, 0.5)',
+              color:
+                k.close >= k.open
+                  ? 'rgba(14, 203, 129, 0.5)'
+                  : 'rgba(246, 70, 93, 0.5)',
             }))
             volumeSeriesRef.current.setData(volumeData)
           } else {
@@ -638,13 +736,25 @@ export function AdvancedChart({
           dlog('[AdvancedChart] Received orders:', orders)
 
           if (orders.length > 0) {
-            dlog('[AdvancedChart] Creating markers from', orders.length, 'orders')
+            dlog(
+              '[AdvancedChart] Creating markers from',
+              orders.length,
+              'orders'
+            )
 
             // 提取 K 线时间数组（已排序）
             const klineTimes = klineData.map((k: any) => k.time as number)
             const klineMinTime = klineTimes[0] || 0
             const klineMaxTime = klineTimes[klineTimes.length - 1] || 0
-            dlog('[AdvancedChart] Kline time range:', klineMinTime, '-', klineMaxTime, '(', klineTimes.length, 'candles)')
+            dlog(
+              '[AdvancedChart] Kline time range:',
+              klineMinTime,
+              '-',
+              klineMaxTime,
+              '(',
+              klineTimes.length,
+              'candles)'
+            )
 
             // 二分查找：找到订单时间所属的 K 线蜡烛
             // 返回 time <= orderTime 的最大 K 线时间
@@ -669,21 +779,32 @@ export function AdvancedChart({
             }
 
             // 按 K 线时间分组统计订单
-            const ordersByCandle = new Map<number, { buys: number; sells: number }>()
+            const ordersByCandle = new Map<
+              number,
+              { buys: number; sells: number }
+            >()
 
-            orders.forEach(order => {
+            orders.forEach((order) => {
               // 使用二分查找找到对应的 K 线蜡烛时间
               const candleTime = findCandleTime(order.time)
 
               if (candleTime === null) {
                 if (DEBUG_CHART) {
-                  console.warn('[AdvancedChart] Skipping order outside kline range:',
-                    order.time, '(', new Date(order.time * 1000).toISOString(), ')')
+                  console.warn(
+                    '[AdvancedChart] Skipping order outside kline range:',
+                    order.time,
+                    '(',
+                    new Date(order.time * 1000).toISOString(),
+                    ')'
+                  )
                 }
                 return
               }
 
-              const existing = ordersByCandle.get(candleTime) || { buys: 0, sells: 0 }
+              const existing = ordersByCandle.get(candleTime) || {
+                buys: 0,
+                sells: 0,
+              }
               if (order.rawSide === 'buy') {
                 existing.buys++
               } else {
@@ -730,8 +851,17 @@ export function AdvancedChart({
             // 按时间排序（lightweight-charts 要求标记按时间顺序）
             markers.sort((a, b) => (a.time as number) - (b.time as number))
 
-            dlog('[AdvancedChart] Valid markers:', markers.length, 'out of', orders.length)
-            dlog('[AdvancedChart] Setting', markers.length, 'markers on candlestick series')
+            dlog(
+              '[AdvancedChart] Valid markers:',
+              markers.length,
+              'out of',
+              orders.length
+            )
+            dlog(
+              '[AdvancedChart] Setting',
+              markers.length,
+              'markers on candlestick series'
+            )
 
             try {
               // 存储标记数据供后续切换使用
@@ -745,9 +875,17 @@ export function AdvancedChart({
                 seriesMarkersRef.current.setMarkers(markersToShow)
               } else {
                 // 首次创建标记
-                seriesMarkersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markersToShow)
+                seriesMarkersRef.current = createSeriesMarkers(
+                  candlestickSeriesRef.current,
+                  markersToShow
+                )
               }
-              dlog('[AdvancedChart] Markers updated. Count:', markersToShow.length, 'Visible:', showOrderMarkers)
+              dlog(
+                '[AdvancedChart] Markers updated. Count:',
+                markersToShow.length,
+                'Visible:',
+                showOrderMarkers
+              )
             } catch (err) {
               console.error('[AdvancedChart] ❌ Failed to set markers:', err)
             }
@@ -764,7 +902,7 @@ export function AdvancedChart({
         } else {
           dlog('[AdvancedChart] Skipping markers:', {
             hasTraderID: !!traderID,
-            hasSeries: !!candlestickSeriesRef.current
+            hasSeries: !!candlestickSeriesRef.current,
           })
         }
 
@@ -784,7 +922,8 @@ export function AdvancedChart({
     loadData(false) // 首次加载
 
     // Real-time auto-refresh. Keep interval moderate to reduce UI jank.
-    const refreshMs = interval === '1d' ? 300000 : interval === '1m' ? 1000 : 15000
+    const refreshMs =
+      interval === '1d' ? 300000 : interval === '1m' ? 1000 : 15000
     const refreshInterval = setInterval(() => loadData(true), refreshMs)
     return () => clearInterval(refreshInterval)
   }, [symbol, interval, traderID, exchange])
@@ -797,7 +936,7 @@ export function AdvancedChart({
     const loadOpenOrders = async () => {
       try {
         // 先清除旧的价格线
-        priceLinesRef.current.forEach(line => {
+        priceLinesRef.current.forEach((line) => {
           try {
             candlestickSeriesRef.current?.removePriceLine(line)
           } catch (e) {
@@ -810,14 +949,17 @@ export function AdvancedChart({
         dlog('[AdvancedChart] Open orders for price lines:', openOrders)
 
         if (openOrders.length > 0 && candlestickSeriesRef.current) {
-          openOrders.forEach(order => {
+          openOrders.forEach((order) => {
             // 获取触发价格 (止损/止盈用 stop_price，限价单用 price)
-            const linePrice = order.stop_price > 0 ? order.stop_price : order.price
+            const linePrice =
+              order.stop_price > 0 ? order.stop_price : order.price
             if (linePrice <= 0) return
 
             // 判断订单类型
-            const isStopLoss = order.type.includes('STOP') || order.type.includes('SL')
-            const isTakeProfit = order.type.includes('TAKE_PROFIT') || order.type.includes('TP')
+            const isStopLoss =
+              order.type.includes('STOP') || order.type.includes('SL')
+            const isTakeProfit =
+              order.type.includes('TAKE_PROFIT') || order.type.includes('TP')
             const isLimit = order.type === 'LIMIT'
 
             // 设置价格线样式
@@ -851,7 +993,11 @@ export function AdvancedChart({
               priceLinesRef.current.push(priceLine)
             }
           })
-          dlog('[AdvancedChart] Created', priceLinesRef.current.length, 'price lines for pending orders')
+          dlog(
+            '[AdvancedChart] Created',
+            priceLinesRef.current.length,
+            'price lines for pending orders'
+          )
         }
       } catch (err) {
         console.error('[AdvancedChart] Error loading open orders:', err)
@@ -875,9 +1021,16 @@ export function AdvancedChart({
     if (!seriesMarkersRef.current) return
 
     try {
-      const markersToShow = showOrderMarkers ? currentMarkersDataRef.current : []
+      const markersToShow = showOrderMarkers
+        ? currentMarkersDataRef.current
+        : []
       seriesMarkersRef.current.setMarkers(markersToShow)
-      dlog('[AdvancedChart] Toggled markers visibility:', showOrderMarkers, 'Count:', markersToShow.length)
+      dlog(
+        '[AdvancedChart] Toggled markers visibility:',
+        showOrderMarkers,
+        'Count:',
+        markersToShow.length
+      )
     } catch (err) {
       console.error('[AdvancedChart] ❌ Failed to toggle markers:', err)
     }
@@ -888,13 +1041,13 @@ export function AdvancedChart({
     if (!chartRef.current) return
 
     // 清除旧指标
-    indicatorSeriesRef.current.forEach(series => {
+    indicatorSeriesRef.current.forEach((series) => {
       chartRef.current?.removeSeries(series as any)
     })
     indicatorSeriesRef.current.clear()
 
     // 添加启用的指标
-    indicators.forEach(indicator => {
+    indicators.forEach((indicator) => {
       if (!indicator.enabled || !chartRef.current) return
 
       if (indicator.id.startsWith('ma')) {
@@ -924,7 +1077,9 @@ export function AdvancedChart({
           lineWidth: 1,
           title: 'BB Upper',
         })
-        upperSeries.setData(bbData.map(d => ({ time: d.time as any, value: d.upper })))
+        upperSeries.setData(
+          bbData.map((d) => ({ time: d.time as any, value: d.upper }))
+        )
 
         const middleSeries = chartRef.current.addSeries(LineSeries, {
           color: indicator.color,
@@ -932,14 +1087,18 @@ export function AdvancedChart({
           lineStyle: 2,
           title: 'BB Middle',
         })
-        middleSeries.setData(bbData.map(d => ({ time: d.time as any, value: d.middle })))
+        middleSeries.setData(
+          bbData.map((d) => ({ time: d.time as any, value: d.middle }))
+        )
 
         const lowerSeries = chartRef.current.addSeries(LineSeries, {
           color: indicator.color,
           lineWidth: 1,
           title: 'BB Lower',
         })
-        lowerSeries.setData(bbData.map(d => ({ time: d.time as any, value: d.lower })))
+        lowerSeries.setData(
+          bbData.map((d) => ({ time: d.time as any, value: d.lower }))
+        )
 
         indicatorSeriesRef.current.set(indicator.id + '_upper', upperSeries)
         indicatorSeriesRef.current.set(indicator.id + '_middle', middleSeries)
@@ -950,8 +1109,10 @@ export function AdvancedChart({
 
   // 切换指标
   const toggleIndicator = (id: string) => {
-    setIndicators(prev =>
-      prev.map(ind => (ind.id === id ? { ...ind, enabled: !ind.enabled } : ind))
+    setIndicators((prev) =>
+      prev.map((ind) =>
+        ind.id === id ? { ...ind, enabled: !ind.enabled } : ind
+      )
     )
   }
 
@@ -971,14 +1132,20 @@ export function AdvancedChart({
       {/* Compact Professional Header */}
       <div
         className="flex items-center justify-between px-4 py-2"
-        style={{ borderBottom: '1px solid rgba(43, 49, 57, 0.6)', background: '#0D1117', flexShrink: 0 }}
+        style={{
+          borderBottom: '1px solid rgba(43, 49, 57, 0.6)',
+          background: '#0D1117',
+          flexShrink: 0,
+        }}
       >
         {/* Left: Symbol Info + Price */}
         <div className="flex items-center gap-4">
           {/* Symbol & Interval */}
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-white">{symbol}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1F2937] text-gray-400">{interval}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1F2937] text-gray-400">
+              {interval}
+            </span>
             <span
               className="text-[10px] px-1.5 py-0.5 rounded font-medium uppercase"
               style={{
@@ -995,29 +1162,51 @@ export function AdvancedChart({
             <div className="flex items-center gap-3 pl-3 border-l border-[#2B3139]">
               <span
                 className="text-base font-bold tabular-nums"
-                style={{ color: marketStats.priceChange >= 0 ? '#10B981' : '#EF4444' }}
+                style={{
+                  color: marketStats.priceChange >= 0 ? '#10B981' : '#EF4444',
+                }}
               >
                 {marketStats.price.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
-                  maximumFractionDigits: exchange === 'forex' || exchange === 'metals' ? 4 : 2
+                  maximumFractionDigits:
+                    exchange === 'forex' || exchange === 'metals' ? 4 : 2,
                 })}
               </span>
               <span
                 className="text-xs font-medium px-1.5 py-0.5 rounded tabular-nums"
                 style={{
-                  background: marketStats.priceChange >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                  background:
+                    marketStats.priceChange >= 0
+                      ? 'rgba(16, 185, 129, 0.1)'
+                      : 'rgba(239, 68, 68, 0.1)',
                   color: marketStats.priceChange >= 0 ? '#10B981' : '#EF4444',
                 }}
               >
-                {marketStats.priceChange >= 0 ? '+' : ''}{marketStats.priceChangePercent.toFixed(2)}%
+                {marketStats.priceChange >= 0 ? '+' : ''}
+                {marketStats.priceChangePercent.toFixed(2)}%
               </span>
 
               {/* Compact H/L */}
               <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                <span>H <span className="text-gray-300">{marketStats.high.toFixed(2)}</span></span>
-                <span>L <span className="text-gray-300">{marketStats.low.toFixed(2)}</span></span>
+                <span>
+                  H{' '}
+                  <span className="text-gray-300">
+                    {marketStats.high.toFixed(2)}
+                  </span>
+                </span>
+                <span>
+                  L{' '}
+                  <span className="text-gray-300">
+                    {marketStats.low.toFixed(2)}
+                  </span>
+                </span>
                 {marketStats.volume > 0 && baseUnit && (
-                  <span>Vol <span className="text-gray-300">{formatVolume(marketStats.volume)}</span></span>
+                  <span>
+                    Vol{' '}
+                    <span className="text-gray-300">
+                      {formatVolume(marketStats.volume)}
+                    </span>
+                  </span>
                 )}
               </div>
             </div>
@@ -1035,7 +1224,9 @@ export function AdvancedChart({
             onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
             className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-all"
             style={{
-              background: showIndicatorPanel ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+              background: showIndicatorPanel
+                ? 'rgba(96, 165, 250, 0.15)'
+                : 'transparent',
               color: showIndicatorPanel ? '#60A5FA' : '#6B7280',
             }}
           >
@@ -1047,7 +1238,9 @@ export function AdvancedChart({
             onClick={() => setShowOrderMarkers(!showOrderMarkers)}
             className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-all"
             style={{
-              background: showOrderMarkers ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+              background: showOrderMarkers
+                ? 'rgba(16, 185, 129, 0.15)'
+                : 'transparent',
               color: showOrderMarkers ? '#10B981' : '#6B7280',
             }}
             title={language === 'zh' ? '订单标记' : 'Order Markers'}
@@ -1090,7 +1283,7 @@ export function AdvancedChart({
 
           {/* 指标列表 */}
           <div className="p-3 space-y-1">
-            {indicators.map(indicator => (
+            {indicators.map((indicator) => (
               <label
                 key={indicator.id}
                 className="flex items-center gap-3 p-2.5 rounded-md hover:bg-white/5 cursor-pointer transition-all group"
@@ -1122,14 +1315,19 @@ export function AdvancedChart({
             className="px-4 py-2 text-xs text-gray-500 border-t"
             style={{ borderColor: 'rgba(43, 49, 57, 0.5)' }}
           >
-            {language === 'zh' ? '点击选择需要显示的指标' : 'Click to toggle indicators'}
+            {language === 'zh'
+              ? '点击选择需要显示的指标'
+              : 'Click to toggle indicators'}
           </div>
         </div>
       )}
 
       {/* 图表容器 */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        <div ref={chartContainerRef} style={{ height: '100%', width: '100%' }} />
+        <div
+          ref={chartContainerRef}
+          style={{ height: '100%', width: '100%' }}
+        />
 
         {/* OHLC Tooltip */}
         {tooltipData && (
@@ -1152,29 +1350,57 @@ export function AdvancedChart({
               boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
             }}
           >
-            <div style={{ marginBottom: '6px', color: '#F0B90B', fontWeight: 'bold', fontSize: '11px' }}>
-              {new Date((tooltipData.time as number) * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+            <div
+              style={{
+                marginBottom: '6px',
+                color: '#F0B90B',
+                fontWeight: 'bold',
+                fontSize: '11px',
+              }}
+            >
+              {new Date((tooltipData.time as number) * 1000).toLocaleString(
+                language === 'zh' ? 'zh-CN' : 'en-US',
+                {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }
+              )}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: '11px' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto 1fr',
+                gap: '4px 12px',
+                fontSize: '11px',
+              }}
+            >
               <span style={{ color: '#848E9C' }}>O:</span>
-              <span style={{ color: '#EAECEF', fontWeight: '500' }}>{tooltipData.open?.toFixed(2)}</span>
+              <span style={{ color: '#EAECEF', fontWeight: '500' }}>
+                {tooltipData.open?.toFixed(2)}
+              </span>
 
               <span style={{ color: '#848E9C' }}>H:</span>
-              <span style={{ color: '#0ECB81', fontWeight: '500' }}>{tooltipData.high?.toFixed(2)}</span>
+              <span style={{ color: '#0ECB81', fontWeight: '500' }}>
+                {tooltipData.high?.toFixed(2)}
+              </span>
 
               <span style={{ color: '#848E9C' }}>L:</span>
-              <span style={{ color: '#F6465D', fontWeight: '500' }}>{tooltipData.low?.toFixed(2)}</span>
+              <span style={{ color: '#F6465D', fontWeight: '500' }}>
+                {tooltipData.low?.toFixed(2)}
+              </span>
 
               <span style={{ color: '#848E9C' }}>C:</span>
-              <span style={{
-                color: tooltipData.close >= tooltipData.open ? '#0ECB81' : '#F6465D',
-                fontWeight: 'bold'
-              }}>
+              <span
+                style={{
+                  color:
+                    tooltipData.close >= tooltipData.open
+                      ? '#0ECB81'
+                      : '#F6465D',
+                  fontWeight: 'bold',
+                }}
+              >
                 {tooltipData.close?.toFixed(2)}
               </span>
 
@@ -1216,7 +1442,8 @@ export function AdvancedChart({
               fontWeight: '700',
               color: 'rgba(240, 185, 11, 0.12)',
               letterSpacing: '4px',
-              fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+              fontFamily:
+                'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
               textShadow: '0 2px 30px rgba(240, 185, 11, 0.2)',
             }}
           >
@@ -1237,7 +1464,6 @@ export function AdvancedChart({
           </div>
         </div>
       )}
-
     </div>
   )
 }

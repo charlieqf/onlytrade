@@ -21,11 +21,15 @@ export function LobbyPage() {
     window.dispatchEvent(new PopStateEvent('popstate'))
   }
 
-  const { data: competition } = useSWR<CompetitionData>('competition', api.getCompetition, {
-    refreshInterval: 15000,
-    revalidateOnFocus: false,
-    dedupingInterval: 10000,
-  })
+  const { data: competition } = useSWR<CompetitionData>(
+    'competition',
+    api.getCompetition,
+    {
+      refreshInterval: 15000,
+      revalidateOnFocus: false,
+      dedupingInterval: 10000,
+    }
+  )
 
   const topTraders = useMemo(() => {
     const traders = competition?.traders ?? []
@@ -47,10 +51,14 @@ export function LobbyPage() {
                 <div className="space-y-3">
                   <div className="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-full border border-nofx-gold/25 bg-nofx-gold/10 text-nofx-gold">
                     <Sparkles className="w-3.5 h-3.5" />
-                    {language === 'zh' ? '虚拟交易 · A股' : 'Virtual Trading · A-Shares'}
+                    {language === 'zh'
+                      ? '虚拟交易 · A股'
+                      : 'Virtual Trading · A-Shares'}
                   </div>
                   <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-                    {language === 'zh' ? 'OpenTrade 房间大厅' : 'OpenTrade Lobby'}
+                    {language === 'zh'
+                      ? 'OpenTrade 房间大厅'
+                      : 'OpenTrade Lobby'}
                   </h1>
                   <p className="text-sm md:text-base text-zinc-300 leading-relaxed max-w-2xl">
                     {language === 'zh'
@@ -60,7 +68,9 @@ export function LobbyPage() {
                 </div>
                 <div className="hidden md:block text-right">
                   <div className="text-xs text-zinc-400">
-                    {language === 'zh' ? '数据每 15 秒刷新' : 'Refresh every 15s'}
+                    {language === 'zh'
+                      ? '数据每 15 秒刷新'
+                      : 'Refresh every 15s'}
                   </div>
                   <div className="text-sm font-semibold text-zinc-200">
                     {language === 'zh' ? 'HS300' : 'HS300'}
@@ -74,7 +84,9 @@ export function LobbyPage() {
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm bg-nofx-gold text-black hover:opacity-90 transition-opacity"
                   onClick={() => {
                     if (topTraders[0]) {
-                      navigate(`/room?trader=${encodeURIComponent(getTraderSlug(topTraders[0]))}`)
+                      navigate(
+                        `/room?trader=${encodeURIComponent(getTraderSlug(topTraders[0]))}`
+                      )
                     } else {
                       navigate('/room')
                     }
@@ -134,7 +146,7 @@ export function LobbyPage() {
               </div>
             </div>
             <div className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20">
-              {(competition?.count ?? 0)}
+              {competition?.count ?? 0}
               {language === 'zh' ? ' 个交易员' : ' traders'}
             </div>
           </div>
@@ -175,13 +187,21 @@ export function LobbyPage() {
                             className="text-[10px] px-2 py-0.5 rounded-full border"
                             style={{
                               color: isRunning ? '#0ECB81' : '#A1A1AA',
-                              borderColor: isRunning ? 'rgba(14,203,129,0.35)' : 'rgba(161,161,170,0.35)',
-                              backgroundColor: isRunning ? 'rgba(14,203,129,0.12)' : 'rgba(161,161,170,0.10)',
+                              borderColor: isRunning
+                                ? 'rgba(14,203,129,0.35)'
+                                : 'rgba(161,161,170,0.35)',
+                              backgroundColor: isRunning
+                                ? 'rgba(14,203,129,0.12)'
+                                : 'rgba(161,161,170,0.10)',
                             }}
                           >
                             {isRunning
-                              ? (language === 'zh' ? '运行中' : 'Running')
-                              : (language === 'zh' ? '已停止' : 'Stopped')}
+                              ? language === 'zh'
+                                ? '运行中'
+                                : 'Running'
+                              : language === 'zh'
+                                ? '已停止'
+                                : 'Stopped'}
                           </span>
                         </div>
                       </div>

@@ -28,6 +28,7 @@ import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
 import { buildNarrationAgentMessage, buildProactiveAgentMessage } from './src/chat/chatAgentResponder.mjs'
 import { createLiveJsonFileProvider } from './src/liveJsonFileProvider.mjs'
 import { evaluateDataReadiness } from './src/dataReadiness.mjs'
+import { readJsonlRecordsStreaming } from './src/jsonlReader.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -109,6 +110,14 @@ const ROOM_EVENTS_STREAM_PACKET_INTERVAL_MS = Math.max(
 )
 const ROOM_EVENTS_BUFFER_SIZE = Math.max(10, Math.min(2000, Number(process.env.ROOM_EVENTS_BUFFER_SIZE || 200)))
 const ROOM_EVENTS_BUFFER_TTL_MS = Math.max(2_000, Number(process.env.ROOM_EVENTS_BUFFER_TTL_MS || 60_000))
+const ROOM_EVENTS_TEST_MODE = String(process.env.ROOM_EVENTS_TEST_MODE || 'false').toLowerCase() === 'true'
+const ROOM_EVENTS_CLEANUP_IN_TEST = ROOM_EVENTS_TEST_MODE
+  ? String(process.env.ROOM_EVENTS_CLEANUP_IN_TEST || 'false').toLowerCase() === 'true'
+  : false
+const ROOM_EVENTS_PACKET_BUILD_DELAY_MS = ROOM_EVENTS_TEST_MODE
+  ? Math.max(0, Math.min(5000, Number(process.env.ROOM_EVENTS_PACKET_BUILD_DELAY_MS || 0) || 0))
+  : 0
+const ROOM_EVENTS_COLLECT_STATS = ROOM_EVENTS_TEST_MODE
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
@@ -758,32 +767,13 @@ function broadcastRoomComment(roomId, comment = 'keepalive') {
     markRoomEventBufferExpiring(key, Date.now())
     clearRoomKeepaliveTimer(key)
     clearRoomStreamPacketTimer(key)
+    maybeDeleteRoomStreamPacketBuildState(key)
   }
   return sent
 }
 
 function broadcastRoomStreamPacket(roomId, packet) {
-  const key = String(roomId || '').trim()
-  if (!key) return 0
-  const set = roomEventSubscribersByRoom.get(key)
-  if (!set || set.size === 0) return 0
-  const id = nextRoomEventId(key)
-  let sent = 0
-  for (const client of Array.from(set)) {
-    const okWrite = writeSseEvent(client?.res, { id, event: 'stream_packet', data: packet })
-    if (!okWrite) {
-      try { set.delete(client) } catch { /* ignore */ }
-      continue
-    }
-    sent += 1
-  }
-  if (set.size === 0) {
-    roomEventSubscribersByRoom.delete(key)
-    markRoomEventBufferExpiring(key, Date.now())
-    clearRoomKeepaliveTimer(key)
-    clearRoomStreamPacketTimer(key)
-  }
-  return sent
+  return broadcastRoomEvent(roomId, 'stream_packet', packet)
 }
 
 function computeRoomPacketIntervalMs(roomId) {
@@ -813,6 +803,266 @@ function computeRoomDecisionLimitMax(roomId) {
     }
   }
   return Math.max(1, Math.min(Math.floor(max), 20))
+}
+
+function normalizeDecisionLimit(value, fallback = 5) {
+  const fallbackNum = Math.max(1, Math.min(Number(fallback || 5) || 5, 20))
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallbackNum
+  return Math.max(1, Math.min(Math.floor(parsed), 20))
+}
+
+function trimRoomStreamPacketDecisions(packet, decisionLimit) {
+  const safeLimit = normalizeDecisionLimit(decisionLimit, 5)
+  if (!packet || typeof packet !== 'object') return packet
+  if (!Array.isArray(packet.decisions_latest)) return packet
+  return {
+    ...packet,
+    decisions_latest: packet.decisions_latest.slice(0, safeLimit),
+  }
+}
+
+function ensureRoomStreamPacketBuildState(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const existing = roomStreamPacketBuildStateByRoom.get(key)
+  if (existing) return existing
+  const state = {
+    in_flight: false,
+    in_flight_promise: null,
+    in_flight_decision_limit_num: null,
+    current_concurrency: 0,
+    max_concurrency: 0,
+    build_started_count: 0,
+    build_finished_count: 0,
+    build_error_count: 0,
+    joined_call_count: 0,
+    timer_skip_count: 0,
+    last_start_ts_ms: null,
+    last_end_ts_ms: null,
+    last_error: null,
+    packet_overview_fetch_count: 0,
+    packet_digest_fetch_count: 0,
+    context_overview_fetch_count: 0,
+    context_digest_fetch_count: 0,
+    caller_started_counts: {
+      timer: 0,
+      sse_initial: 0,
+      http: 0,
+      other: 0,
+    },
+  }
+  roomStreamPacketBuildStateByRoom.set(key, state)
+  return state
+}
+
+function ensureRoomStreamPacketBuildGlobalStats(roomId) {
+  if (!ROOM_EVENTS_COLLECT_STATS) return null
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const existing = roomStreamPacketBuildGlobalStatsByRoom.get(key)
+  if (existing) return existing
+  const stats = {
+    current_concurrency: 0,
+    max_concurrency: 0,
+    build_started_count: 0,
+    build_finished_count: 0,
+    build_error_count: 0,
+  }
+  roomStreamPacketBuildGlobalStatsByRoom.set(key, stats)
+  return stats
+}
+
+function incrementRoomStreamPacketBuildStat(roomId, field, delta = 1) {
+  if (!ROOM_EVENTS_COLLECT_STATS) return
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const state = roomStreamPacketBuildStateByRoom.get(key)
+  if (!state) return
+  const current = Number(state[field] || 0)
+  const step = Number.isFinite(Number(delta)) ? Number(delta) : 1
+  state[field] = current + step
+}
+
+function markRoomStreamPacketBuildCallerStart(roomId, caller) {
+  if (!ROOM_EVENTS_COLLECT_STATS) return
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const state = roomStreamPacketBuildStateByRoom.get(key)
+  if (!state) return
+  const bucket = (caller === 'timer' || caller === 'sse_initial' || caller === 'http') ? caller : 'other'
+  const counts = state.caller_started_counts || {}
+  counts[bucket] = Number(counts[bucket] || 0) + 1
+  state.caller_started_counts = counts
+}
+
+function getRoomStreamPacketBuildStats(roomId) {
+  const key = String(roomId || '').trim()
+  if (!key) return null
+  const state = roomStreamPacketBuildStateByRoom.get(key)
+  const globalStats = roomStreamPacketBuildGlobalStatsByRoom.get(key)
+  if (!state && !globalStats) return null
+  return {
+    room_id: key,
+    in_flight: state?.in_flight === true,
+    current_concurrency: Number(state?.current_concurrency || 0),
+    max_concurrency: Number(state?.max_concurrency || 0),
+    build_started_count: Number(state?.build_started_count || 0),
+    build_finished_count: Number(state?.build_finished_count || 0),
+    build_error_count: Number(state?.build_error_count || 0),
+    joined_call_count: Number(state?.joined_call_count || 0),
+    timer_skip_count: Number(state?.timer_skip_count || 0),
+    last_start_ts_ms: state?.last_start_ts_ms || null,
+    last_end_ts_ms: state?.last_end_ts_ms || null,
+    last_error: state?.last_error || null,
+    packet_overview_fetch_count: Number(state?.packet_overview_fetch_count || 0),
+    packet_digest_fetch_count: Number(state?.packet_digest_fetch_count || 0),
+    context_overview_fetch_count: Number(state?.context_overview_fetch_count || 0),
+    context_digest_fetch_count: Number(state?.context_digest_fetch_count || 0),
+    caller_started_counts: {
+      timer: Number(state?.caller_started_counts?.timer || 0),
+      sse_initial: Number(state?.caller_started_counts?.sse_initial || 0),
+      http: Number(state?.caller_started_counts?.http || 0),
+      other: Number(state?.caller_started_counts?.other || 0),
+    },
+    global_current_concurrency: Number(globalStats?.current_concurrency || 0),
+    global_max_concurrency: Number(globalStats?.max_concurrency || 0),
+    global_build_started_count: Number(globalStats?.build_started_count || 0),
+    global_build_finished_count: Number(globalStats?.build_finished_count || 0),
+    global_build_error_count: Number(globalStats?.build_error_count || 0),
+  }
+}
+
+function maybeDeleteRoomStreamPacketBuildState(roomId, expectedState = null) {
+  if (ROOM_EVENTS_TEST_MODE && !ROOM_EVENTS_CLEANUP_IN_TEST) return
+  const key = String(roomId || '').trim()
+  if (!key) return
+  const state = roomStreamPacketBuildStateByRoom.get(key)
+  if (!state) return
+  if (expectedState && state !== expectedState) return
+  if (state.in_flight === true || state.in_flight_promise) return
+  const set = roomEventSubscribersByRoom.get(key)
+  if (set && set.size > 0) return
+  roomStreamPacketBuildStateByRoom.delete(key)
+}
+
+function sleep(ms) {
+  const delayMs = Number(ms)
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs)
+  })
+}
+
+async function buildRoomStreamPacketSingleflight({
+  roomId,
+  decisionLimit = 5,
+  caller = 'other',
+  skipIfInFlight = false,
+} = {}) {
+  const key = String(roomId || '').trim()
+  if (!key) {
+    throw httpError('invalid_room_id', 400)
+  }
+
+  const trader = getRegisteredTraderStrict(key)
+  if (!trader) {
+    throw httpError('room_not_found', 404)
+  }
+
+  const safeDecisionLimit = normalizeDecisionLimit(decisionLimit, 5)
+
+  while (true) {
+    const state = ensureRoomStreamPacketBuildState(key)
+    if (!state) {
+      throw httpError('invalid_room_id', 400)
+    }
+
+    const activePromise = state.in_flight_promise
+    const activeLimit = normalizeDecisionLimit(state.in_flight_decision_limit_num, 5)
+    if (activePromise) {
+      if (skipIfInFlight) {
+        if (ROOM_EVENTS_COLLECT_STATS) {
+          state.timer_skip_count = Number(state.timer_skip_count || 0) + 1
+        }
+        return { packet: null, skipped: true, joined: false }
+      }
+
+      if (safeDecisionLimit <= activeLimit) {
+        if (ROOM_EVENTS_COLLECT_STATS) {
+          state.joined_call_count = Number(state.joined_call_count || 0) + 1
+        }
+        const packet = await activePromise
+        return { packet: trimRoomStreamPacketDecisions(packet, safeDecisionLimit), skipped: false, joined: true }
+      }
+
+      try {
+        await activePromise
+      } catch {
+        // Active call failed; retry as primary caller with higher limit.
+      }
+      continue
+    }
+
+    state.in_flight = true
+    state.in_flight_decision_limit_num = safeDecisionLimit
+    const globalStats = ensureRoomStreamPacketBuildGlobalStats(key)
+    if (ROOM_EVENTS_COLLECT_STATS) {
+      state.current_concurrency = Number(state.current_concurrency || 0) + 1
+      state.max_concurrency = Math.max(Number(state.max_concurrency || 0), Number(state.current_concurrency || 0))
+      state.build_started_count = Number(state.build_started_count || 0) + 1
+      state.last_start_ts_ms = Date.now()
+      state.last_error = null
+      markRoomStreamPacketBuildCallerStart(key, caller)
+      if (globalStats) {
+        globalStats.current_concurrency = Number(globalStats.current_concurrency || 0) + 1
+        globalStats.max_concurrency = Math.max(
+          Number(globalStats.max_concurrency || 0),
+          Number(globalStats.current_concurrency || 0)
+        )
+        globalStats.build_started_count = Number(globalStats.build_started_count || 0) + 1
+      }
+    }
+
+    const promise = buildRoomStreamPacket({ roomId: key, decisionLimit: safeDecisionLimit })
+    state.in_flight_promise = promise
+
+    try {
+      const packet = await promise
+      if (ROOM_EVENTS_COLLECT_STATS) {
+        state.build_finished_count = Number(state.build_finished_count || 0) + 1
+        if (globalStats) {
+          globalStats.build_finished_count = Number(globalStats.build_finished_count || 0) + 1
+        }
+      }
+      return { packet: trimRoomStreamPacketDecisions(packet, safeDecisionLimit), skipped: false, joined: false }
+    } catch (error) {
+      if (ROOM_EVENTS_COLLECT_STATS) {
+        state.build_error_count = Number(state.build_error_count || 0) + 1
+        state.last_error = error?.code || error?.message || 'stream_packet_failed'
+        if (globalStats) {
+          globalStats.build_error_count = Number(globalStats.build_error_count || 0) + 1
+        }
+      }
+      throw error
+    } finally {
+      if (ROOM_EVENTS_COLLECT_STATS) {
+        state.last_end_ts_ms = Date.now()
+        state.current_concurrency = Math.max(0, Number(state.current_concurrency || 0) - 1)
+        if (globalStats) {
+          globalStats.current_concurrency = Math.max(0, Number(globalStats.current_concurrency || 0) - 1)
+        }
+      }
+      state.in_flight = false
+      state.in_flight_decision_limit_num = null
+      if (state.in_flight_promise === promise) {
+        state.in_flight_promise = null
+      }
+      maybeDeleteRoomStreamPacketBuildState(key, state)
+    }
+  }
 }
 
 function clearRoomKeepaliveTimer(roomId) {
@@ -866,8 +1116,15 @@ function ensureRoomStreamPacketTimer(roomId) {
   const timer = setInterval(async () => {
     try {
       const decisionLimit = computeRoomDecisionLimitMax(key)
-      const packet = await buildRoomStreamPacket({ roomId: key, decisionLimit })
-      broadcastRoomStreamPacket(key, packet)
+      const result = await buildRoomStreamPacketSingleflight({
+        roomId: key,
+        decisionLimit,
+        caller: 'timer',
+        skipIfInFlight: true,
+      })
+      if (!result?.skipped && result?.packet) {
+        broadcastRoomStreamPacket(key, result.packet)
+      }
     } catch {
       // ignore
     }
@@ -908,6 +1165,7 @@ function broadcastRoomEvent(roomId, event, data) {
     markRoomEventBufferExpiring(key, Date.now())
     clearRoomKeepaliveTimer(key)
     clearRoomStreamPacketTimer(key)
+    maybeDeleteRoomStreamPacketBuildState(key)
   }
   return sent
 }
@@ -1717,6 +1975,8 @@ const roomEventBufferExpiryByRoom = new Map()
 const roomPublicChatActivityByRoom = new Map()
 const roomKeepaliveTimerByRoom = new Map()
 const roomStreamPacketTimerByRoom = new Map()
+const roomStreamPacketBuildStateByRoom = new Map()
+const roomStreamPacketBuildGlobalStatsByRoom = new Map()
 const proactiveEmitInFlightByRoom = new Map()
 let proactiveLlmInFlight = 0
 const proactiveViewerTickStateByRoom = new Map()
@@ -2038,19 +2298,41 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
   }
 }
 
-async function buildRoomChatContext(roomId) {
-  const trader = getTraderById(roomId)
+async function buildRoomChatContext(roomId, {
+  overview = null,
+  digest = null,
+  latestDecision = null,
+  nowMs = Date.now(),
+} = {}) {
+  const safeRoomId = String(roomId || '').trim()
+  const trader = getTraderById(safeRoomId)
   const marketSpec = getMarketSpecForExchange(trader.exchange_id)
   const market = marketSpec.market
-  const now = Date.now()
-  const latest = agentRuntime?.getLatestDecisions?.(roomId, 1) || []
-  const latestDecision = latest[0] || null
-  const head = latestDecision?.decisions?.[0] || null
+  const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now()
+  const latest = latestDecision
+    ? [latestDecision]
+    : (agentRuntime?.getLatestDecisions?.(safeRoomId, 1) || [])
+  const effectiveDecision = latest[0] || null
+  const head = effectiveDecision?.decisions?.[0] || null
 
-  const [overview, digest] = await Promise.all([
-    getMarketOverviewSnapshot(market),
-    getNewsDigestSnapshot(market),
-  ])
+  let effectiveOverview = overview
+  let effectiveDigest = digest
+  const needOverview = !effectiveOverview
+  const needDigest = !effectiveDigest
+  if (needOverview || needDigest) {
+    const [fetchedOverview, fetchedDigest] = await Promise.all([
+      needOverview ? getMarketOverviewSnapshot(market) : Promise.resolve(null),
+      needDigest ? getNewsDigestSnapshot(market) : Promise.resolve(null),
+    ])
+    if (fetchedOverview) {
+      effectiveOverview = fetchedOverview
+      incrementRoomStreamPacketBuildStat(safeRoomId, 'context_overview_fetch_count')
+    }
+    if (fetchedDigest) {
+      effectiveDigest = fetchedDigest
+      incrementRoomStreamPacketBuildStat(safeRoomId, 'context_digest_fetch_count')
+    }
+  }
 
   const symbolBrief = head
     ? {
@@ -2063,8 +2345,8 @@ async function buildRoomChatContext(roomId) {
 
   return {
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: now }),
-    market_overview_brief: overview?.brief || '',
-    news_digest_titles: Array.isArray(digest?.titles) ? digest.titles : [],
+    market_overview_brief: effectiveOverview?.brief || '',
+    news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
     symbol_brief: symbolBrief,
   }
 }
@@ -3199,6 +3481,10 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
     throw httpError('invalid_room_id', 400)
   }
 
+  if (ROOM_EVENTS_PACKET_BUILD_DELAY_MS > 0) {
+    await sleep(ROOM_EVENTS_PACKET_BUILD_DELAY_MS)
+  }
+
   const trader = getRegisteredTraderStrict(safeRoomId)
   if (!trader) {
     throw httpError('room_not_found', 404)
@@ -3209,11 +3495,17 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
   const tz = getMarketSpecForExchange(trader.exchange_id).timezone
 
   const market = getMarketSpecForExchange(trader.exchange_id).market
-  const [roomContext, overview, digest] = await Promise.all([
-    buildRoomChatContext(safeRoomId),
+  incrementRoomStreamPacketBuildStat(safeRoomId, 'packet_overview_fetch_count')
+  incrementRoomStreamPacketBuildStat(safeRoomId, 'packet_digest_fetch_count')
+  const [overview, digest] = await Promise.all([
     getMarketOverviewSnapshot(market),
     getNewsDigestSnapshot(market),
   ])
+  const roomContext = await buildRoomChatContext(safeRoomId, {
+    overview,
+    digest,
+    nowMs: tsMs,
+  })
 
   const runtimeDecisions = agentRuntime?.getLatestDecisions?.(safeRoomId, limit) || []
   let persisted = []
@@ -3297,24 +3589,7 @@ function isValidDayKey(value) {
 }
 
 async function readJsonlRecords(filePath, { limit = 100, fromEnd = true } = {}) {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 2000))
-  try {
-    const content = await readFile(filePath, 'utf8')
-    const lines = content.split(/\r?\n/).filter(Boolean)
-    const slice = fromEnd ? lines.slice(-safeLimit) : lines.slice(0, safeLimit)
-    const out = []
-    for (const line of slice) {
-      try {
-        const parsed = JSON.parse(line)
-        if (parsed && typeof parsed === 'object') out.push(parsed)
-      } catch {
-        // ignore malformed line
-      }
-    }
-    return out
-  } catch {
-    return []
-  }
+  return await readJsonlRecordsStreaming(filePath, { limit, fromEnd })
 }
 
 async function listDecisionAuditLatest(traderId, { limit = 50 } = {}) {
@@ -3359,11 +3634,12 @@ async function listDecisionAuditDay(traderId, dayKey, { limit = 2000 } = {}) {
 
 app.get('/api/rooms/:roomId/stream-packet', async (req, res) => {
   try {
-    const packet = await buildRoomStreamPacket({
+    const result = await buildRoomStreamPacketSingleflight({
       roomId: req.params.roomId,
       decisionLimit: req.query.decision_limit,
+      caller: 'http',
     })
-    res.json(ok(packet))
+    res.json(ok(result?.packet || null))
   } catch (error) {
     res
       .status(Number.isFinite(Number(error?.status)) ? Number(error.status) : 500)
@@ -3429,8 +3705,14 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
 
     // Push an initial packet immediately.
     try {
-      const packet = await buildRoomStreamPacket({ roomId, decisionLimit: decisionLimitNum })
-      writeSseEvent(res, { id: nextRoomEventId(roomId), event: 'stream_packet', data: packet })
+      const result = await buildRoomStreamPacketSingleflight({
+        roomId,
+        decisionLimit: decisionLimitNum,
+        caller: 'sse_initial',
+      })
+      if (result?.packet) {
+        writeSseEvent(res, { id: nextRoomEventId(roomId), event: 'stream_packet', data: result.packet })
+      }
     } catch (error) {
       writeSseEvent(res, { event: 'error', data: { error: error?.code || error?.message || 'stream_packet_failed' } })
     }
@@ -3446,6 +3728,7 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
         markRoomEventBufferExpiring(roomId, Date.now())
         clearRoomKeepaliveTimer(roomId)
         clearRoomStreamPacketTimer(roomId)
+        maybeDeleteRoomStreamPacketBuildState(roomId)
       } else {
         // Re-evaluate desired per-room packet interval when subscriber set changes.
         ensureRoomStreamPacketTimer(roomId)
@@ -3456,6 +3739,20 @@ app.get('/api/rooms/:roomId/events', async (req, res) => {
       .status(Number.isFinite(Number(error?.status)) ? Number(error.status) : 500)
       .json({ success: false, error: error?.code || error?.message || 'room_events_failed' })
   }
+})
+
+app.get('/api/_test/rooms/:roomId/packet-build-stats', (req, res) => {
+  if (!ROOM_EVENTS_TEST_MODE) {
+    res.status(404).json({ success: false, error: 'not_found' })
+    return
+  }
+
+  const stats = getRoomStreamPacketBuildStats(req.params.roomId)
+  if (!stats) {
+    res.status(404).json({ success: false, error: 'room_not_found' })
+    return
+  }
+  res.json(ok(stats))
 })
 
 app.get('/api/agents/:agentId/decision-audit/latest', async (req, res) => {

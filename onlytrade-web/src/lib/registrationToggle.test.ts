@@ -13,12 +13,18 @@ describe('registration_enabled toggle', () => {
   })
 
   it('treats registration_enabled=true as enabled', () => {
-    const cfg = { beta_mode: false, registration_enabled: true } satisfies SystemConfig
+    const cfg = {
+      beta_mode: false,
+      registration_enabled: true,
+    } satisfies SystemConfig
     expect(isRegistrationEnabled(cfg)).toBe(true)
   })
 
   it('treats registration_enabled=false as disabled', () => {
-    const cfg = { beta_mode: false, registration_enabled: false } satisfies SystemConfig
+    const cfg = {
+      beta_mode: false,
+      registration_enabled: false,
+    } satisfies SystemConfig
     expect(isRegistrationEnabled(cfg)).toBe(false)
   })
 })

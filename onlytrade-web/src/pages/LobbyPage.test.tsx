@@ -55,6 +55,9 @@ describe('LobbyPage', () => {
     expect(await screen.findByText('Stopped')).toBeInTheDocument()
 
     const avatar = await screen.findByAltText('HS300 Momentum avatar')
-    expect(avatar).toHaveAttribute('src', expect.stringContaining('/api/agents/t_001/assets/avatar.jpg'))
+    expect(avatar).toHaveAttribute(
+      'src',
+      expect.stringContaining('/api/agents/t_001/assets/avatar.jpg')
+    )
   })
 })

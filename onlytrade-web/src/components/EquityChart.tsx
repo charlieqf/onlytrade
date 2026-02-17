@@ -40,7 +40,11 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
   const [displayMode, setDisplayMode] = useState<'dollar' | 'percent'>('dollar')
   const currencyUnit = 'CNY'
 
-  const { data: history, error, isLoading } = useSWR<EquityPoint[]>(
+  const {
+    data: history,
+    error,
+    isLoading,
+  } = useSWR<EquityPoint[]>(
     traderId ? `equity-history-${traderId}` : null,
     () => api.getEquityHistory(traderId),
     {
@@ -65,7 +69,10 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
     return (
       <div className={embedded ? 'p-6' : 'binance-card p-6'}>
         {!embedded && (
-          <h3 className="text-lg font-semibold mb-6" style={{ color: '#EAECEF' }}>
+          <h3
+            className="text-lg font-semibold mb-6"
+            style={{ color: '#EAECEF' }}
+          >
             {t('accountEquityCurve', language)}
           </h3>
         )}
@@ -107,7 +114,10 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
     return (
       <div className={embedded ? 'p-6' : 'binance-card p-6'}>
         {!embedded && (
-          <h3 className="text-lg font-semibold mb-6" style={{ color: '#EAECEF' }}>
+          <h3
+            className="text-lg font-semibold mb-6"
+            style={{ color: '#EAECEF' }}
+          >
             {t('accountEquityCurve', language)}
           </h3>
         )}
@@ -201,7 +211,8 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
             style={{ color: data.raw_pnl >= 0 ? '#0ECB81' : '#F6465D' }}
           >
             {data.raw_pnl >= 0 ? '+' : ''}
-            {data.raw_pnl.toFixed(2)} {currencyUnit} ({data.raw_pnl_pct >= 0 ? '+' : ''}
+            {data.raw_pnl.toFixed(2)} {currencyUnit} (
+            {data.raw_pnl_pct >= 0 ? '+' : ''}
             {data.raw_pnl_pct}%)
           </div>
         </div>
@@ -211,7 +222,11 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
   }
 
   return (
-    <div className={embedded ? 'p-3 sm:p-5' : 'binance-card p-3 sm:p-5 animate-fade-in'}>
+    <div
+      className={
+        embedded ? 'p-3 sm:p-5' : 'binance-card p-3 sm:p-5 animate-fade-in'
+      }
+    >
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
         <div className="flex-1">

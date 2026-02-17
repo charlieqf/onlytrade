@@ -8,13 +8,7 @@ import { OFFICIAL_LINKS } from '../constants/branding'
 import { getDemoMode, isStaticDemoMode } from '../demo/staticDemo'
 import { isRegistrationEnabled } from '../lib/config'
 
-type Page =
-  | 'lobby'
-  | 'room'
-  | 'stream'
-  | 'leaderboard'
-  | 'login'
-  | 'register'
+type Page = 'lobby' | 'room' | 'stream' | 'leaderboard' | 'login' | 'register'
 
 interface HeaderBarProps {
   onLoginClick?: () => void
@@ -84,10 +78,12 @@ export default function HeaderBar({
           }}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
         >
-          <img src="/icons/onlytrade.svg" alt="OpenTrade Logo" className="w-7 h-7" />
-          <span className="text-lg font-bold text-nofx-gold">
-            OpenTrade
-          </span>
+          <img
+            src="/icons/onlytrade.svg"
+            alt="OpenTrade Logo"
+            className="w-7 h-7"
+          />
+          <span className="text-lg font-bold text-nofx-gold">OpenTrade</span>
           {staticDemo && (
             <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-semibold uppercase tracking-wide">
               {demoLabel}
@@ -102,14 +98,39 @@ export default function HeaderBar({
             {/* Navigation tabs configuration */}
             {(() => {
               // Define all navigation tabs
-              const navTabs: { page: Page; path: string; label: string; requiresAuth: boolean }[] = [
-                { page: 'lobby', path: '/lobby', label: language === 'zh' ? '大厅' : 'Lobby', requiresAuth: false },
-                { page: 'room', path: '/room', label: language === 'zh' ? '房间' : 'Room', requiresAuth: false },
-                { page: 'stream', path: '/stream', label: language === 'zh' ? '直播间' : 'Stream', requiresAuth: false },
-                { page: 'leaderboard', path: '/leaderboard', label: t('realtimeNav', language), requiresAuth: false },
+              const navTabs: {
+                page: Page
+                path: string
+                label: string
+                requiresAuth: boolean
+              }[] = [
+                {
+                  page: 'lobby',
+                  path: '/lobby',
+                  label: language === 'zh' ? '大厅' : 'Lobby',
+                  requiresAuth: false,
+                },
+                {
+                  page: 'room',
+                  path: '/room',
+                  label: language === 'zh' ? '房间' : 'Room',
+                  requiresAuth: false,
+                },
+                {
+                  page: 'stream',
+                  path: '/stream',
+                  label: language === 'zh' ? '直播间' : 'Stream',
+                  requiresAuth: false,
+                },
+                {
+                  page: 'leaderboard',
+                  path: '/leaderboard',
+                  label: t('realtimeNav', language),
+                  requiresAuth: false,
+                },
               ]
 
-              const handleNavClick = (tab: typeof navTabs[0]) => {
+              const handleNavClick = (tab: (typeof navTabs)[0]) => {
                 // If requires auth and not logged in, show login prompt
                 if (tab.requiresAuth && !isLoggedIn) {
                   onLoginRequired?.(tab.label)
@@ -130,9 +151,7 @@ export default function HeaderBar({
                     ${currentPage === tab.page ? 'text-nofx-gold' : 'text-nofx-text-muted hover:text-nofx-gold'}`}
                 >
                   {currentPage === tab.page && (
-                    <span
-                      className="absolute inset-0 rounded-lg bg-nofx-gold/15 -z-10"
-                    />
+                    <span className="absolute inset-0 rounded-lg bg-nofx-gold/15 -z-10" />
                   )}
                   {tab.label}
                 </button>
@@ -152,7 +171,12 @@ export default function HeaderBar({
                 className="p-2 rounded-lg transition-all hover:scale-110 text-nofx-text-muted hover:text-white hover:bg-white/5"
                 title="GitHub"
               >
-                <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
                   <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
                 </svg>
               </a>
@@ -304,13 +328,33 @@ export default function HeaderBar({
               {/* Navigation Links */}
               <div className="flex flex-col gap-6 mb-12">
                 {(() => {
-                  const navTabs: { page: Page; path: string; label: string; requiresAuth: boolean }[] = [
-                    { page: 'lobby', path: '/lobby', label: language === 'zh' ? '大厅' : 'Lobby', requiresAuth: false },
-                    { page: 'room', path: '/room', label: language === 'zh' ? '房间' : 'Room', requiresAuth: false },
-                    { page: 'leaderboard', path: '/leaderboard', label: t('realtimeNav', language), requiresAuth: false },
+                  const navTabs: {
+                    page: Page
+                    path: string
+                    label: string
+                    requiresAuth: boolean
+                  }[] = [
+                    {
+                      page: 'lobby',
+                      path: '/lobby',
+                      label: language === 'zh' ? '大厅' : 'Lobby',
+                      requiresAuth: false,
+                    },
+                    {
+                      page: 'room',
+                      path: '/room',
+                      label: language === 'zh' ? '房间' : 'Room',
+                      requiresAuth: false,
+                    },
+                    {
+                      page: 'leaderboard',
+                      path: '/leaderboard',
+                      label: t('realtimeNav', language),
+                      requiresAuth: false,
+                    },
                   ]
 
-                  const handleMobileNavClick = (tab: typeof navTabs[0]) => {
+                  const handleMobileNavClick = (tab: (typeof navTabs)[0]) => {
                     if (tab.requiresAuth && !isLoggedIn) {
                       onLoginRequired?.(tab.label)
                       setMobileMenuOpen(false)
@@ -348,15 +392,19 @@ export default function HeaderBar({
                     </motion.button>
                   ))
                 })()}
-
               </div>
 
               {/* Bottom Actions */}
               <div className="mt-auto space-y-8">
                 {/* Social Links */}
                 <div className="flex items-center gap-4">
-                  {[ 
-                    { href: OFFICIAL_LINKS.github, icon: <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /> },
+                  {[
+                    {
+                      href: OFFICIAL_LINKS.github,
+                      icon: (
+                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                      ),
+                    },
                   ].map((link, i) => (
                     <a
                       key={i}
@@ -365,7 +413,12 @@ export default function HeaderBar({
                       rel="noopener noreferrer"
                       className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-500 hover:text-nofx-gold hover:border-nofx-gold transition-colors"
                     >
-                      <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                      >
                         {link.icon}
                       </svg>
                     </a>
@@ -383,10 +436,11 @@ export default function HeaderBar({
                           onLanguageChange?.(lang as Language)
                           setMobileMenuOpen(false)
                         }}
-                        className={`flex-1 py-3 text-sm font-bold rounded-md transition-colors ${language === lang
-                          ? 'bg-zinc-800 text-white shadow-sm'
-                          : 'text-zinc-500'
-                          }`}
+                        className={`flex-1 py-3 text-sm font-bold rounded-md transition-colors ${
+                          language === lang
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-500'
+                        }`}
                       >
                         {lang === 'zh' ? 'CN' : 'EN'}
                       </button>
@@ -405,7 +459,8 @@ export default function HeaderBar({
                       {t('exitLogin', language)}
                     </button>
                   ) : (
-                    currentPage !== 'login' && currentPage !== 'register' && (
+                    currentPage !== 'login' &&
+                    currentPage !== 'register' && (
                       <a
                         href="/login"
                         className="flex items-center justify-center bg-nofx-gold text-black rounded-lg font-bold text-sm hover:bg-yellow-400 transition-colors"

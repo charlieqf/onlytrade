@@ -32,9 +32,10 @@ export function useUserSessionId(): UseUserSessionIdState {
         if (stored && stored.trim()) {
           const safeStoredSessionId = stored.trim()
           const storedNickname = localStorage.getItem(USER_NICKNAME_STORAGE_KEY)
-          const safeNickname = (storedNickname && storedNickname.trim())
-            ? storedNickname.trim()
-            : fallbackNicknameFromSessionId(safeStoredSessionId)
+          const safeNickname =
+            storedNickname && storedNickname.trim()
+              ? storedNickname.trim()
+              : fallbackNicknameFromSessionId(safeStoredSessionId)
           localStorage.setItem(USER_NICKNAME_STORAGE_KEY, safeNickname)
 
           if (!mounted) return
@@ -63,7 +64,9 @@ export function useUserSessionId(): UseUserSessionIdState {
         setIsLoading(false)
       } catch (err) {
         if (!mounted) return
-        setError(err instanceof Error ? err : new Error('chat_session_init_failed'))
+        setError(
+          err instanceof Error ? err : new Error('chat_session_init_failed')
+        )
         setIsLoading(false)
       }
     }

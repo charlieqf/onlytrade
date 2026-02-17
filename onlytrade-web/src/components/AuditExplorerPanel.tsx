@@ -27,7 +27,9 @@ function safeJson(value: any, maxLen: number = 2400) {
   try {
     const text = JSON.stringify(value, null, 2)
     if (!text) return ''
-    return text.length > maxLen ? `${text.slice(0, maxLen)}\n... (truncated)` : text
+    return text.length > maxLen
+      ? `${text.slice(0, maxLen)}\n... (truncated)`
+      : text
   } catch {
     return ''
   }
@@ -39,7 +41,13 @@ async function copyToClipboard(text: string) {
   await navigator.clipboard.writeText(payload)
 }
 
-export function AuditExplorerPanel({ roomId, language }: { roomId: string; language: Language }) {
+export function AuditExplorerPanel({
+  roomId,
+  language,
+}: {
+  roomId: string
+  language: Language
+}) {
   const [mode, setMode] = useState<'latest' | 'day'>('latest')
   const [expandedKey, setExpandedKey] = useState<string>('')
   const [dayKey, setDayKey] = useState<string>(() => {
@@ -60,7 +68,10 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
     : null
   const { data, error, isLoading, mutate } = useSWR<DecisionAuditListPayload>(
     swrKey,
-    () => (mode === 'day' ? api.getDecisionAuditDay(roomId, dayKey, limit) : api.getDecisionAuditLatest(roomId, limit)),
+    () =>
+      mode === 'day'
+        ? api.getDecisionAuditDay(roomId, dayKey, limit)
+        : api.getDecisionAuditLatest(roomId, limit),
     {
       refreshInterval: mode === 'latest' ? 15000 : 0,
       revalidateOnFocus: false,
@@ -73,7 +84,9 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
   }, [data])
 
   const filteredRecords: DecisionAuditRecord[] = useMemo(() => {
-    const q = String(symbolQuery || '').trim().toLowerCase()
+    const q = String(symbolQuery || '')
+      .trim()
+      .toLowerCase()
     const level = String(readinessLevel || 'ALL').toUpperCase()
 
     return records.filter((rec) => {
@@ -95,17 +108,22 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
 
   function downloadJsonl(items: DecisionAuditRecord[]) {
     const rows = Array.isArray(items) ? items : []
-    const content = rows.map((rec) => {
-      try {
-        return JSON.stringify(rec)
-      } catch {
-        return ''
-      }
-    }).filter(Boolean).join('\n')
+    const content = rows
+      .map((rec) => {
+        try {
+          return JSON.stringify(rec)
+        } catch {
+          return ''
+        }
+      })
+      .filter(Boolean)
+      .join('\n')
     if (!content) return
 
-    const filename = `decision-audit-${roomId}-${mode === 'day' ? (dayKey || 'day') : 'latest'}.jsonl`
-    const blob = new Blob([`${content}\n`], { type: 'application/x-ndjson;charset=utf-8' })
+    const filename = `decision-audit-${roomId}-${mode === 'day' ? dayKey || 'day' : 'latest'}.jsonl`
+    const blob = new Blob([`${content}\n`], {
+      type: 'application/x-ndjson;charset=utf-8',
+    })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -120,7 +138,11 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
     try {
       const cycle = Number(rec?.cycle_number || 0)
       const ts = String(rec?.timestamp || '').trim()
-      window.dispatchEvent(new CustomEvent('jump-to-decision', { detail: { cycle_number: cycle, timestamp: ts } }))
+      window.dispatchEvent(
+        new CustomEvent('jump-to-decision', {
+          detail: { cycle_number: cycle, timestamp: ts },
+        })
+      )
     } catch {
       // ignore
     }
@@ -229,7 +251,9 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
         <input
           value={symbolQuery}
           onChange={(e) => setSymbolQuery(String(e.target.value || ''))}
-          placeholder={language === 'zh' ? 'symbol 包含...' : 'symbol contains...'}
+          placeholder={
+            language === 'zh' ? 'symbol 包含...' : 'symbol contains...'
+          }
           className="px-2 py-1 rounded text-xs font-mono bg-black/40 text-nofx-text-main border border-white/10 hover:border-white/20 focus:outline-none"
         />
         <select
@@ -238,7 +262,9 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
           className="px-2 py-1 rounded text-xs font-mono bg-black/40 text-nofx-text-main border border-white/10 hover:border-white/20 focus:outline-none"
           title={language === 'zh' ? '就绪级别' : 'Readiness'}
         >
-          <option value="ALL">{language === 'zh' ? '就绪: 全部' : 'Readiness: ALL'}</option>
+          <option value="ALL">
+            {language === 'zh' ? '就绪: 全部' : 'Readiness: ALL'}
+          </option>
           <option value="OK">OK</option>
           <option value="WARN">WARN</option>
           <option value="ERROR">ERROR</option>
@@ -274,33 +300,43 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
         </div>
       )}
 
-      {!isLoading && !error && records.length > 0 && filteredRecords.length === 0 && (
-        <div className="text-xs text-nofx-text-muted opacity-70">
-          {language === 'zh' ? '无匹配结果。' : 'No matches.'}
-        </div>
-      )}
+      {!isLoading &&
+        !error &&
+        records.length > 0 &&
+        filteredRecords.length === 0 && (
+          <div className="text-xs text-nofx-text-muted opacity-70">
+            {language === 'zh' ? '无匹配结果。' : 'No matches.'}
+          </div>
+        )}
 
       {filteredRecords.length > 0 && (
         <div className="space-y-2">
           {filteredRecords.map((rec, idx) => {
             const key = `${rec.saved_ts_ms || rec.timestamp || idx}`
             const readiness = rec.data_readiness
-            const readinessLevel = String(readiness?.level || '').toUpperCase() || '--'
+            const readinessLevel =
+              String(readiness?.level || '').toUpperCase() || '--'
             const forced = rec.forced_hold ? 'FORCED' : ''
             const action = String(rec.action || '').toUpperCase() || '--'
             const symbol = String(rec.symbol || '') || '--'
             const time = formatTime(rec.saved_ts_ms || rec.timestamp)
 
             return (
-              <div key={key} className="rounded border border-white/10 bg-black/20">
+              <div
+                key={key}
+                className="rounded border border-white/10 bg-black/20"
+              >
                 <button
                   type="button"
-                  onClick={() => setExpandedKey((prev) => (prev === key ? '' : key))}
+                  onClick={() =>
+                    setExpandedKey((prev) => (prev === key ? '' : key))
+                  }
                   className="w-full text-left px-3 py-2 flex items-center justify-between gap-3 hover:bg-white/5"
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-mono text-nofx-text-muted">
-                      {time} | cycle {String(rec.cycle_number ?? '--')} | {forced}
+                      {time} | cycle {String(rec.cycle_number ?? '--')} |{' '}
+                      {forced}
                     </div>
                     <div className="text-sm text-nofx-text-main truncate">
                       {symbol} {action} | readiness {readinessLevel}
@@ -315,12 +351,18 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
                         jumpToDecision(rec)
                       }}
                       className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
-                      title={language === 'zh' ? '跳转到对应决策卡片' : 'Jump to decision card'}
+                      title={
+                        language === 'zh'
+                          ? '跳转到对应决策卡片'
+                          : 'Jump to decision card'
+                      }
                     >
                       {language === 'zh' ? '跳转' : 'Jump'}
                     </button>
                     <span className="text-[11px] text-nofx-text-muted">
-                      {expandedKey === key ? t('collapse', language) : t('expand', language)}
+                      {expandedKey === key
+                        ? t('collapse', language)
+                        : t('expand', language)}
                     </span>
                   </div>
                 </button>
@@ -328,20 +370,35 @@ export function AuditExplorerPanel({ roomId, language }: { roomId: string; langu
                 {expandedKey === key && (
                   <div className="px-3 pb-3">
                     <div className="flex items-center justify-between gap-3 mt-1">
-                      <div className="text-[11px] font-mono text-nofx-text-muted">record.json</div>
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        record.json
+                      </div>
                       <button
                         type="button"
-                        onClick={() => copyWithToast(JSON.stringify(rec, null, 2), `audit.${key}`)}
+                        onClick={() =>
+                          copyWithToast(
+                            JSON.stringify(rec, null, 2),
+                            `audit.${key}`
+                          )
+                        }
                         className="text-[11px] px-2 py-1 rounded border border-white/10 bg-black/30 text-nofx-text-muted hover:text-nofx-text-main"
                       >
                         {copiedKey === `audit.${key}`
-                          ? (language === 'zh' ? '已复制' : 'Copied')
-                          : (language === 'zh' ? '复制' : 'Copy')}
+                          ? language === 'zh'
+                            ? '已复制'
+                            : 'Copied'
+                          : language === 'zh'
+                            ? '复制'
+                            : 'Copy'}
                       </button>
                     </div>
                     <div
                       className="mt-2 rounded-lg p-3 text-[11px] font-mono whitespace-pre-wrap"
-                      style={{ background: '#0B0E11', border: '1px solid #2B3139', color: '#EAECEF' }}
+                      style={{
+                        background: '#0B0E11',
+                        border: '1px solid #2B3139',
+                        color: '#EAECEF',
+                      }}
                     >
                       {safeJson(rec)}
                     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
 import { api } from './lib/api'
@@ -17,9 +17,11 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ConfirmDialogProvider } from './components/ConfirmDialog'
 import { t } from './i18n/translations'
 import { useSystemConfig } from './hooks/useSystemConfig'
+import { useRoomSse } from './hooks/useRoomSse'
 import { isStaticDemoMode } from './demo/staticDemo'
 
 import { OFFICIAL_LINKS } from './constants/branding'
+import { mergeChatMessages } from './lib/chat/mergeChatMessages'
 import type {
   TraderInfo,
   AgentRuntimeStatus,
@@ -29,59 +31,17 @@ import type {
   RoomStreamPacket,
 } from './types'
 
-type Page =
-  | 'lobby'
-  | 'room'
-  | 'stream'
-  | 'leaderboard'
-  | 'login'
-  | 'register'
-
-type RoomSseStatus = 'connecting' | 'connected' | 'reconnecting' | 'error'
-type RoomSseState = {
-  status: RoomSseStatus
-  last_open_ts_ms: number | null
-  last_error_ts_ms: number | null
-  last_event_ts_ms: number | null
-}
-
-function mergeChatMessages(previous: ChatMessage[] | undefined, incoming: ChatMessage[]) {
-  const prev = Array.isArray(previous) ? previous : []
-  const nextItems = Array.isArray(incoming) ? incoming : []
-
-  const byId = new Map<string, ChatMessage>()
-  for (const msg of prev) {
-    if (msg && typeof msg === 'object' && typeof (msg as any).id === 'string') {
-      byId.set((msg as any).id, msg)
-    }
-  }
-  for (const msg of nextItems) {
-    if (msg && typeof msg === 'object' && typeof (msg as any).id === 'string') {
-      byId.set((msg as any).id, msg)
-    }
-  }
-
-  const out = Array.from(byId.values())
-  out.sort((a, b) => Number(a?.created_ts_ms || 0) - Number(b?.created_ts_ms || 0))
-  return out.slice(-200)
-}
-
-
+type Page = 'lobby' | 'room' | 'stream' | 'leaderboard' | 'login' | 'register'
 
 function App() {
   const { language, setLanguage } = useLanguage()
   const { user, logout, isLoading } = useAuth()
   const { loading: configLoading } = useSystemConfig()
   const { mutate: mutateCache } = useSWRConfig()
-  const loginRequired = (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
+  const loginRequired =
+    (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
   const hasRuntimeAccess = !loginRequired || !!user
   const [route, setRoute] = useState(window.location.pathname)
-  const [roomSseState, setRoomSseState] = useState<RoomSseState>({
-    status: 'connecting',
-    last_open_ts_ms: null,
-    last_error_ts_ms: null,
-    last_event_ts_ms: null,
-  })
 
   // Resolve page from current path.
   const getInitialPage = (): Page => {
@@ -106,12 +66,12 @@ function App() {
   // Unified page navigation handler
   const navigateToPage = (page: Page) => {
     const pathMap: Record<Page, string> = {
-      'lobby': '/lobby',
-      'room': '/room',
-      'stream': '/stream',
-      'leaderboard': '/leaderboard',
-      'login': '/login',
-      'register': '/register',
+      lobby: '/lobby',
+      room: '/room',
+      stream: '/stream',
+      leaderboard: '/leaderboard',
+      login: '/login',
+      register: '/register',
     }
     const path = pathMap[page]
     if (path) {
@@ -123,7 +83,9 @@ function App() {
 
   const [currentPage, setCurrentPage] = useState<Page>(getInitialPage())
   // 从 URL 参数读取初始 trader 标识（格式: name-id前4位）
-  const [selectedTraderSlug, setSelectedTraderSlug] = useState<string | undefined>(() => {
+  const [selectedTraderSlug, setSelectedTraderSlug] = useState<
+    string | undefined
+  >(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('trader') || undefined
   })
@@ -141,12 +103,12 @@ function App() {
     const lastDashIndex = slug.lastIndexOf('-')
     if (lastDashIndex === -1) {
       // 没有 dash，直接按 name 匹配
-      return traderList.find(t => t.trader_name === slug)
+      return traderList.find((t) => t.trader_name === slug)
     }
     const name = slug.slice(0, lastDashIndex)
     const idPrefix = slug.slice(lastDashIndex + 1)
-    return traderList.find(t =>
-      t.trader_name === name && t.trader_id.startsWith(idPrefix)
+    return traderList.find(
+      (t) => t.trader_name === name && t.trader_id.startsWith(idPrefix)
     )
   }
   const [lastUpdate, setLastUpdate] = useState<string>('--:--:--')
@@ -209,164 +171,114 @@ function App() {
       }
     }
 
-    const selectedStillExists = !!selectedTraderId && traders.some((t) => t.trader_id === selectedTraderId)
+    const selectedStillExists =
+      !!selectedTraderId &&
+      traders.some((t) => t.trader_id === selectedTraderId)
     if (!selectedStillExists) {
       setSelectedTraderId(traders[0].trader_id)
     }
   }, [traders, selectedTraderId, selectedTraderSlug])
 
   // Room atomic stream packet (status/account/positions/decisions/context)
-  const { data: streamPacket, mutate: mutateStreamPacket } = useSWR<RoomStreamPacket>(
-    (currentPage === 'room' || currentPage === 'stream') && selectedTraderId
-      ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
-      : null,
-    () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
-    {
-      // SSE keeps this hot; keep polling as a fallback.
-      refreshInterval: 30000,
-      revalidateOnFocus: false,
-      dedupingInterval: 1500,
-    }
+  const { data: streamPacket, mutate: mutateStreamPacket } =
+    useSWR<RoomStreamPacket>(
+      (currentPage === 'room' || currentPage === 'stream') && selectedTraderId
+        ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
+        : null,
+      () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
+      {
+        // SSE keeps this hot; keep polling as a fallback.
+        refreshInterval: 30000,
+        revalidateOnFocus: false,
+        dedupingInterval: 1500,
+      }
+    )
+
+  const roomSseEnabled =
+    (currentPage === 'room' || currentPage === 'stream') && !!selectedTraderId
+  const lastRoomStreamPacketEventTsRef = useRef<number>(0)
+
+  const handleRoomSseStreamPacket = useCallback(
+    (packet: RoomStreamPacket) => {
+      lastRoomStreamPacketEventTsRef.current = Date.now()
+      const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
+      const slicedPacket: RoomStreamPacket = {
+        ...packet,
+        decisions_latest: Array.isArray(packet?.decisions_latest)
+          ? packet.decisions_latest.slice(0, limit)
+          : [],
+      }
+      mutateStreamPacket(slicedPacket, false)
+    },
+    [decisionsLimit, mutateStreamPacket]
   )
 
-  // Room realtime via SSE (best-effort, falls back to polling).
-  useEffect(() => {
-    if ((currentPage !== 'room' && currentPage !== 'stream') || !selectedTraderId) return
-
-    const roomId = selectedTraderId
-    const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
-    const url = `/api/rooms/${encodeURIComponent(roomId)}/events?decision_limit=${encodeURIComponent(String(limit))}`
-
-    setRoomSseState({
-      status: 'connecting',
-      last_open_ts_ms: null,
-      last_error_ts_ms: null,
-      last_event_ts_ms: null,
-    })
-
-    const es = new EventSource(url)
-
-    const markEvent = () => {
-      const now = Date.now()
-      setRoomSseState((prev) => ({
-        ...prev,
-        last_event_ts_ms: now,
-      }))
+  const handleRoomSseDecision = useCallback(() => {
+    const now = Date.now()
+    if (now - Number(lastRoomStreamPacketEventTsRef.current || 0) < 5000) {
+      return
     }
+    mutateStreamPacket()
+  }, [mutateStreamPacket])
 
-    es.onopen = () => {
-      const now = Date.now()
-      setRoomSseState((prev) => ({
-        ...prev,
-        status: 'connected',
-        last_open_ts_ms: now,
-      }))
-    }
+  const handleRoomSseChatPublicAppend = useCallback(
+    (messages: ChatMessage[]) => {
+      const roomId = String(selectedTraderId || '').trim()
+      if (!roomId || !messages.length) return
 
-    es.onerror = () => {
-      const now = Date.now()
-      setRoomSseState((prev) => {
-        const nextStatus: RoomSseStatus = es.readyState === 2
-          ? 'error'
-          : (prev.status === 'connecting' ? 'connecting' : 'reconnecting')
-        return {
-          ...prev,
-          status: nextStatus,
-          last_error_ts_ms: now,
-        }
-      })
-    }
+      mutateCache(
+        ['room-public-chat', roomId],
+        (prev: unknown) => {
+          const previous = Array.isArray(prev)
+            ? (prev as ChatMessage[])
+            : undefined
+          return mergeChatMessages(previous, messages)
+        },
+        false
+      )
+    },
+    [selectedTraderId, mutateCache]
+  )
 
-    const onStreamPacket = (evt: MessageEvent) => {
-      try {
-        const packet = JSON.parse(String(evt.data || 'null'))
-        if (!packet || typeof packet !== 'object') return
-        markEvent()
-
-        if (Array.isArray((packet as any).decisions_latest)) {
-          ;(packet as any).decisions_latest = (packet as any).decisions_latest.slice(0, limit)
-        }
-        // Update cache without triggering a refetch.
-        mutateStreamPacket(packet as any, false)
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    const onDecision = () => {
-      // Revalidate on decision to ensure we pick up any derived fields.
-      markEvent()
-      mutateStreamPacket()
-    }
-
-    const onChatPublicAppend = (evt: MessageEvent) => {
-      try {
-        const payload = JSON.parse(String(evt.data || 'null'))
-        if (!payload || typeof payload !== 'object') return
-        markEvent()
-
-        const messages: ChatMessage[] = []
-        if (payload?.message && typeof payload.message === 'object') {
-          messages.push(payload.message as any)
-        }
-        // Back-compat: older payloads may include agent_reply.
-        if (payload?.agent_reply && typeof payload.agent_reply === 'object') {
-          messages.push(payload.agent_reply as any)
-        }
-        if (messages.length === 0) return
-
-        mutateCache(['room-public-chat', roomId], (prev: any) => mergeChatMessages(prev, messages), false)
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    es.addEventListener('stream_packet', onStreamPacket as any)
-    es.addEventListener('decision', onDecision as any)
-    es.addEventListener('chat_public_append', onChatPublicAppend as any)
-
-    return () => {
-      es.removeEventListener('stream_packet', onStreamPacket as any)
-      es.removeEventListener('decision', onDecision as any)
-      es.removeEventListener('chat_public_append', onChatPublicAppend as any)
-      es.close()
-      setRoomSseState({
-        status: 'connecting',
-        last_open_ts_ms: null,
-        last_error_ts_ms: null,
-        last_event_ts_ms: null,
-      })
-    }
-  }, [currentPage, selectedTraderId, decisionsLimit, mutateStreamPacket, mutateCache])
+  const roomSseState = useRoomSse({
+    roomId: selectedTraderId,
+    decisionsLimit,
+    enabled: roomSseEnabled,
+    onStreamPacket: handleRoomSseStreamPacket,
+    onDecision: handleRoomSseDecision,
+    onChatPublicAppend: handleRoomSseChatPublicAppend,
+  })
 
   const status = streamPacket?.status
   const account = streamPacket?.account
   const positions = streamPacket?.positions
   const decisions = streamPacket?.decisions_latest
 
-  const { data: runtimeStatus, mutate: mutateRuntimeStatus } = useSWR<AgentRuntimeStatus>(
-    runtimeControlsEnabled && hasRuntimeAccess
-      ? 'agent-runtime-status'
-      : null,
-    api.getAgentRuntimeStatus,
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: false,
-      dedupingInterval: 2000,
-    }
-  )
+  const { data: runtimeStatus, mutate: mutateRuntimeStatus } =
+    useSWR<AgentRuntimeStatus>(
+      runtimeControlsEnabled && hasRuntimeAccess
+        ? 'agent-runtime-status'
+        : null,
+      api.getAgentRuntimeStatus,
+      {
+        refreshInterval: 5000,
+        revalidateOnFocus: false,
+        dedupingInterval: 2000,
+      }
+    )
 
-  const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } = useSWR<ReplayRuntimeStatus>(
-    runtimeControlsEnabled && hasRuntimeAccess
-      ? 'replay-runtime-status'
-      : null,
-    api.getReplayRuntimeStatus,
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: false,
-      dedupingInterval: 2000,
-    }
-  )
+  const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } =
+    useSWR<ReplayRuntimeStatus>(
+      runtimeControlsEnabled && hasRuntimeAccess
+        ? 'replay-runtime-status'
+        : null,
+      api.getReplayRuntimeStatus,
+      {
+        refreshInterval: 5000,
+        revalidateOnFocus: false,
+        dedupingInterval: 2000,
+      }
+    )
 
   const handleRuntimeControl = useCallback(
     async (action: AgentRuntimeControlAction, value?: number) => {
@@ -391,7 +303,12 @@ function App() {
         mutateStreamPacket(),
       ])
     },
-    [runtimeControlsEnabled, mutateRuntimeStatus, mutateReplayRuntimeStatus, mutateStreamPacket]
+    [
+      runtimeControlsEnabled,
+      mutateRuntimeStatus,
+      mutateReplayRuntimeStatus,
+      mutateStreamPacket,
+    ]
   )
 
   const handleFactoryReset = useCallback(
@@ -531,7 +448,9 @@ function App() {
                   selectedTraderId={selectedTraderId}
                   onTraderSelect={(traderId) => {
                     setSelectedTraderId(traderId)
-                    const trader = traders?.find(t => t.trader_id === traderId)
+                    const trader = traders?.find(
+                      (t) => t.trader_id === traderId
+                    )
                     if (trader) {
                       const traderSlug = getTraderSlug(trader)
                       setSelectedTraderSlug(traderSlug)
@@ -607,47 +526,47 @@ function App() {
         className="mt-16"
         style={{ borderTop: '1px solid #2B3139', background: '#181A20' }}
       >
-          <div
-            className="max-w-[1920px] mx-auto px-6 py-6 text-center text-sm"
-            style={{ color: '#5E6673' }}
-          >
-            <p>{t('footerTitle', language)}</p>
-            <p className="mt-1">{t('footerWarning', language)}</p>
-            <div className="mt-4 flex items-center justify-center gap-3 flex-wrap">
-              {/* GitHub */}
-              <a
-                href={OFFICIAL_LINKS.github}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold transition-all hover:scale-105"
-                style={{
-                  background: '#1E2329',
-                  color: '#848E9C',
-                  border: '1px solid #2B3139',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#2B3139'
-                  e.currentTarget.style.color = '#EAECEF'
-                  e.currentTarget.style.borderColor = '#F0B90B'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = '#1E2329'
-                  e.currentTarget.style.color = '#848E9C'
-                  e.currentTarget.style.borderColor = '#2B3139'
-                }}
+        <div
+          className="max-w-[1920px] mx-auto px-6 py-6 text-center text-sm"
+          style={{ color: '#5E6673' }}
+        >
+          <p>{t('footerTitle', language)}</p>
+          <p className="mt-1">{t('footerWarning', language)}</p>
+          <div className="mt-4 flex items-center justify-center gap-3 flex-wrap">
+            {/* GitHub */}
+            <a
+              href={OFFICIAL_LINKS.github}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded text-sm font-semibold transition-all hover:scale-105"
+              style={{
+                background: '#1E2329',
+                color: '#848E9C',
+                border: '1px solid #2B3139',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#2B3139'
+                e.currentTarget.style.color = '#EAECEF'
+                e.currentTarget.style.borderColor = '#F0B90B'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#1E2329'
+                e.currentTarget.style.color = '#848E9C'
+                e.currentTarget.style.borderColor = '#2B3139'
+              }}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 16 16"
+                fill="currentColor"
               >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                >
-                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-                </svg>
-                Source
-              </a>
-            </div>
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+              </svg>
+              Source
+            </a>
           </div>
+        </div>
       </footer>
 
       {/* Login Required Overlay */}
@@ -659,7 +578,6 @@ function App() {
     </div>
   )
 }
-
 
 // Wrap App with providers
 export default function AppWithProviders() {

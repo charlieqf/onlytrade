@@ -4,7 +4,12 @@ import crypto from 'node:crypto'
 const baseURL = process.env.E2E_BASE_URL
 
 function unwrapApiPayload<T>(json: any): T {
-  if (json && typeof json === 'object' && typeof json.success === 'boolean' && 'data' in json) {
+  if (
+    json &&
+    typeof json === 'object' &&
+    typeof json.success === 'boolean' &&
+    'data' in json
+  ) {
     return json.data as T
   }
   return json as T
@@ -33,7 +38,12 @@ function base32Decode(input: string): Buffer {
   return Buffer.from(out)
 }
 
-function totpCode(secretBase32: string, nowMs = Date.now(), stepSec = 30, digits = 6): string {
+function totpCode(
+  secretBase32: string,
+  nowMs = Date.now(),
+  stepSec = 30,
+  digits = 6
+): string {
   const key = base32Decode(secretBase32)
   const counter = Math.floor(nowMs / 1000 / stepSec)
   const msg = Buffer.alloc(8)
@@ -42,7 +52,7 @@ function totpCode(secretBase32: string, nowMs = Date.now(), stepSec = 30, digits
 
   const hmac = crypto.createHmac('sha1', key).update(msg).digest()
   const offset = hmac[hmac.length - 1] & 0x0f
-  const bin = ((hmac.readUInt32BE(offset) & 0x7fffffff) >>> 0)
+  const bin = (hmac.readUInt32BE(offset) & 0x7fffffff) >>> 0
   const mod = 10 ** digits
   const code = String(bin % mod).padStart(digits, '0')
   return code
@@ -95,7 +105,9 @@ test('public traders endpoint responds with array', async ({ request }) => {
   const data = unwrapApiPayload<any>(await res.json())
   expect(Array.isArray(data)).toBe(true)
 
-  if ((process.env.E2E_EXPECT_TRADERS_NONEMPTY || '').toLowerCase() === 'true') {
+  if (
+    (process.env.E2E_EXPECT_TRADERS_NONEMPTY || '').toLowerCase() === 'true'
+  ) {
     expect(data.length).toBeGreaterThan(0)
   }
 })
@@ -132,7 +144,9 @@ test('room loads with a known trader', async ({ page }) => {
   const slug = String(process.env.E2E_TRADER_SLUG || '').trim()
   test.skip(!slug, 'Set E2E_TRADER_SLUG to a stable trader slug')
 
-  await page.goto(`/room?trader=${encodeURIComponent(slug)}`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`/room?trader=${encodeURIComponent(slug)}`, {
+    waitUntil: 'domcontentloaded',
+  })
   await expect(page.getByTestId('page-room')).toBeVisible()
   await expect(page.getByTestId('trader-dashboard')).toBeVisible()
   await expect(page.getByTestId('room-empty-state')).toHaveCount(0)
@@ -161,7 +175,9 @@ test('login via email/password + TOTP sets auth_token', async ({ page }) => {
     await page.getByTestId('otp-submit').click()
   }
 
-  await page.waitForFunction(() => !!localStorage.getItem('auth_token'), null, { timeout: 20_000 })
+  await page.waitForFunction(() => !!localStorage.getItem('auth_token'), null, {
+    timeout: 20_000,
+  })
   const token = await page.evaluate(() => localStorage.getItem('auth_token'))
   expect(token).toBeTruthy()
   expect(String(token).length).toBeGreaterThan(10)

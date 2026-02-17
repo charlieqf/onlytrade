@@ -49,7 +49,13 @@ describe('room chat panels', () => {
     expect(screen.getByText(/^Public$/i)).toBeInTheDocument()
     await screen.findByText('TraderFox')
 
-    render(<RoomPrivateChatPanel roomId="t_001" userSessionId="usr_sess_1" userNickname="TraderFox" />)
+    render(
+      <RoomPrivateChatPanel
+        roomId="t_001"
+        userSessionId="usr_sess_1"
+        userNickname="TraderFox"
+      />
+    )
     expect(screen.getByText(/^Private$/i)).toBeInTheDocument()
     await screen.findByText('HS300 Momentum')
   })

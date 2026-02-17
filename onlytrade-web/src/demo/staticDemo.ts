@@ -8,8 +8,14 @@ import type {
   SystemStatus,
   TraderInfo,
 } from '../types'
-import type { MarketBarFrameBatchV1, MarketBarFrameV1 } from '../contracts/marketData'
-import { generateMockFrameBatch, generateMockLegacyKlines } from './mockMarketData'
+import type {
+  MarketBarFrameBatchV1,
+  MarketBarFrameV1,
+} from '../contracts/marketData'
+import {
+  generateMockFrameBatch,
+  generateMockLegacyKlines,
+} from './mockMarketData'
 
 let replayBatchCache: MarketBarFrameBatchV1 | null = null
 let replayBatchPromise: Promise<MarketBarFrameBatchV1 | null> | null = null
@@ -40,7 +46,9 @@ function replayFramesForSymbol(
   limit: number
 ): MarketBarFrameV1[] {
   const filtered = frames.filter((f) => f.instrument.symbol === symbol)
-  const sorted = [...filtered].sort((a, b) => a.window.start_ts_ms - b.window.start_ts_ms)
+  const sorted = [...filtered].sort(
+    (a, b) => a.window.start_ts_ms - b.window.start_ts_ms
+  )
   const safeLimit = Math.max(1, Math.min(limit, 2000))
   return sorted.slice(-safeLimit)
 }
@@ -48,14 +56,16 @@ function replayFramesForSymbol(
 export type DemoMode = 'static' | 'mock-live' | 'live'
 
 const DEMO_MODE_RAW = (import.meta.env.VITE_DEMO_MODE || 'live').toLowerCase()
-const DEMO_MODE_ALLOWED = (import.meta.env.VITE_ALLOW_DEMO_MODE || 'false').toLowerCase() === 'true'
+const DEMO_MODE_ALLOWED =
+  (import.meta.env.VITE_ALLOW_DEMO_MODE || 'false').toLowerCase() === 'true'
 const DEMO_BOOT_TS = Date.now()
 const MOCK_LIVE_STEP_MS = 8000
 
 export function getDemoMode(): DemoMode {
   if (!DEMO_MODE_ALLOWED) return 'live'
   if (DEMO_MODE_RAW === 'live') return 'live'
-  if (DEMO_MODE_RAW === 'mock-live' || DEMO_MODE_RAW === 'mocklive') return 'mock-live'
+  if (DEMO_MODE_RAW === 'mock-live' || DEMO_MODE_RAW === 'mocklive')
+    return 'mock-live'
   return 'static'
 }
 
@@ -172,12 +182,9 @@ function getCompetitionData(): CompetitionData {
   const traders = BASE_COMPETITION.traders.map((trader, idx) => {
     const phase = idx * 2.1
     const wave = Math.sin((tick + phase) / 2.8) * 0.55
-    const drift = (
-      idx === 0 ? 0.015
-        : idx === 1 ? 0.004
-          : idx === 2 ? -0.006
-            : 0.0025
-    ) * tick
+    const drift =
+      (idx === 0 ? 0.015 : idx === 1 ? 0.004 : idx === 2 ? -0.006 : 0.0025) *
+      tick
     const pct = Number((trader.total_pnl_pct + wave + drift).toFixed(2))
     const pnl = Number(((initial * pct) / 100).toFixed(2))
     const equity = Number((initial + pnl).toFixed(2))
@@ -219,7 +226,9 @@ function getStatus(traderId = 't_001'): SystemStatus {
 
 function getAccount(traderId = 't_001'): AccountInfo {
   const competition = getCompetitionData()
-  const rank = competition.traders.find((t) => t.trader_id === traderId) || competition.traders[0]
+  const rank =
+    competition.traders.find((t) => t.trader_id === traderId) ||
+    competition.traders[0]
   const floating = Number((Math.sin(getMockTick() / 3) * 800).toFixed(2))
   return {
     total_equity: rank.total_equity,
@@ -282,7 +291,8 @@ const DECISION_SCRIPT = [
     stop_loss: 1480,
     take_profit: 1568,
     confidence: 74,
-    reasoning: 'Trend and volume remain supportive; keep position sizing conservative.',
+    reasoning:
+      'Trend and volume remain supportive; keep position sizing conservative.',
     input_prompt: 'HS300 momentum snapshot',
     execution_log: 'virtual fill applied at next bar open',
   },
@@ -311,7 +321,8 @@ const DECISION_SCRIPT = [
     symbol: '600519.SH',
     price: 1528.0,
     confidence: 66,
-    reasoning: 'Target reached on schedule; lock gains and reduce concentration.',
+    reasoning:
+      'Target reached on schedule; lock gains and reduce concentration.',
     input_prompt: 'take-profit rule',
     execution_log: 'partial close executed',
   },
@@ -345,7 +356,10 @@ function getDecisions(): DecisionRecord[] {
       system_prompt: 'demo',
       input_prompt: script.input_prompt,
       cot_trace: 'compressed-demo-rationale',
-      decision_json: JSON.stringify({ action: script.action, symbol: script.symbol }),
+      decision_json: JSON.stringify({
+        action: script.action,
+        symbol: script.symbol,
+      }),
       account_state: {
         total_balance: 102345.12,
         available_balance: 94123.4,
@@ -391,7 +405,9 @@ function getStatistics(): Statistics {
 
 function generateEquityHistory(traderId: string, points = 72) {
   const base = 100000
-  const rank = getCompetitionData().traders.find((t) => t.trader_id === traderId)
+  const rank = getCompetitionData().traders.find(
+    (t) => t.trader_id === traderId
+  )
   const targetPct = (rank?.total_pnl_pct ?? 0) / 100
   const now = Date.now()
   const step = 10 * 60_000
@@ -522,7 +538,11 @@ function parseUrl(input: string): URL {
   return new URL(input, 'http://localhost')
 }
 
-export async function getStaticApiData(url: string, method: string, body?: any): Promise<any | undefined> {
+export async function getStaticApiData(
+  url: string,
+  method: string,
+  body?: any
+): Promise<any | undefined> {
   if (!isStaticDemoMode()) return undefined
   const parsed = parseUrl(url)
   const path = parsed.pathname
@@ -531,25 +551,42 @@ export async function getStaticApiData(url: string, method: string, body?: any):
 
   if (method === 'GET' && path === '/api/traders') return TRADERS
   if (method === 'GET' && path === '/api/competition') return competition
-  if (method === 'GET' && path === '/api/top-traders') return competition.traders.slice(0, 3)
+  if (method === 'GET' && path === '/api/top-traders')
+    return competition.traders.slice(0, 3)
   if (method === 'GET' && path === '/api/status') return getStatus(traderId)
   if (method === 'GET' && path === '/api/account') return getAccount(traderId)
-  if (method === 'GET' && path === '/api/positions') return getPositions(traderId)
-  if (method === 'GET' && path === '/api/decisions/latest') return getDecisions()
+  if (method === 'GET' && path === '/api/positions')
+    return getPositions(traderId)
+  if (method === 'GET' && path === '/api/decisions/latest')
+    return getDecisions()
   if (method === 'GET' && path === '/api/statistics') return getStatistics()
-  if (method === 'GET' && path === '/api/equity-history') return generateEquityHistory(traderId, 96)
+  if (method === 'GET' && path === '/api/equity-history')
+    return generateEquityHistory(traderId, 96)
 
   if (method === 'POST' && path === '/api/equity-history-batch') {
-    const ids: string[] = Array.isArray(body?.trader_ids) ? body.trader_ids : TRADERS.map((t) => t.trader_id)
-    const histories = Object.fromEntries(ids.map((id) => [id, generateEquityHistory(id, 96)]))
+    const ids: string[] = Array.isArray(body?.trader_ids)
+      ? body.trader_ids
+      : TRADERS.map((t) => t.trader_id)
+    const histories = Object.fromEntries(
+      ids.map((id) => [id, generateEquityHistory(id, 96)])
+    )
     return { histories }
   }
 
-  if (method === 'GET' && path === '/api/positions/history') return getPositionHistory(traderId)
+  if (method === 'GET' && path === '/api/positions/history')
+    return getPositionHistory(traderId)
 
   if (method === 'GET' && path === '/api/market/frames') {
     const symbol = parsed.searchParams.get('symbol') || '600519.SH'
-    const interval = (parsed.searchParams.get('interval') || '5m') as '1m' | '5m' | '15m' | '30m' | '60m' | '1h' | '4h' | '1d'
+    const interval = (parsed.searchParams.get('interval') || '5m') as
+      | '1m'
+      | '5m'
+      | '15m'
+      | '30m'
+      | '60m'
+      | '1h'
+      | '4h'
+      | '1d'
     const limit = Number(parsed.searchParams.get('limit') || '800')
 
     const replaySource = parsed.searchParams.get('source')
@@ -575,13 +612,23 @@ export async function getStaticApiData(url: string, method: string, body?: any):
       interval,
       limit: Number.isFinite(limit) ? Math.min(limit, 1500) : 800,
       mode: isMockLiveDemoMode() ? 'real' : 'mock',
-      provider: isMockLiveDemoMode() ? 'mock-replay-stream' : 'static-mock-feed',
+      provider: isMockLiveDemoMode()
+        ? 'mock-replay-stream'
+        : 'static-mock-feed',
     })
   }
 
   if (method === 'GET' && path === '/api/klines') {
     const symbol = parsed.searchParams.get('symbol') || '600519.SH'
-    const interval = (parsed.searchParams.get('interval') || '5m') as '1m' | '5m' | '15m' | '30m' | '60m' | '1h' | '4h' | '1d'
+    const interval = (parsed.searchParams.get('interval') || '5m') as
+      | '1m'
+      | '5m'
+      | '15m'
+      | '30m'
+      | '60m'
+      | '1h'
+      | '4h'
+      | '1d'
     const limit = Number(parsed.searchParams.get('limit') || '800')
 
     const replaySource = parsed.searchParams.get('source')
@@ -610,7 +657,9 @@ export async function getStaticApiData(url: string, method: string, body?: any):
       interval,
       limit: Number.isFinite(limit) ? Math.min(limit, 1500) : 800,
       mode: isMockLiveDemoMode() ? 'real' : 'mock',
-      provider: isMockLiveDemoMode() ? 'mock-replay-stream' : 'static-mock-feed',
+      provider: isMockLiveDemoMode()
+        ? 'mock-replay-stream'
+        : 'static-mock-feed',
     })
   }
 
@@ -644,7 +693,9 @@ export async function getStaticApiData(url: string, method: string, body?: any):
     }
   }
 
-  const closePositionMatch = path.match(/^\/api\/traders\/([^/]+)\/close-position$/)
+  const closePositionMatch = path.match(
+    /^\/api\/traders\/([^/]+)\/close-position$/
+  )
   if (method === 'POST' && closePositionMatch) {
     return {
       message: 'Virtual position close queued in demo mode',

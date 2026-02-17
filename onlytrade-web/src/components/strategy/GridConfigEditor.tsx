@@ -43,56 +43,119 @@ export function GridConfigEditor({
 
       // Trading pair
       symbol: { zh: '交易对', en: 'Trading Pair' },
-      symbolDesc: { zh: '选择要进行网格交易的交易对', en: 'Select trading pair for grid trading' },
+      symbolDesc: {
+        zh: '选择要进行网格交易的交易对',
+        en: 'Select trading pair for grid trading',
+      },
 
       // Investment
       totalInvestment: { zh: '投资金额 (USDT)', en: 'Investment (USDT)' },
-      totalInvestmentDesc: { zh: '网格策略的总投资金额', en: 'Total investment for grid strategy' },
+      totalInvestmentDesc: {
+        zh: '网格策略的总投资金额',
+        en: 'Total investment for grid strategy',
+      },
       leverage: { zh: '杠杆倍数', en: 'Leverage' },
-      leverageDesc: { zh: '交易使用的杠杆倍数 (1-5)', en: 'Leverage for trading (1-5)' },
+      leverageDesc: {
+        zh: '交易使用的杠杆倍数 (1-5)',
+        en: 'Leverage for trading (1-5)',
+      },
 
       // Grid parameters
       gridCount: { zh: '网格数量', en: 'Grid Count' },
-      gridCountDesc: { zh: '网格层级数量 (5-50)', en: 'Number of grid levels (5-50)' },
+      gridCountDesc: {
+        zh: '网格层级数量 (5-50)',
+        en: 'Number of grid levels (5-50)',
+      },
       distribution: { zh: '资金分配方式', en: 'Distribution' },
-      distributionDesc: { zh: '网格层级的资金分配方式', en: 'Fund allocation across grid levels' },
+      distributionDesc: {
+        zh: '网格层级的资金分配方式',
+        en: 'Fund allocation across grid levels',
+      },
       uniform: { zh: '均匀分配', en: 'Uniform' },
       gaussian: { zh: '高斯分配 (推荐)', en: 'Gaussian (Recommended)' },
       pyramid: { zh: '金字塔分配', en: 'Pyramid' },
 
       // Price bounds
-      useAtrBounds: { zh: '自动计算边界 (ATR)', en: 'Auto-calculate Bounds (ATR)' },
-      useAtrBoundsDesc: { zh: '基于 ATR 自动计算网格上下边界', en: 'Auto-calculate bounds based on ATR' },
+      useAtrBounds: {
+        zh: '自动计算边界 (ATR)',
+        en: 'Auto-calculate Bounds (ATR)',
+      },
+      useAtrBoundsDesc: {
+        zh: '基于 ATR 自动计算网格上下边界',
+        en: 'Auto-calculate bounds based on ATR',
+      },
       atrMultiplier: { zh: 'ATR 倍数', en: 'ATR Multiplier' },
-      atrMultiplierDesc: { zh: '边界距离当前价格的 ATR 倍数', en: 'ATR multiplier for bounds distance' },
+      atrMultiplierDesc: {
+        zh: '边界距离当前价格的 ATR 倍数',
+        en: 'ATR multiplier for bounds distance',
+      },
       upperPrice: { zh: '上边界价格', en: 'Upper Price' },
-      upperPriceDesc: { zh: '网格上边界价格 (0=自动计算)', en: 'Grid upper bound (0=auto)' },
+      upperPriceDesc: {
+        zh: '网格上边界价格 (0=自动计算)',
+        en: 'Grid upper bound (0=auto)',
+      },
       lowerPrice: { zh: '下边界价格', en: 'Lower Price' },
-      lowerPriceDesc: { zh: '网格下边界价格 (0=自动计算)', en: 'Grid lower bound (0=auto)' },
+      lowerPriceDesc: {
+        zh: '网格下边界价格 (0=自动计算)',
+        en: 'Grid lower bound (0=auto)',
+      },
 
       // Risk control
       maxDrawdown: { zh: '最大回撤 (%)', en: 'Max Drawdown (%)' },
-      maxDrawdownDesc: { zh: '触发紧急退出的最大回撤百分比', en: 'Max drawdown before emergency exit' },
+      maxDrawdownDesc: {
+        zh: '触发紧急退出的最大回撤百分比',
+        en: 'Max drawdown before emergency exit',
+      },
       stopLoss: { zh: '止损 (%)', en: 'Stop Loss (%)' },
       stopLossDesc: { zh: '单仓位止损百分比', en: 'Stop loss per position' },
       dailyLossLimit: { zh: '日损失限制 (%)', en: 'Daily Loss Limit (%)' },
-      dailyLossLimitDesc: { zh: '每日最大亏损百分比', en: 'Maximum daily loss percentage' },
+      dailyLossLimitDesc: {
+        zh: '每日最大亏损百分比',
+        en: 'Maximum daily loss percentage',
+      },
       useMakerOnly: { zh: '仅使用 Maker 订单', en: 'Maker Only Orders' },
-      useMakerOnlyDesc: { zh: '使用限价单以降低手续费', en: 'Use limit orders for lower fees' },
+      useMakerOnlyDesc: {
+        zh: '使用限价单以降低手续费',
+        en: 'Use limit orders for lower fees',
+      },
 
       // Direction adjustment
       directionAdjust: { zh: '方向自动调整', en: 'Direction Auto-Adjust' },
-      enableDirectionAdjust: { zh: '启用方向调整', en: 'Enable Direction Adjust' },
-      enableDirectionAdjustDesc: { zh: '根据箱体突破自动调整网格方向', en: 'Auto-adjust grid direction based on box breakouts' },
+      enableDirectionAdjust: {
+        zh: '启用方向调整',
+        en: 'Enable Direction Adjust',
+      },
+      enableDirectionAdjustDesc: {
+        zh: '根据箱体突破自动调整网格方向',
+        en: 'Auto-adjust grid direction based on box breakouts',
+      },
       directionBiasRatio: { zh: '偏向强度', en: 'Bias Strength' },
-      directionBiasRatioDesc: { zh: '偏多/偏空模式的强度', en: 'Strength for long_bias/short_bias modes' },
-      directionBiasExplain: { zh: '偏多模式：X%买 + (100-X)%卖 | 偏空模式：(100-X)%买 + X%卖', en: 'Long bias: X% buy + (100-X)% sell | Short bias: (100-X)% buy + X% sell' },
-      directionExplain: { zh: '短期箱体突破 → 偏向，中期箱体突破 → 全仓，价格回归 → 逐步恢复中性', en: 'Short box breakout → bias, Mid box breakout → full, Price return → gradually recover to neutral' },
+      directionBiasRatioDesc: {
+        zh: '偏多/偏空模式的强度',
+        en: 'Strength for long_bias/short_bias modes',
+      },
+      directionBiasExplain: {
+        zh: '偏多模式：X%买 + (100-X)%卖 | 偏空模式：(100-X)%买 + X%卖',
+        en: 'Long bias: X% buy + (100-X)% sell | Short bias: (100-X)% buy + X% sell',
+      },
+      directionExplain: {
+        zh: '短期箱体突破 → 偏向，中期箱体突破 → 全仓，价格回归 → 逐步恢复中性',
+        en: 'Short box breakout → bias, Mid box breakout → full, Price return → gradually recover to neutral',
+      },
       directionModes: { zh: '方向模式说明', en: 'Direction Modes' },
-      modeNeutral: { zh: '中性：50%买 + 50%卖（默认）', en: 'Neutral: 50% buy + 50% sell (default)' },
-      modeLongBias: { zh: '偏多：X%买 + (100-X)%卖', en: 'Long Bias: X% buy + (100-X)% sell' },
+      modeNeutral: {
+        zh: '中性：50%买 + 50%卖（默认）',
+        en: 'Neutral: 50% buy + 50% sell (default)',
+      },
+      modeLongBias: {
+        zh: '偏多：X%买 + (100-X)%卖',
+        en: 'Long Bias: X% buy + (100-X)% sell',
+      },
       modeLong: { zh: '全多：100%买 + 0%卖', en: 'Long: 100% buy + 0% sell' },
-      modeShortBias: { zh: '偏空：(100-X)%买 + X%卖', en: 'Short Bias: (100-X)% buy + X% sell' },
+      modeShortBias: {
+        zh: '偏空：(100-X)%买 + X%卖',
+        en: 'Short Bias: (100-X)% buy + X% sell',
+      },
       modeShort: { zh: '全空：0%买 + 100%卖', en: 'Short: 0% buy + 100% sell' },
     }
     return translations[key]?.[language] || key
@@ -165,7 +228,12 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.total_investment}
-              onChange={(e) => updateField('total_investment', parseFloat(e.target.value) || 1000)}
+              onChange={(e) =>
+                updateField(
+                  'total_investment',
+                  parseFloat(e.target.value) || 1000
+                )
+              }
               disabled={disabled}
               min={100}
               step={100}
@@ -185,7 +253,9 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.leverage}
-              onChange={(e) => updateField('leverage', parseInt(e.target.value) || 5)}
+              onChange={(e) =>
+                updateField('leverage', parseInt(e.target.value) || 5)
+              }
               disabled={disabled}
               min={1}
               max={5}
@@ -217,7 +287,9 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.grid_count}
-              onChange={(e) => updateField('grid_count', parseInt(e.target.value) || 10)}
+              onChange={(e) =>
+                updateField('grid_count', parseInt(e.target.value) || 10)
+              }
               disabled={disabled}
               min={5}
               max={50}
@@ -236,7 +308,12 @@ export function GridConfigEditor({
             </p>
             <select
               value={config.distribution}
-              onChange={(e) => updateField('distribution', e.target.value as 'uniform' | 'gaussian' | 'pyramid')}
+              onChange={(e) =>
+                updateField(
+                  'distribution',
+                  e.target.value as 'uniform' | 'gaussian' | 'pyramid'
+                )
+              }
               disabled={disabled}
               className="w-full px-3 py-2 rounded"
               style={inputStyle}
@@ -273,7 +350,9 @@ export function GridConfigEditor({
               <input
                 type="checkbox"
                 checked={config.use_atr_bounds}
-                onChange={(e) => updateField('use_atr_bounds', e.target.checked)}
+                onChange={(e) =>
+                  updateField('use_atr_bounds', e.target.checked)
+                }
                 disabled={disabled}
                 className="sr-only peer"
               />
@@ -293,7 +372,9 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.atr_multiplier}
-              onChange={(e) => updateField('atr_multiplier', parseFloat(e.target.value) || 2.0)}
+              onChange={(e) =>
+                updateField('atr_multiplier', parseFloat(e.target.value) || 2.0)
+              }
               disabled={disabled}
               min={1}
               max={5}
@@ -305,7 +386,10 @@ export function GridConfigEditor({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 rounded-lg" style={sectionStyle}>
-              <label className="block text-sm mb-1" style={{ color: '#EAECEF' }}>
+              <label
+                className="block text-sm mb-1"
+                style={{ color: '#EAECEF' }}
+              >
                 {t('upperPrice')}
               </label>
               <p className="text-xs mb-2" style={{ color: '#848E9C' }}>
@@ -314,7 +398,9 @@ export function GridConfigEditor({
               <input
                 type="number"
                 value={config.upper_price}
-                onChange={(e) => updateField('upper_price', parseFloat(e.target.value) || 0)}
+                onChange={(e) =>
+                  updateField('upper_price', parseFloat(e.target.value) || 0)
+                }
                 disabled={disabled}
                 min={0}
                 step={0.01}
@@ -323,7 +409,10 @@ export function GridConfigEditor({
               />
             </div>
             <div className="p-4 rounded-lg" style={sectionStyle}>
-              <label className="block text-sm mb-1" style={{ color: '#EAECEF' }}>
+              <label
+                className="block text-sm mb-1"
+                style={{ color: '#EAECEF' }}
+              >
                 {t('lowerPrice')}
               </label>
               <p className="text-xs mb-2" style={{ color: '#848E9C' }}>
@@ -332,7 +421,9 @@ export function GridConfigEditor({
               <input
                 type="number"
                 value={config.lower_price}
-                onChange={(e) => updateField('lower_price', parseFloat(e.target.value) || 0)}
+                onChange={(e) =>
+                  updateField('lower_price', parseFloat(e.target.value) || 0)
+                }
                 disabled={disabled}
                 min={0}
                 step={0.01}
@@ -364,7 +455,12 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.max_drawdown_pct}
-              onChange={(e) => updateField('max_drawdown_pct', parseFloat(e.target.value) || 15)}
+              onChange={(e) =>
+                updateField(
+                  'max_drawdown_pct',
+                  parseFloat(e.target.value) || 15
+                )
+              }
               disabled={disabled}
               min={5}
               max={50}
@@ -383,7 +479,9 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.stop_loss_pct}
-              onChange={(e) => updateField('stop_loss_pct', parseFloat(e.target.value) || 5)}
+              onChange={(e) =>
+                updateField('stop_loss_pct', parseFloat(e.target.value) || 5)
+              }
               disabled={disabled}
               min={1}
               max={20}
@@ -402,7 +500,12 @@ export function GridConfigEditor({
             <input
               type="number"
               value={config.daily_loss_limit_pct}
-              onChange={(e) => updateField('daily_loss_limit_pct', parseFloat(e.target.value) || 10)}
+              onChange={(e) =>
+                updateField(
+                  'daily_loss_limit_pct',
+                  parseFloat(e.target.value) || 10
+                )
+              }
               disabled={disabled}
               min={1}
               max={30}
@@ -427,7 +530,9 @@ export function GridConfigEditor({
               <input
                 type="checkbox"
                 checked={config.use_maker_only}
-                onChange={(e) => updateField('use_maker_only', e.target.checked)}
+                onChange={(e) =>
+                  updateField('use_maker_only', e.target.checked)
+                }
                 disabled={disabled}
                 className="sr-only peer"
               />
@@ -461,7 +566,9 @@ export function GridConfigEditor({
               <input
                 type="checkbox"
                 checked={config.enable_direction_adjust ?? false}
-                onChange={(e) => updateField('enable_direction_adjust', e.target.checked)}
+                onChange={(e) =>
+                  updateField('enable_direction_adjust', e.target.checked)
+                }
                 disabled={disabled}
                 className="sr-only peer"
               />
@@ -473,25 +580,50 @@ export function GridConfigEditor({
         {config.enable_direction_adjust && (
           <>
             {/* Direction Modes Explanation */}
-            <div className="p-4 rounded-lg mb-4" style={{ background: '#1E2329', border: '1px solid #F0B90B33' }}>
-              <p className="text-xs font-medium mb-2" style={{ color: '#F0B90B' }}>
+            <div
+              className="p-4 rounded-lg mb-4"
+              style={{ background: '#1E2329', border: '1px solid #F0B90B33' }}
+            >
+              <p
+                className="text-xs font-medium mb-2"
+                style={{ color: '#F0B90B' }}
+              >
                 📊 {t('directionModes')}
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs" style={{ color: '#848E9C' }}>
+              <div
+                className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"
+                style={{ color: '#848E9C' }}
+              >
                 <div>• {t('modeNeutral')}</div>
-                <div>• <span style={{ color: '#0ECB81' }}>{t('modeLongBias')}</span></div>
-                <div>• <span style={{ color: '#0ECB81' }}>{t('modeLong')}</span></div>
-                <div>• <span style={{ color: '#F6465D' }}>{t('modeShortBias')}</span></div>
-                <div>• <span style={{ color: '#F6465D' }}>{t('modeShort')}</span></div>
+                <div>
+                  •{' '}
+                  <span style={{ color: '#0ECB81' }}>{t('modeLongBias')}</span>
+                </div>
+                <div>
+                  • <span style={{ color: '#0ECB81' }}>{t('modeLong')}</span>
+                </div>
+                <div>
+                  •{' '}
+                  <span style={{ color: '#F6465D' }}>{t('modeShortBias')}</span>
+                </div>
+                <div>
+                  • <span style={{ color: '#F6465D' }}>{t('modeShort')}</span>
+                </div>
               </div>
-              <p className="text-xs mt-3 pt-2 border-t border-zinc-700" style={{ color: '#848E9C' }}>
+              <p
+                className="text-xs mt-3 pt-2 border-t border-zinc-700"
+                style={{ color: '#848E9C' }}
+              >
                 💡 {t('directionExplain')}
               </p>
             </div>
 
             {/* Bias Strength */}
             <div className="p-4 rounded-lg" style={sectionStyle}>
-              <label className="block text-sm mb-1" style={{ color: '#EAECEF' }}>
+              <label
+                className="block text-sm mb-1"
+                style={{ color: '#EAECEF' }}
+              >
                 {t('directionBiasRatio')} (X)
               </label>
               <p className="text-xs mb-1" style={{ color: '#848E9C' }}>
@@ -504,7 +636,12 @@ export function GridConfigEditor({
                 <input
                   type="range"
                   value={(config.direction_bias_ratio ?? 0.7) * 100}
-                  onChange={(e) => updateField('direction_bias_ratio', parseInt(e.target.value) / 100)}
+                  onChange={(e) =>
+                    updateField(
+                      'direction_bias_ratio',
+                      parseInt(e.target.value) / 100
+                    )
+                  }
                   disabled={disabled}
                   min={55}
                   max={90}
@@ -512,18 +649,46 @@ export function GridConfigEditor({
                   className="flex-1 h-2 rounded-lg appearance-none cursor-pointer"
                   style={{ background: '#2B3139' }}
                 />
-                <span className="text-sm font-mono w-20 text-right" style={{ color: '#F0B90B' }}>
+                <span
+                  className="text-sm font-mono w-20 text-right"
+                  style={{ color: '#F0B90B' }}
+                >
                   X = {Math.round((config.direction_bias_ratio ?? 0.7) * 100)}%
                 </span>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <div className="p-2 rounded" style={{ background: '#0ECB8115', border: '1px solid #0ECB8130' }}>
+                <div
+                  className="p-2 rounded"
+                  style={{
+                    background: '#0ECB8115',
+                    border: '1px solid #0ECB8130',
+                  }}
+                >
                   <span style={{ color: '#0ECB81' }}>偏多/Long Bias: </span>
-                  <span style={{ color: '#EAECEF' }}>{Math.round((config.direction_bias_ratio ?? 0.7) * 100)}% 买 + {Math.round((1 - (config.direction_bias_ratio ?? 0.7)) * 100)}% 卖</span>
+                  <span style={{ color: '#EAECEF' }}>
+                    {Math.round((config.direction_bias_ratio ?? 0.7) * 100)}% 买
+                    +{' '}
+                    {Math.round(
+                      (1 - (config.direction_bias_ratio ?? 0.7)) * 100
+                    )}
+                    % 卖
+                  </span>
                 </div>
-                <div className="p-2 rounded" style={{ background: '#F6465D15', border: '1px solid #F6465D30' }}>
+                <div
+                  className="p-2 rounded"
+                  style={{
+                    background: '#F6465D15',
+                    border: '1px solid #F6465D30',
+                  }}
+                >
                   <span style={{ color: '#F6465D' }}>偏空/Short Bias: </span>
-                  <span style={{ color: '#EAECEF' }}>{Math.round((1 - (config.direction_bias_ratio ?? 0.7)) * 100)}% 买 + {Math.round((config.direction_bias_ratio ?? 0.7) * 100)}% 卖</span>
+                  <span style={{ color: '#EAECEF' }}>
+                    {Math.round(
+                      (1 - (config.direction_bias_ratio ?? 0.7)) * 100
+                    )}
+                    % 买 +{' '}
+                    {Math.round((config.direction_bias_ratio ?? 0.7) * 100)}% 卖
+                  </span>
                 </div>
               </div>
             </div>

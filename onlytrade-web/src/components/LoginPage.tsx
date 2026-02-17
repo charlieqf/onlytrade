@@ -26,13 +26,15 @@ export function LoginPage() {
   const adminMode = false
   const { config: systemConfig } = useSystemConfig()
   const registrationEnabled = isRegistrationEnabled(systemConfig)
-  const [expiredToastId, setExpiredToastId] = useState<string | number | null>(null)
+  const [expiredToastId, setExpiredToastId] = useState<string | number | null>(
+    null
+  )
 
   // Show notification if user was redirected here due to 401
   useEffect(() => {
     if (sessionStorage.getItem('from401') === 'true') {
       const id = toast.warning(t('sessionExpired', language), {
-        duration: Infinity // Keep showing until user dismisses or logs in
+        duration: Infinity, // Keep showing until user dismisses or logs in
       })
       setExpiredToastId(id)
       sessionStorage.removeItem('from401')
@@ -71,7 +73,7 @@ export function LoginPage() {
         setQrCodeURL(result.qrCodeURL || '')
         setOtpSecret(result.otpSecret || '')
         setStep('setup-otp')
-        toast.info("Pending 2FA setup detected. Please complete configuration.")
+        toast.info('Pending 2FA setup detected. Please complete configuration.')
       } else if (result.requiresOTP && result.userID) {
         setUserID(result.userID)
 
@@ -80,7 +82,9 @@ export function LoginPage() {
           setQrCodeURL(result.qrCodeURL)
           setOtpSecret(result.otpSecret || '')
           setStep('setup-otp')
-          toast.info("Pending 2FA setup detected. Please complete configuration.")
+          toast.info(
+            'Pending 2FA setup detected. Please complete configuration.'
+          )
         } else {
           setStep('otp')
         }
@@ -97,7 +101,10 @@ export function LoginPage() {
         setQrCodeURL(result.qrCodeURL)
         setOtpSecret(result.otpSecret || '')
         setStep('setup-otp')
-        toast.warning(t('completeGapSetup', language) || "Incomplete setup detected. Please configure 2FA.")
+        toast.warning(
+          t('completeGapSetup', language) ||
+            'Incomplete setup detected. Please configure 2FA.'
+        )
       } else {
         const msg = result.message || t('loginFailed', language)
         setError(msg)
@@ -143,17 +150,21 @@ export function LoginPage() {
   }
 
   return (
-    <DeepVoidBackground className="min-h-screen flex items-center justify-center py-12 font-mono" disableAnimation>
-
+    <DeepVoidBackground
+      className="min-h-screen flex items-center justify-center py-12 font-mono"
+      disableAnimation
+    >
       <div className="w-full max-w-md relative z-10 px-6">
         {/* Navigation - Top Bar (Mobile/Desktop Friendly) */}
         <div className="flex justify-between items-center mb-8">
           <button
-            onClick={() => window.location.href = '/'}
+            onClick={() => (window.location.href = '/')}
             className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors group px-3 py-1.5 rounded border border-transparent hover:border-zinc-700 bg-black/20 backdrop-blur-sm"
           >
             <div className="w-2 h-2 rounded-full bg-red-500 group-hover:animate-pulse"></div>
-            <span className="text-xs font-mono uppercase tracking-widest">&lt; CANCEL_LOGIN</span>
+            <span className="text-xs font-mono uppercase tracking-widest">
+              &lt; CANCEL_LOGIN
+            </span>
           </button>
         </div>
 
@@ -173,7 +184,9 @@ export function LoginPage() {
             <span className="text-nofx-gold">SYSTEM</span> ACCESS
           </h1>
           <p className="text-zinc-500 text-xs tracking-[0.2em] uppercase">
-            {step === 'login' ? 'Authentication Protocol v3.0' : 'Multi-Factor Verification'}
+            {step === 'login'
+              ? 'Authentication Protocol v3.0'
+              : 'Multi-Factor Verification'}
           </p>
         </div>
 
@@ -186,7 +199,7 @@ export function LoginPage() {
             <div className="flex gap-1.5">
               <div
                 className="w-2.5 h-2.5 rounded-full bg-red-500/50 hover:bg-red-500 cursor-pointer transition-colors"
-                onClick={() => window.location.href = '/'}
+                onClick={() => (window.location.href = '/')}
                 title="Close / Return Home"
               ></div>
               <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
@@ -210,14 +223,19 @@ export function LoginPage() {
               </div>
               <div className="flex gap-2">
                 <span className="text-emerald-500">➜</span>
-                <span>Status: <span className="text-zinc-300">AWAITING CREDENTIALS</span></span>
+                <span>
+                  Status:{' '}
+                  <span className="text-zinc-300">AWAITING CREDENTIALS</span>
+                </span>
               </div>
             </div>
 
             {adminMode ? (
               <form onSubmit={handleAdminLogin} className="space-y-5">
                 <div>
-                  <label className="block text-xs uppercase tracking-wider text-nofx-gold mb-1.5 ml-1">Admin Key</label>
+                  <label className="block text-xs uppercase tracking-wider text-nofx-gold mb-1.5 ml-1">
+                    Admin Key
+                  </label>
                   <input
                     type="password"
                     value={adminPassword}
@@ -245,7 +263,9 @@ export function LoginPage() {
             ) : step === 'setup-otp' ? (
               <div className="space-y-6">
                 <div className="text-center bg-zinc-900/50 p-4 rounded border border-zinc-800">
-                  <div className="text-xs font-mono text-zinc-400 mb-2">COMPLETE 2FA CONFIGURATION</div>
+                  <div className="text-xs font-mono text-zinc-400 mb-2">
+                    COMPLETE 2FA CONFIGURATION
+                  </div>
                   {qrCodeURL ? (
                     <div className="bg-white p-2 rounded inline-block shadow-[0_0_30px_rgba(255,255,255,0.1)]">
                       <img
@@ -258,14 +278,20 @@ export function LoginPage() {
                     <div className="w-32 h-32 bg-zinc-800 animate-pulse rounded inline-block"></div>
                   )}
                   <div className="mt-4">
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Backup Secret Key</p>
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">
+                      Backup Secret Key
+                    </p>
                     <div className="flex items-center gap-2 justify-center bg-black/50 p-2 rounded border border-zinc-700/50 max-w-[200px] mx-auto">
-                      <code className="text-xs font-mono text-nofx-gold">{otpSecret}</code>
+                      <code className="text-xs font-mono text-nofx-gold">
+                        {otpSecret}
+                      </code>
                       <button
                         onClick={() => copyToClipboard(otpSecret)}
                         className="text-zinc-500 hover:text-white transition-colors"
                       >
-                        <span className="text-[10px] uppercase border border-zinc-700 px-1 rounded">Copy</span>
+                        <span className="text-[10px] uppercase border border-zinc-700 px-1 rounded">
+                          Copy
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -275,11 +301,23 @@ export function LoginPage() {
                   <div className="flex gap-3 items-start">
                     <span className="text-nofx-gold font-bold mt-0.5">01</span>
                     <div>
-                      <p className="font-bold text-white mb-1">Install Authenticator App</p>
-                      <p className="mb-2">Recommended: <span className="text-nofx-gold">Google Authenticator</span>.</p>
+                      <p className="font-bold text-white mb-1">
+                        Install Authenticator App
+                      </p>
+                      <p className="mb-2">
+                        Recommended:{' '}
+                        <span className="text-nofx-gold">
+                          Google Authenticator
+                        </span>
+                        .
+                      </p>
                       <div className="flex gap-2">
-                        <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] text-zinc-300 border border-zinc-700">iOS</span>
-                        <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] text-zinc-300 border border-zinc-700">Android</span>
+                        <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] text-zinc-300 border border-zinc-700">
+                          iOS
+                        </span>
+                        <span className="px-1.5 py-0.5 bg-zinc-800 rounded text-[10px] text-zinc-300 border border-zinc-700">
+                          Android
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -290,7 +328,10 @@ export function LoginPage() {
                     <span className="text-nofx-gold font-bold mt-0.5">02</span>
                     <div>
                       <p className="font-bold text-white mb-1">Scan & Verify</p>
-                      <p>Scan code above, then enter the 6-digit token below to activate your account.</p>
+                      <p>
+                        Scan code above, then enter the 6-digit token below to
+                        activate your account.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -306,7 +347,9 @@ export function LoginPage() {
               <form onSubmit={handleLogin} className="space-y-5">
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5 ml-1 font-bold">{t('email', language)}</label>
+                    <label className="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5 ml-1 font-bold">
+                      {t('email', language)}
+                    </label>
                     <input
                       type="email"
                       data-testid="login-email"
@@ -320,7 +363,9 @@ export function LoginPage() {
 
                   <div>
                     <div className="flex items-center justify-between mb-1.5 ml-1">
-                      <label className="block text-xs uppercase tracking-wider text-zinc-500 font-bold">{t('password', language)}</label>
+                      <label className="block text-xs uppercase tracking-wider text-zinc-500 font-bold">
+                        {t('password', language)}
+                      </label>
                     </div>
 
                     <div className="relative">
@@ -338,13 +383,19 @@ export function LoginPage() {
                         onClick={() => setShowPassword(!showPassword)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
                       >
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {showPassword ? (
+                          <EyeOff size={16} />
+                        ) : (
+                          <Eye size={16} />
+                        )}
                       </button>
                     </div>
                     <div className="text-right mt-2">
                       <button
                         type="button"
-                        onClick={() => window.location.href = '/reset-password'}
+                        onClick={() =>
+                          (window.location.href = '/reset-password')
+                        }
                         className="text-[10px] uppercase tracking-wide text-zinc-500 hover:text-nofx-gold transition-colors"
                       >
                         &gt; {t('forgotPassword', language)}
@@ -370,7 +421,9 @@ export function LoginPage() {
                   ) : (
                     <>
                       <span>AUTHENTICATE</span>
-                      <span className="group-hover:translate-x-1 transition-transform">-&gt;</span>
+                      <span className="group-hover:translate-x-1 transition-transform">
+                        -&gt;
+                      </span>
                     </>
                   )}
                 </button>
@@ -382,7 +435,8 @@ export function LoginPage() {
                     🔐
                   </div>
                   <p className="text-xs text-zinc-400 font-mono leading-relaxed">
-                    {t('scanQRCodeInstructions', language)}<br />
+                    {t('scanQRCodeInstructions', language)}
+                    <br />
                     {t('enterOTPCode', language)}
                   </p>
                 </div>
@@ -446,14 +500,14 @@ export function LoginPage() {
             <p className="text-xs font-mono text-zinc-500">
               NEW_USER_DETECTED?{' '}
               <button
-                onClick={() => window.location.href = '/register'}
+                onClick={() => (window.location.href = '/register')}
                 className="text-nofx-gold hover:underline hover:text-yellow-300 transition-colors ml-1 uppercase"
               >
                 INITIALIZE REGISTRATION
               </button>
             </p>
             <button
-              onClick={() => window.location.href = '/'}
+              onClick={() => (window.location.href = '/')}
               className="text-[10px] text-zinc-600 hover:text-red-500 transition-colors uppercase tracking-widest hover:underline decoration-red-500/30 font-mono"
             >
               [ ABORT_SESSION_RETURN_HOME ]

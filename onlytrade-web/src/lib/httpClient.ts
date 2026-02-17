@@ -106,7 +106,10 @@ export class HttpClient {
     // Handle 401 Unauthorized
     if (status === 401) {
       if (!this.loginRequired) {
-        const reason = (error.response.data as any)?.error || (error.response.data as any)?.message || 'Unauthorized'
+        const reason =
+          (error.response.data as any)?.error ||
+          (error.response.data as any)?.message ||
+          'Unauthorized'
         throw new Error(reason)
       }
 

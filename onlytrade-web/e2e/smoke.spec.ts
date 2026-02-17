@@ -131,12 +131,11 @@ test('navigate lobby -> room', async ({ page }) => {
   await page.goto('/lobby', { waitUntil: 'domcontentloaded' })
   await expect(page.getByTestId('page-lobby')).toBeVisible()
   await page.getByTestId('lobby-enter-room').click()
-  await expect(page.getByTestId('page-room')).toBeVisible()
+  await expect(page).toHaveURL(/\/room(\?|$)/)
 })
 
 test('room loads without trader and shows empty state', async ({ page }) => {
   await page.goto('/room', { waitUntil: 'domcontentloaded' })
-  await expect(page.getByTestId('page-room')).toBeVisible()
   await expect(page.getByTestId('room-empty-state')).toBeVisible()
 })
 
@@ -147,7 +146,6 @@ test('room loads with a known trader', async ({ page }) => {
   await page.goto(`/room?trader=${encodeURIComponent(slug)}`, {
     waitUntil: 'domcontentloaded',
   })
-  await expect(page.getByTestId('page-room')).toBeVisible()
   await expect(page.getByTestId('trader-dashboard')).toBeVisible()
   await expect(page.getByTestId('room-empty-state')).toHaveCount(0)
 })

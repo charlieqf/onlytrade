@@ -423,7 +423,7 @@ function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            data-testid={`page-${currentPage}`}
+            data-testid={`app-page-${currentPage}`}
           >
             {currentPage === 'lobby' ? (
               <LobbyPage />

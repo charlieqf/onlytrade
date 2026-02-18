@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import useSWR from 'swr'
 import { ChartTabs } from '../components/ChartTabs'
 import { DecisionCard } from '../components/DecisionCard'
@@ -111,6 +111,29 @@ export function TraderDashboardPage({
   const decisionsScrollRef = useRef<HTMLDivElement | null>(null)
   const [highlightDecisionCycle, setHighlightDecisionCycle] =
     useState<number>(0)
+
+  const { data: latestDecisionsFallback } = useSWR<DecisionRecord[]>(
+    selectedTrader?.trader_id
+      ? `dashboard-latest-decisions-${selectedTrader.trader_id}-${decisionsLimit}`
+      : null,
+    () =>
+      api.getLatestDecisions(
+        selectedTrader!.trader_id,
+        Math.max(5, Number(decisionsLimit) || 5)
+      ),
+    {
+      refreshInterval: 10000,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }
+  )
+
+  const effectiveDecisions = useMemo(() => {
+    if (Array.isArray(decisions) && decisions.length > 0) {
+      return decisions
+    }
+    return Array.isArray(latestDecisionsFallback) ? latestDecisionsFallback : []
+  }, [decisions, latestDecisionsFallback])
 
   useEffect(() => {
     const handler = (evt: any) => {
@@ -1098,7 +1121,25 @@ export function TraderDashboardPage({
                 <span>{`cutoff=${formatMinuteLabel(betMarket?.cutoff_minute)}`}</span>
                 <span>{`close=${formatMinuteLabel(betMarket?.close_minute)}`}</span>
                 <span>{`pool=${formatPrice(Number(betMarket?.totals?.stake_amount || 0))}`}</span>
+                {betMarket?.my_credits && (
+                  <span>{`points=${Math.max(0, Math.floor(Number(betMarket.my_credits.credit_points || 0)))}`}</span>
+                )}
               </div>
+
+              {betMarket?.settlement && (
+                <div className="mb-3 text-xs text-nofx-text-main bg-black/25 border border-white/10 rounded px-3 py-2">
+                  <div className="font-semibold">
+                    {language === 'zh' ? '已结算' : 'Settled'}
+                  </div>
+                  <div className="text-nofx-text-muted mt-1">
+                    {language === 'zh' ? '胜方' : 'Winners'}:{' '}
+                    {(betMarket.settlement.winning_trader_ids || []).join(', ') || '--'}
+                    {betMarket.settlement.winning_return_pct != null && (
+                      <span>{` · ret=${Number(betMarket.settlement.winning_return_pct).toFixed(2)}%`}</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {betMarketLoading && (
                 <div className="text-xs text-nofx-text-muted mb-2">
@@ -1167,6 +1208,13 @@ export function TraderDashboardPage({
                   {betMarket.my_bet.estimated_odds != null && (
                     <span className="text-nofx-text-muted">
                       {` · x${Number(betMarket.my_bet.estimated_odds).toFixed(2)}`}
+                    </span>
+                  )}
+                  {betMarket.my_bet.settlement_status === 'settled' && (
+                    <span className="text-nofx-text-muted">
+                      {betMarket.my_bet.settled_is_winner
+                        ? ` · ${language === 'zh' ? '胜出' : 'won'} +${Math.max(0, Math.floor(Number(betMarket.my_bet.settled_credit_points || 0)))} pts`
+                        : ` · ${language === 'zh' ? '未胜出' : 'lost'}`}
                     </span>
                   )}
                 </div>
@@ -1496,7 +1544,7 @@ export function TraderDashboardPage({
             </div>
 
             <div
-              className="nofx-glass p-6 animate-slide-in h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-120px)] flex flex-col"
+              className="nofx-glass p-6 animate-slide-in h-fit lg:self-start"
               style={{ animationDelay: '0.2s' }}
             >
               <div className="flex items-center gap-3 mb-5 pb-4 border-b border-white/5 shrink-0">
@@ -1513,9 +1561,9 @@ export function TraderDashboardPage({
                   <h2 className="text-xl font-bold text-nofx-text-main">
                     {language === 'zh' ? '思考与行动' : 'Thought & Actions'}
                   </h2>
-                  {decisions && decisions.length > 0 && (
+                  {effectiveDecisions.length > 0 && (
                     <div className="text-xs text-nofx-text-muted">
-                      {t('lastCycles', language, { count: decisions.length })}
+                      {t('lastCycles', language, { count: effectiveDecisions.length })}
                     </div>
                   )}
                 </div>
@@ -1534,20 +1582,13 @@ export function TraderDashboardPage({
                 </select>
               </div>
 
-              <div className="mb-4">
-                <AuditExplorerPanel
-                  roomId={selectedTrader.trader_id}
-                  language={language}
-                />
-              </div>
-
               <div
-                className="space-y-4 overflow-y-auto pr-2 custom-scrollbar"
-                style={{ maxHeight: 'calc(100vh - 280px)' }}
+                className="space-y-4 overflow-y-auto pr-2 custom-scrollbar min-h-[260px]"
+                style={{ maxHeight: 'min(70vh, 720px)' }}
                 ref={decisionsScrollRef}
               >
-                {decisions && decisions.length > 0 ? (
-                  decisions.map((decision, i) => (
+                {effectiveDecisions.length > 0 ? (
+                  effectiveDecisions.map((decision, i) => (
                     <div
                       key={`${decision.timestamp}-${i}`}
                       data-decision-cycle={decision.cycle_number}
@@ -1588,6 +1629,18 @@ export function TraderDashboardPage({
             </div>
           </div>
         </div>
+
+        {selectedTrader && (
+          <div
+            className="nofx-glass p-6 animate-slide-in"
+            style={{ animationDelay: '0.23s' }}
+          >
+            <AuditExplorerPanel
+              roomId={selectedTrader.trader_id}
+              language={language}
+            />
+          </div>
+        )}
 
         {/* Position History Section */}
         {selectedTraderId && (

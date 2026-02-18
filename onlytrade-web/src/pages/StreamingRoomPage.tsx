@@ -147,6 +147,12 @@ type StreamReaction = {
   rotate_deg: number
 }
 
+type RocketBurst = {
+  id: string
+  origin_x_pct: number
+  origin_y_pct: number
+}
+
 function freshnessBadge(stale: boolean | null | undefined) {
   if (stale == null) {
     return {
@@ -590,6 +596,120 @@ function ReactionLayer({
   )
 }
 
+function RocketSuperBurstLayer({
+  bursts,
+  reducedMotion,
+  onDone,
+}: {
+  bursts: RocketBurst[]
+  reducedMotion: boolean
+  onDone: (id: string) => void
+}) {
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-40">
+      <AnimatePresence>
+        {bursts.map((burst) => {
+          const particleCount = reducedMotion ? 8 : 16
+          const particles = Array.from({ length: particleCount }, (_, idx) => {
+            const angle = (Math.PI * 2 * idx) / particleCount
+            const radius = reducedMotion ? 108 : 176
+            return {
+              id: `${burst.id}-p-${idx}`,
+              x: Math.cos(angle) * radius,
+              y: Math.sin(angle) * radius,
+              delay: idx * 0.02,
+            }
+          })
+
+          return (
+            <motion.div
+              key={burst.id}
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 1, 1, 0] }}
+              exit={{ opacity: 0 }}
+              transition={{
+                duration: reducedMotion ? 1.05 : 1.35,
+                times: [0, 0.18, 0.72, 1],
+                ease: 'easeOut',
+              }}
+              onAnimationComplete={() => onDone(burst.id)}
+            >
+              <motion.div
+                className="absolute rounded-full border-2 border-nofx-gold/75"
+                style={{
+                  left: `calc(${burst.origin_x_pct}% - 64px)`,
+                  top: `calc(${burst.origin_y_pct}% - 64px)`,
+                  width: 128,
+                  height: 128,
+                }}
+                initial={{ scale: 0.2, opacity: 0.9 }}
+                animate={{ scale: reducedMotion ? 2.1 : 3.2, opacity: 0 }}
+                transition={{ duration: reducedMotion ? 0.8 : 1.05, ease: 'easeOut' }}
+              />
+
+              <motion.div
+                className="absolute rounded-full bg-[radial-gradient(circle,rgba(240,185,11,0.55)_0%,rgba(240,185,11,0.14)_48%,rgba(240,185,11,0)_78%)]"
+                style={{
+                  left: `calc(${burst.origin_x_pct}% - 104px)`,
+                  top: `calc(${burst.origin_y_pct}% - 104px)`,
+                  width: 208,
+                  height: 208,
+                }}
+                initial={{ scale: 0.25, opacity: 0.7 }}
+                animate={{ scale: reducedMotion ? 1.55 : 2.35, opacity: 0 }}
+                transition={{ duration: reducedMotion ? 0.9 : 1.2, ease: 'easeOut' }}
+              />
+
+              {particles.map((particle) => (
+                <motion.div
+                  key={particle.id}
+                  className="absolute rounded-full bg-nofx-gold"
+                  style={{
+                    left: `calc(${burst.origin_x_pct}% - 4px)`,
+                    top: `calc(${burst.origin_y_pct}% - 4px)`,
+                    width: reducedMotion ? 6 : 8,
+                    height: reducedMotion ? 6 : 8,
+                    boxShadow: '0 0 16px rgba(240,185,11,0.9)',
+                  }}
+                  initial={{ opacity: 0, scale: 0.7, x: 0, y: 0 }}
+                  animate={{
+                    opacity: [0, 1, 0],
+                    scale: [0.7, 1.15, 0.6],
+                    x: particle.x,
+                    y: particle.y,
+                  }}
+                  transition={{
+                    duration: reducedMotion ? 0.75 : 0.96,
+                    delay: particle.delay,
+                    ease: 'easeOut',
+                  }}
+                />
+              ))}
+
+              <motion.div
+                className="absolute select-none"
+                style={{
+                  left: `calc(${burst.origin_x_pct}% - 18px)`,
+                  top: `calc(${burst.origin_y_pct}% - 18px)`,
+                  fontSize: reducedMotion ? '30px' : '38px',
+                  filter:
+                    'drop-shadow(0 0 20px rgba(240,185,11,0.95)) drop-shadow(0 10px 26px rgba(0,0,0,0.55))',
+                }}
+                initial={{ opacity: 0, scale: 0.3, rotate: -16 }}
+                animate={{ opacity: [0, 1, 0], scale: [0.3, 1.2, 0.85], rotate: [0, 16, 8] }}
+                transition={{ duration: reducedMotion ? 0.9 : 1.15, ease: 'easeOut' }}
+              >
+                🚀
+              </motion.div>
+            </motion.div>
+          )
+        })}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function LowerThirdTicker({
   decision,
   language,
@@ -827,6 +947,35 @@ function DigitalPersonStage({
               videoUrl={videoUrl}
               language={language}
             />
+            {digitalPerson.render_mode !== 'video' && (
+              <div className="absolute inset-x-0 top-[20%] z-10 flex justify-center pointer-events-none">
+                <div className="rounded-2xl border border-white/15 bg-black/45 px-4 py-3 backdrop-blur-sm shadow-[0_16px_36px_rgba(0,0,0,0.45)]">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className="absolute -inset-1 rounded-full border border-nofx-gold/45 animate-pulse" />
+                      <TraderAvatar
+                        traderId={trader.trader_id}
+                        traderName={trader.trader_name}
+                        avatarUrl={trader.avatar_url}
+                        avatarHdUrl={trader.avatar_hd_url}
+                        size={56}
+                        className="rounded-full border border-white/20"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-nofx-text-main truncate max-w-[180px]">
+                        {trader.trader_name}
+                      </div>
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        {language === 'zh'
+                          ? '数字人占位：当前使用交易员头像'
+                          : 'Digital human placeholder: trader avatar'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div
               className="absolute inset-0 opacity-22"
               style={{
@@ -863,6 +1012,7 @@ export function StreamingRoomPage({
   const [chatMode, setChatMode] = useState<ChatMode>('danmu')
   const roomId = selectedTrader.trader_id
   const [reactions, setReactions] = useState<StreamReaction[]>([])
+  const [rocketBursts, setRocketBursts] = useState<RocketBurst[]>([])
   const lastDecisionKeyRef = useRef<string>('')
   const lastMessageCountRef = useRef<number>(0)
   const [userSessionId, setUserSessionId] = useState<string>('')
@@ -1095,6 +1245,17 @@ export function StreamingRoomPage({
     setReactions((prev) => [...prev, ...batch].slice(-22))
   }
 
+  const triggerRocketSuperBurst = () => {
+    const now = Date.now()
+    const burstCount = prefersReducedMotion ? 1 : 2
+    const batch: RocketBurst[] = Array.from({ length: burstCount }, (_, idx) => ({
+      id: `rocket-burst-${now}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
+      origin_x_pct: 74 + Math.random() * 14,
+      origin_y_pct: 66 + Math.random() * 14,
+    }))
+    setRocketBursts((prev) => [...prev, ...batch].slice(-4))
+  }
+
   const placeBet = async () => {
     if (!userSessionId || !userNickname) {
       setBetError(language === 'zh' ? '会话未初始化。' : 'Session is not ready.')
@@ -1152,6 +1313,9 @@ export function StreamingRoomPage({
     setGiftError('')
     setGiftNotice('')
     spawnReactions(kind === 'rocket' ? 8 : 5, 'gift')
+    if (kind === 'rocket') {
+      triggerRocketSuperBurst()
+    }
     try {
       await api.postRoomMessage(roomId, {
         user_session_id: userSessionId,
@@ -1504,6 +1668,15 @@ export function StreamingRoomPage({
                     reactions={reactions}
                     onDone={(id) => {
                       setReactions((prev) =>
+                        prev.filter((item) => item.id !== id)
+                      )
+                    }}
+                  />
+                  <RocketSuperBurstLayer
+                    bursts={rocketBursts}
+                    reducedMotion={prefersReducedMotion}
+                    onDone={(id) => {
+                      setRocketBursts((prev) =>
                         prev.filter((item) => item.id !== id)
                       )
                     }}

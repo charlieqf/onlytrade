@@ -31,10 +31,12 @@ export function RoomClockBadge({
   replayRuntimeStatus,
   language,
   className = '',
+  showModePill = true,
 }: {
   replayRuntimeStatus?: ReplayRuntimeStatus | null
   language: Language
   className?: string
+  showModePill?: boolean
 }) {
   const [tickMs, setTickMs] = useState<number>(Date.now())
   const anchorRef = useRef<ReplayAnchor | null>(null)
@@ -109,11 +111,13 @@ export function RoomClockBadge({
     <div
       className={`inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/35 px-3 py-1.5 ${className}`.trim()}
     >
-      <span
-        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-mono ${isReplayMode ? 'bg-nofx-gold/20 text-nofx-gold' : 'bg-nofx-green/20 text-nofx-green'}`}
-      >
-        {modePill}
-      </span>
+      {showModePill && (
+        <span
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-mono ${isReplayMode ? 'bg-nofx-gold/20 text-nofx-gold' : 'bg-nofx-green/20 text-nofx-green'}`}
+        >
+          {modePill}
+        </span>
+      )}
       <div className="min-w-0">
         <div className="text-[10px] font-mono text-nofx-text-muted">{label}</div>
         <div className="text-[12px] font-mono text-nofx-text-main whitespace-nowrap">

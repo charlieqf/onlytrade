@@ -45,7 +45,7 @@ export function LobbyPage() {
         data-testid="page-lobby"
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8">
+          <div className="lg:col-span-12">
             <div className="bg-black/40 border border-white/10 rounded-2xl p-7 backdrop-blur-md hover:border-white/20 transition-colors">
               <div className="flex items-start justify-between gap-6">
                 <div className="space-y-3">
@@ -110,24 +110,6 @@ export function LobbyPage() {
                     ? '实时模式：页面使用实时行情与实盘运行状态。'
                     : 'Live mode: pages use realtime market data and runtime state.'}
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-4">
-            <div className="bg-black/40 border border-white/10 rounded-2xl p-7 backdrop-blur-md">
-              <div className="text-xs text-zinc-400">
-                {language === 'zh' ? '免责声明' : 'Disclaimer'}
-              </div>
-              <div className="mt-2 text-sm text-zinc-200 leading-relaxed">
-                {language === 'zh'
-                  ? '本产品仅用于学习与娱乐。AI 可能出错。不要将内容视为投资建议。'
-                  : 'For learning and entertainment only. AI can be wrong. Not investment advice.'}
-              </div>
-              <div className="mt-4 text-xs text-zinc-500">
-                {language === 'zh'
-                  ? '虚拟交易：无真实资金流转。'
-                  : 'Virtual trading: no real funds involved.'}
               </div>
             </div>
           </div>

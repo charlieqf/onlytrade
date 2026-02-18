@@ -9,6 +9,11 @@ interface AvatarProfile {
   hdPreviewUrl?: string
 }
 
+export type TraderAvatarResolvedUrls = {
+  photoUrl?: string
+  hdUrl?: string
+}
+
 interface TraderAvatarProps {
   traderId: string
   traderName: string
@@ -50,6 +55,21 @@ function profileForTrader(
   }
 
   return TRADER_AVATAR_PROFILES[traderId] || { style: 'punk' }
+}
+
+export function resolveTraderAvatarImageUrls(
+  traderId: string,
+  avatarUrl?: string,
+  avatarHdUrl?: string
+): TraderAvatarResolvedUrls {
+  const profile = profileForTrader(traderId, avatarUrl, avatarHdUrl)
+  if (profile.style !== 'photo') return {}
+  const photoUrl = String(profile.photoUrl || '').trim()
+  const hdUrl = String(profile.hdPreviewUrl || '').trim() || photoUrl
+  return {
+    photoUrl: photoUrl || undefined,
+    hdUrl: hdUrl || undefined,
+  }
 }
 
 export function TraderAvatar({

@@ -3,7 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import useSWR from 'swr'
 import { api } from '../lib/api'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
-import { TraderAvatar } from '../components/TraderAvatar'
+import {
+  TraderAvatar,
+  resolveTraderAvatarImageUrls,
+} from '../components/TraderAvatar'
 import { RoomClockBadge } from '../components/RoomClockBadge'
 import { formatPrice, formatQuantity } from '../utils/format'
 import type {
@@ -919,6 +922,7 @@ function DigitalPersonStage({
   language,
   digitalPerson,
   videoUrl,
+  onAvatarTap,
 }: {
   trader: TraderInfo
   mode: ChatMode
@@ -926,6 +930,7 @@ function DigitalPersonStage({
   language: Language
   digitalPerson: DigitalPersonState
   videoUrl: string
+  onAvatarTap?: () => void
 }) {
   return (
     <div className="relative mx-auto w-full max-w-[440px] rounded-[30px] border border-white/12 bg-black/35 overflow-hidden shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
@@ -952,15 +957,26 @@ function DigitalPersonStage({
                 <div className="rounded-2xl border border-white/15 bg-black/45 px-4 py-3 backdrop-blur-sm shadow-[0_16px_36px_rgba(0,0,0,0.45)]">
                   <div className="flex items-center gap-3">
                     <div className="relative">
-                      <div className="absolute -inset-1 rounded-full border border-nofx-gold/45 animate-pulse" />
-                      <TraderAvatar
-                        traderId={trader.trader_id}
-                        traderName={trader.trader_name}
-                        avatarUrl={trader.avatar_url}
-                        avatarHdUrl={trader.avatar_hd_url}
-                        size={56}
-                        className="rounded-full border border-white/20"
-                      />
+                      <button
+                        type="button"
+                        onClick={onAvatarTap}
+                        className="relative pointer-events-auto rounded-full"
+                        aria-label={
+                          language === 'zh'
+                            ? '打开交易员头像大图'
+                            : 'Open trader avatar preview'
+                        }
+                      >
+                        <div className="absolute -inset-1 rounded-full border border-nofx-gold/45 animate-pulse" />
+                        <TraderAvatar
+                          traderId={trader.trader_id}
+                          traderName={trader.trader_name}
+                          avatarUrl={trader.avatar_url}
+                          avatarHdUrl={trader.avatar_hd_url}
+                          size={56}
+                          className="rounded-full border border-white/20"
+                        />
+                      </button>
                     </div>
                     <div className="min-w-0">
                       <div className="text-sm font-bold text-nofx-text-main truncate max-w-[180px]">
@@ -1013,6 +1029,7 @@ export function StreamingRoomPage({
   const roomId = selectedTrader.trader_id
   const [reactions, setReactions] = useState<StreamReaction[]>([])
   const [rocketBursts, setRocketBursts] = useState<RocketBurst[]>([])
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState<boolean>(false)
   const lastDecisionKeyRef = useRef<string>('')
   const lastMessageCountRef = useRef<number>(0)
   const [userSessionId, setUserSessionId] = useState<string>('')
@@ -1558,6 +1575,33 @@ export function StreamingRoomPage({
           return hit?.trader_name || id
         })
       : []
+  const avatarImages = useMemo(
+    () =>
+      resolveTraderAvatarImageUrls(
+        selectedTrader.trader_id,
+        selectedTrader.avatar_url,
+        selectedTrader.avatar_hd_url
+      ),
+    [
+      selectedTrader.trader_id,
+      selectedTrader.avatar_url,
+      selectedTrader.avatar_hd_url,
+    ]
+  )
+  const avatarLargeSrc = avatarImages.hdUrl || avatarImages.photoUrl || ''
+
+  useEffect(() => {
+    if (!avatarPreviewOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setAvatarPreviewOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [avatarPreviewOpen])
 
   return (
     <div
@@ -1584,6 +1628,7 @@ export function StreamingRoomPage({
                     language={language}
                     digitalPerson={digitalPerson}
                     videoUrl={streamingParams.videoUrl}
+                    onAvatarTap={() => setAvatarPreviewOpen(true)}
                   />
 
                   <div className="pointer-events-none absolute left-3 right-3 top-3 z-20 flex items-start justify-between gap-2">
@@ -1592,16 +1637,6 @@ export function StreamingRoomPage({
                         className={`px-2.5 py-1 text-[10px] font-black rounded-full ${modeChip.cls}`}
                       >
                         {modeChip.label}
-                      </span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${overviewFreshness.cls}`}
-                      >
-                        {language === 'zh' ? '概览' : 'overview'} {overviewFreshness.label}
-                      </span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${digestFreshness.cls}`}
-                      >
-                        {language === 'zh' ? '新闻' : 'news'} {digestFreshness.label}
                       </span>
                     </div>
                     <div className="flex flex-col items-end gap-1 text-[10px] font-mono">
@@ -1637,6 +1672,7 @@ export function StreamingRoomPage({
                     <RoomClockBadge
                       replayRuntimeStatus={replayRuntimeStatus}
                       language={language}
+                      showModePill={false}
                     />
                   </div>
 
@@ -1855,14 +1891,25 @@ export function StreamingRoomPage({
               <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/5 bg-black/25 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0">
-                    <TraderAvatar
-                      traderId={selectedTrader.trader_id}
-                      traderName={selectedTrader.trader_name}
-                      avatarUrl={selectedTrader.avatar_url}
-                      avatarHdUrl={selectedTrader.avatar_hd_url}
-                      size={34}
-                      className="rounded-xl border border-white/12"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setAvatarPreviewOpen(true)}
+                      className="rounded-xl"
+                      aria-label={
+                        language === 'zh'
+                          ? '打开交易员头像大图'
+                          : 'Open trader avatar preview'
+                      }
+                    >
+                      <TraderAvatar
+                        traderId={selectedTrader.trader_id}
+                        traderName={selectedTrader.trader_name}
+                        avatarUrl={selectedTrader.avatar_url}
+                        avatarHdUrl={selectedTrader.avatar_hd_url}
+                        size={34}
+                        className="rounded-xl border border-white/12"
+                      />
+                    </button>
                     <div className="min-w-0">
                       <div className="text-sm font-bold text-nofx-text-main truncate">
                         {language === 'zh' ? '互动支持' : 'Interactive Support'}
@@ -2164,6 +2211,77 @@ export function StreamingRoomPage({
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {avatarPreviewOpen && (
+          <motion.div
+            className="fixed inset-0 z-[120] flex items-center justify-center px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setAvatarPreviewOpen(false)}
+              aria-label={language === 'zh' ? '关闭头像大图' : 'Close avatar preview'}
+            />
+
+            <motion.div
+              className="relative z-10 w-full max-w-[520px] rounded-2xl border border-white/20 bg-black/70 p-3 shadow-[0_32px_90px_rgba(0,0,0,0.55)]"
+              initial={{ scale: 0.92, y: 12, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 8, opacity: 0 }}
+              transition={{ duration: 0.24, ease: 'easeOut' }}
+              style={{
+                marginTop: 'env(safe-area-inset-top, 0px)',
+                marginBottom: 'env(safe-area-inset-bottom, 0px)',
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 px-1 pb-2">
+                <div className="text-xs font-mono text-nofx-text-muted">
+                  {language === 'zh' ? '交易员头像（高清预览）' : 'Trader Avatar (HD Preview)'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAvatarPreviewOpen(false)}
+                  className="rounded-full border border-white/20 bg-black/40 px-2 py-0.5 text-xs text-nofx-text-main"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-white/15 bg-black/35 p-2">
+                {avatarLargeSrc ? (
+                  <img
+                    src={avatarLargeSrc}
+                    alt={`${selectedTrader.trader_name} HD avatar`}
+                    className="block w-full max-h-[78vh] rounded-lg object-contain"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-3 py-8">
+                    <TraderAvatar
+                      traderId={selectedTrader.trader_id}
+                      traderName={selectedTrader.trader_name}
+                      avatarUrl={selectedTrader.avatar_url}
+                      avatarHdUrl={selectedTrader.avatar_hd_url}
+                      size={220}
+                      className="rounded-2xl border border-white/20"
+                    />
+                    <div className="text-xs text-nofx-text-muted">
+                      {language === 'zh'
+                        ? '暂无独立高清图，已显示大图占位。'
+                        : 'No dedicated HD photo available, showing enlarged avatar placeholder.'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

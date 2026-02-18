@@ -28,7 +28,7 @@ This file is the living progress tracker. Update it as work lands.
 - Agent trigger cadence default updated to 10 replay bars (10-minute market-time reasoning cadence at `1m` bars)
 - Added optional OpenAI `gpt-4o-mini` decision path with automatic fallback to heuristic rules
 - Agent memory JSON upgraded to `agent.memory.v2` with meta/config/daily journal sections
-- Runtime API now auto-loads env from `runtime-api/.env.local` (or `.env`) with compatibility fallback to `mock-api/.env.local`
+- Runtime API now auto-loads env from `runtime-api/.env.local` (or `.env`)
 - Added dev `factory-reset` endpoint + runtime reset hooks for repeatable full replay test reruns
 - Added per-trade commission deduction (buy/sell) with fee tracking in agent memory stats
 - Hardened LLM decision parsing with strict JSON shape validation + fallback
@@ -83,7 +83,7 @@ Reference: `docs/DEMO_MILESTONES.md`
 - [x] Document A-share realtime retrieval architecture (`docs/A_SHARE_REALTIME_RETRIEVAL.md`)
 - [x] Prepare replay pack tooling for yesterday CN-A bars (`scripts/fetch-cn-replay.mjs`)
 - [x] Prepare rolling 90-day `1d` CN-A history and daily append workflow (`scripts/update-cn-daily-history.mjs`)
-- [x] Minimal API service returning fixtures/replay (`runtime-api/`, with `mock-api/` shim)
+- [x] Minimal API service returning fixtures/replay (`runtime-api/`)
 - [x] Realtime stock data proxy scaffold (upstream adapter + fallback + canonical normalization + SSE)
 - [ ] Real A-share OHLCV provider (licensed)
 - [ ] Trade simulator (T+1, lot size, fees)

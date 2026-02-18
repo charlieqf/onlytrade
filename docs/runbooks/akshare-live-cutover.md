@@ -26,7 +26,7 @@ LIVE_FRAMES_PATH=data/live/onlytrade/frames.1m.json
 LIVE_FILE_REFRESH_MS=10000
 ```
 
-3. Restart `runtime-api` (or `mock-api` shim).
+3. Restart `runtime-api`.
 
 ## Verify live mode
 

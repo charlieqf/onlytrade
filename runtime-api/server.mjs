@@ -72,10 +72,6 @@ function loadDotEnv() {
   const defaultPath = path.join(__dirname, '.env')
   loadEnvFile(localPath)
   loadEnvFile(defaultPath)
-
-  // Compatibility: allow existing VM layouts to keep env under mock-api/.
-  loadEnvFile(path.join(ROOT_DIR, 'mock-api', '.env.local'))
-  loadEnvFile(path.join(ROOT_DIR, 'mock-api', '.env'))
 }
 
 loadDotEnv()

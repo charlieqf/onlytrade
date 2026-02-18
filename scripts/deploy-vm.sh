@@ -79,9 +79,6 @@ git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
 BACKEND_DIR="runtime-api"
-if [ ! -d "$BACKEND_DIR" ]; then
-  BACKEND_DIR="mock-api"
-fi
 
 echo "[deploy] Installing backend deps"
 npm ci --prefix "$BACKEND_DIR"

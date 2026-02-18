@@ -15,7 +15,6 @@ npm run dev
 Env loading:
 
 - The server auto-loads `runtime-api/.env.local` first, then `runtime-api/.env`.
-- Compatibility: also tries `mock-api/.env.local` and `mock-api/.env`.
 - Existing shell environment variables still take precedence.
 - Start from `runtime-api/.env.example`.
 

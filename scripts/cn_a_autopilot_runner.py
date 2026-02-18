@@ -92,8 +92,8 @@ def write_json(path: pathlib.Path, payload):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def kill_mock_api_server_processes(repo_root: pathlib.Path):
-    target_cwd = str((repo_root / "mock-api").resolve())
+def kill_runtime_api_server_processes(repo_root: pathlib.Path):
+    target_cwd = str((repo_root / "runtime-api").resolve())
     killed = []
     proc_root = pathlib.Path("/proc")
     if not proc_root.exists():
@@ -135,8 +135,8 @@ def start_backend(
     logger: Logger,
     replay_speed: int = 1,
 ):
-    killed = kill_mock_api_server_processes(repo_root)
-    logger.log(f"killed mock-api server pids={killed}")
+    killed = kill_runtime_api_server_processes(repo_root)
+    logger.log(f"killed runtime-api server pids={killed}")
 
     env = os.environ.copy()
     env["PORT"] = "18080"
@@ -164,7 +164,7 @@ def start_backend(
     log_file = log_path.open("a", encoding="utf-8")
     proc = subprocess.Popen(
         ["node", "server.mjs"],
-        cwd=str(repo_root / "mock-api"),
+        cwd=str(repo_root / "runtime-api"),
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,

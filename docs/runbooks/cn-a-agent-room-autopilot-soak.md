@@ -6,7 +6,7 @@ Goal: run a hands-off 1-day CN-A replay at real speed, keep one CN-A agent under
 
 - Do not modify local machine services.
 - Do not delete runtime/chat/audit data.
-- Restart only the `node server.mjs` process whose cwd is `/opt/onlytrade/mock-api`.
+- Restart only the `node server.mjs` process whose cwd is `/opt/onlytrade/runtime-api`.
 - Always restore backend to `live_file` mode by restarting without replay env overrides at the end.
 - Restore per-agent running states to baseline captured at start.
 

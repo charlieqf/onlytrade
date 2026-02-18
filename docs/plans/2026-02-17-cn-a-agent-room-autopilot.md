@@ -6,7 +6,7 @@ Goal: run an unattended 3-4 hour validation/improvement loop for one CN-A room a
 
 - No destructive VM actions (no reset/hard-clean of data stores).
 - No risky local-PC operations.
-- Keep process management scoped to OnlyTrade backend process in `/opt/onlytrade/mock-api`.
+- Keep process management scoped to OnlyTrade backend process in `/opt/onlytrade/runtime-api`.
 - Always capture baseline and restore on exit.
 
 ## Phase 0 - Baseline Capture

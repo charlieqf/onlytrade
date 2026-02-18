@@ -67,7 +67,7 @@ Goal: keep agent prompts small and deterministic by giving each decision step bo
 
 Current status:
 
-- Implemented in `runtime-api` for development/demo flow (with optional `mock-api/` shim entrypoint).
+- Implemented in `runtime-api` for development/demo flow.
 
 ## Decision Cadence
 

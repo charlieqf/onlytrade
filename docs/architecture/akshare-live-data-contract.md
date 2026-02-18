@@ -4,8 +4,6 @@
 
 Define the file contracts used by the AKShare collector/converter pipeline and the runtime-api live-file provider.
 
-Compatibility note: `mock-api/` may exist as a shim entrypoint on some VMs, but the real code lives in `runtime-api/`.
-
 ## Raw minute stream
 
 - Path: `data/live/akshare/raw_minute.jsonl`

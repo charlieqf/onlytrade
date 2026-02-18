@@ -87,11 +87,6 @@ npm install
 npm run dev
 ```
 
-Compatibility:
-
-- `mock-api/` still exists as a shim entrypoint so existing VM layouts that run
-  `node mock-api/server.mjs` continue working.
-
 Then run frontend in live mode:
 
 ```bash
@@ -304,7 +299,7 @@ Optional secure control token (recommended):
 export ONLYTRADE_CONTROL_TOKEN="your-strong-token"
 ```
 
-If not exported, the script will try reading `CONTROL_API_TOKEN` from `runtime-api/.env.local` (fallback: `mock-api/.env.local`).
+If not exported, the script will try reading `CONTROL_API_TOKEN` from `runtime-api/.env.local`.
 
 From local terminal, you can run the same ops via SSH (`ssh -i` under the hood):
 

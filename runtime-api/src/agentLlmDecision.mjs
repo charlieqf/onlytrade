@@ -21,13 +21,30 @@ function latestPrice(context) {
   return close > 0 ? close : 0
 }
 
+function recentHoldStreak(context, maxLookback = 8) {
+  const actions = Array.isArray(context?.memory_state?.recent_actions)
+    ? context.memory_state.recent_actions
+    : []
+  let streak = 0
+  for (const row of actions.slice(0, Math.max(1, maxLookback))) {
+    const action = String(row?.action || '').trim().toLowerCase()
+    if (action !== 'hold') break
+    streak += 1
+  }
+  return streak
+}
+
 function summarizeContext(context) {
   const intraday = context?.intraday?.feature_snapshot || {}
   const daily = context?.daily?.feature_snapshot || {}
   const position = context?.position_state || {}
+  const dataReadiness = context?.data_readiness || {}
+  const marketOverview = context?.market_overview || {}
+  const newsDigest = context?.news_digest || {}
   const memoryStats = context?.memory_state?.stats || {}
   const memoryReplay = context?.memory_state?.replay || {}
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
+  const holdStreak = recentHoldStreak(context)
 
   return {
     symbol: context?.symbol || '600519.SH',
@@ -62,6 +79,7 @@ function summarizeContext(context) {
         decisions: toNumber(memoryStats.decisions, 0),
         wins: toNumber(memoryStats.wins, 0),
         losses: toNumber(memoryStats.losses, 0),
+        hold_streak: holdStreak,
       },
       last_action: lastAction
         ? {
@@ -71,6 +89,16 @@ function summarizeContext(context) {
         }
         : null,
     },
+    contextual: {
+      data_readiness_level: String(dataReadiness.level || '').trim().toUpperCase(),
+      data_readiness_reasons: Array.isArray(dataReadiness.reasons)
+        ? dataReadiness.reasons.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 3)
+        : [],
+      market_overview_brief: String(marketOverview.brief || '').slice(0, 240),
+      news_digest_titles: Array.isArray(newsDigest.titles)
+        ? newsDigest.titles.map((item) => String(item || '').slice(0, 96)).filter(Boolean).slice(0, 3)
+        : [],
+    },
   }
 }
 
@@ -78,8 +106,12 @@ function summarizeContextLite(context) {
   const intraday = context?.intraday?.feature_snapshot || {}
   const daily = context?.daily?.feature_snapshot || {}
   const position = context?.position_state || {}
+  const dataReadiness = context?.data_readiness || {}
+  const marketOverview = context?.market_overview || {}
+  const newsDigest = context?.news_digest || {}
   const memoryStats = context?.memory_state?.stats || {}
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
+  const holdStreak = recentHoldStreak(context)
 
   return {
     symbol: context?.symbol || '600519.SH',
@@ -104,6 +136,7 @@ function summarizeContextLite(context) {
       decisions: toNumber(memoryStats.decisions, 0),
       wins: toNumber(memoryStats.wins, 0),
       losses: toNumber(memoryStats.losses, 0),
+      hold_streak: holdStreak,
       last_action: lastAction
         ? {
           action: String(lastAction.action || 'hold').toLowerCase(),
@@ -111,6 +144,13 @@ function summarizeContextLite(context) {
           fee_paid: toNumber(lastAction.fee_paid, 0),
         }
         : null,
+    },
+    cx: {
+      dr: String(dataReadiness.level || '').trim().toUpperCase(),
+      mo: String(marketOverview.brief || '').slice(0, 120),
+      nw: Array.isArray(newsDigest.titles)
+        ? newsDigest.titles.map((item) => String(item || '').slice(0, 64)).filter(Boolean).slice(0, 2)
+        : [],
     },
   }
 }
@@ -205,7 +245,10 @@ function universalInstruction({ tokenSaver = false } = {}) {
     return [
       'You are an A-share replay trading agent.',
       'Goal: stable risk-adjusted returns across days.',
-      'Do not overreact to one bar; HOLD when edge is weak.',
+      'Do not overreact to one bar.',
+      'Avoid repetitive HOLD streaks when data readiness is OK.',
+      'If hold_streak>=3 and risk is not extreme, prefer a small-lot decisive buy/sell aligned with trend/context.',
+      'Use market overview + news digest in context for tie-break decisions.',
       'Respect lot size and constraints.',
       'Return only JSON in required schema.',
     ].join(' ')
@@ -213,10 +256,12 @@ function universalInstruction({ tokenSaver = false } = {}) {
 
   return [
     'You are an A-share virtual trading agent in a replay simulation.',
-    'Primary objective: risk-adjusted consistency over multi-day competition, not maximum turnover.',
+    'Primary objective: risk-adjusted consistency over multi-day competition with healthy room engagement.',
     'Respect constraints: 100-share lot size, no leverage, no hidden assumptions.',
     'Avoid overreaction to single bars; prioritize regime + context + memory consistency.',
-    'If edge is weak or conflicting, prefer hold.',
+    'Avoid long repetitive HOLD streaks when data_readiness is OK.',
+    'If hold_streak>=3 and there is no strong risk-off evidence, break inertia with a small-lot buy/sell aligned to trend and market/news context.',
+    'Use market overview and news digest as a tie-breaker when technical signals are mixed.',
     'Return JSON only with keys: action, confidence, quantity_shares, reasoning.',
     'action must be buy|sell|hold.',
     'quantity_shares must be 0 for hold and multiples of 100 otherwise.',

@@ -64,6 +64,33 @@ test('createDecisionFromContext emits sell when overbought or negative momentum'
   assert.equal(typeof decision.decisions[0].realized_pnl, 'number')
 })
 
+test('createDecisionFromContext guards sell when no holdings on target symbol', () => {
+  const context = makeContext({ ret5: -0.005, rsi14: 78, sma20: 99, sma60: 101, price: 96 })
+  context.position_state.shares = 0
+  context.memory_state = {
+    holdings: [
+      {
+        symbol: '300750.SZ',
+        shares: 200,
+        avg_cost: 300,
+        mark_price: 305,
+      },
+    ],
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 9,
+    context,
+    timestampIso: '2026-02-12T00:01:30.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'hold')
+  assert.equal(decision.success, true)
+  assert.equal(decision.error_message, '')
+  assert.match(decision.decisions[0].reasoning, /ignore sell without holdings/)
+})
+
 test('createDecisionFromContext honors trader trading_style from manifest metadata', () => {
   const weakPullbackContext = makeContext({
     ret5: -0.004,
@@ -101,6 +128,40 @@ test('createDecisionFromContext honors trader trading_style from manifest metada
 
   assert.equal(momentumDecision.decisions[0].action, 'sell')
   assert.equal(meanReversionDecision.decisions[0].action, 'buy')
+})
+
+test('createDecisionFromContext reasoning includes market overview and news digest context', () => {
+  const context = makeContext({ ret5: 0.003, rsi14: 56, sma20: 106, sma60: 100, price: 108 })
+  context.market_overview = { brief: '两市成交回暖，权重与科技轮动。' }
+  context.news_digest = { titles: ['央行公开市场操作平稳', '海外股指夜盘走强'] }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 12,
+    context,
+    timestampIso: '2026-02-12T00:02:30.000Z',
+  })
+
+  assert.match(decision.decisions[0].reasoning, /market=/)
+  assert.match(decision.decisions[0].reasoning, /news=/)
+})
+
+test('createDecisionFromContext guards unaffordable buy to hold without failure', () => {
+  const context = makeContext({ ret5: 0.005, rsi14: 55, sma20: 106, sma60: 100, price: 2000 })
+  context.position_state.cash_cny = 100_000
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 15,
+    context,
+    timestampIso: '2026-02-12T00:03:00.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'hold')
+  assert.equal(decision.decisions[0].success, true)
+  assert.equal(decision.success, true)
+  assert.equal(decision.error_message, '')
+  assert.match(decision.decisions[0].reasoning, /insufficient cash for one lot/)
 })
 
 test('in-memory runtime stores per-trader latest decisions and metrics', async () => {

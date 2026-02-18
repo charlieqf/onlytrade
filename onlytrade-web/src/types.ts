@@ -221,6 +221,9 @@ export interface DecisionAuditRecord {
   action?: string | null
   decision_source?: string | null
   forced_hold?: boolean
+  order_executed?: boolean
+  position_shares_on_symbol?: number
+  hold_semantics?: 'no_position_no_order' | 'keep_existing_position' | null
   data_readiness?: any
   session_gate?: any
   market_overview?: any
@@ -383,6 +386,58 @@ export interface FactoryResetResult {
     replay: ReplayRuntimeState | null
     memory: AgentMemorySnapshot[]
   }
+}
+
+export interface ViewerBetOddsEntry {
+  trader_id: string
+  trader_name: string
+  market: 'CN-A' | 'US'
+  is_running: boolean
+  daily_return_pct: number
+  implied_prob: number
+  odds: number
+  total_stake: number
+  ticket_count: number
+}
+
+export interface ViewerBetSelection {
+  user_session_id: string
+  user_nickname: string
+  trader_id: string
+  stake_amount: number
+  placed_ts_ms: number
+  market: 'CN-A' | 'US'
+  day_key: string
+  estimated_odds?: number | null
+  estimated_payout?: number | null
+}
+
+export interface ViewerBetMarketPayload {
+  schema_version: 'bets.market.v1'
+  market: 'CN-A' | 'US'
+  time_zone: string
+  mode: string
+  ts_ms: number
+  day_key: string
+  betting_open: boolean
+  odds_update_active: boolean
+  cutoff_minute: number
+  close_minute: number
+  house_edge: number
+  totals: {
+    stake_amount: number
+    ticket_count: number
+  }
+  entries: ViewerBetOddsEntry[]
+  my_bet: ViewerBetSelection | null
+  freeze_ts_ms: number | null
+}
+
+export interface ViewerBetPlacePayload {
+  user_session_id: string
+  user_nickname?: string
+  trader_id: string
+  stake_amount: number
 }
 
 export type ChatVisibility = 'public' | 'private'

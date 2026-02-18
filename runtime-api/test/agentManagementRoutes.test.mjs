@@ -9,6 +9,19 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
+const CN_POPULAR_POOL = [
+  '002131.SZ',
+  '300058.SZ',
+  '002342.SZ',
+  '600519.SH',
+  '300059.SZ',
+  '600089.SH',
+  '600986.SH',
+  '601899.SH',
+  '002050.SZ',
+  '002195.SZ',
+]
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const MOCK_API_DIR = path.resolve(__dirname, '..')
@@ -86,7 +99,7 @@ test('agent management routes drive registry-backed trader and competition paylo
     risk_profile: 'balanced',
     personality: '冷静直接，偏顺势执行。',
     style_prompt_cn: '优先顺势，不做逆势抄底。',
-    stock_pool: ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH'],
+    stock_pool: CN_POPULAR_POOL,
   })
   await writeManifest(agentsDir, 't_002', { agent_name: 'Value Rebound' })
   await writeFile(path.join(agentsDir, 't_001', 'avatar.jpg'), 'avatar-thumb', 'utf8')
@@ -147,14 +160,14 @@ test('agent management routes drive registry-backed trader and competition paylo
   assert.equal(tradersAfterRegisterBody.data[0].trading_style, 'momentum_trend')
   assert.equal(tradersAfterRegisterBody.data[0].risk_profile, 'balanced')
   assert.equal(tradersAfterRegisterBody.data[0].personality, '冷静直接，偏顺势执行。')
-  assert.deepEqual(tradersAfterRegisterBody.data[0].stock_pool, ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH'])
+  assert.deepEqual(tradersAfterRegisterBody.data[0].stock_pool, CN_POPULAR_POOL)
 
   const symbolsByTraderRes = await fetch(`${baseUrl}/api/symbols?trader_id=t_001`)
   const symbolsByTraderBody = await symbolsByTraderRes.json()
   assert.equal(symbolsByTraderRes.ok, true)
   assert.deepEqual(
     symbolsByTraderBody.symbols.map((item) => item.symbol),
-    ['600519.SH', '601318.SH', '300750.SZ', '000001.SZ', '688981.SH']
+    CN_POPULAR_POOL
   )
 
   const decisionsAfterRegisterRes = await fetch(`${baseUrl}/api/decisions/latest?trader_id=t_001&limit=5`)

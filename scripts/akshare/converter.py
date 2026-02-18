@@ -50,6 +50,14 @@ def map_row_to_frame(code: str, row: dict[str, Any], seq: int = 1) -> dict[str, 
     )
     low_price = _as_float(row.get("最低", row.get("low")), min(open_price, close_price))
 
+    source = str(row.get("source") or "").strip().lower()
+    if source == "akshare.quote_synthetic_minute":
+        # Legacy synthetic rows may carry day-level open/high/low values.
+        # Normalize synthetic bars to flat OHLC at the close price.
+        open_price = close_price
+        high_price = close_price
+        low_price = close_price
+
     volume_lot = _as_float(row.get("成交量", row.get("volume_lot")))
     volume_shares = int(round(volume_lot * 100))
     turnover_cny = _as_float(

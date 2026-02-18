@@ -29,6 +29,7 @@ function normalizeRiskProfile(trader) {
 
 function decideAction(context, traderProfile = {}) {
   const ret5 = toSafeNumber(context?.intraday?.feature_snapshot?.ret_5, 0)
+  const ret20 = toSafeNumber(context?.intraday?.feature_snapshot?.ret_20, 0)
   const volRatio20 = toSafeNumber(context?.intraday?.feature_snapshot?.vol_ratio_20, 1)
   const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
   const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
@@ -39,25 +40,25 @@ function decideAction(context, traderProfile = {}) {
   const bearishTrend = sma20 > 0 && sma60 > 0 && sma20 < sma60
 
   if (style === 'mean_reversion') {
-    if (rsi14 >= 72 || (ret5 >= 0.004 && !bullishTrend)) return 'sell'
-    if ((ret5 <= -0.0025 && rsi14 <= 45 && !bearishTrend) || (ret5 <= -0.004 && rsi14 <= 40)) return 'buy'
+    if (rsi14 >= 72 || (ret5 >= 0.0032 && !bullishTrend)) return 'sell'
+    if ((ret5 <= -0.0022 && rsi14 <= 47 && !bearishTrend) || (ret20 <= -0.0045 && rsi14 <= 42)) return 'buy'
     return 'hold'
   }
 
   if (style === 'event_driven') {
-    if (volRatio20 >= 1.5 && (ret5 <= -0.0035 || bearishTrend || rsi14 >= 73)) return 'sell'
-    if (volRatio20 >= 1.3 && ret5 >= 0.003 && bullishTrend && rsi14 <= 68) return 'buy'
+    if (volRatio20 >= 1.35 && (ret5 <= -0.003 || ret20 <= -0.004 || bearishTrend || rsi14 >= 73)) return 'sell'
+    if (volRatio20 >= 1.2 && (ret5 >= 0.0022 || ret20 >= 0.004) && bullishTrend && rsi14 <= 70) return 'buy'
     return 'hold'
   }
 
   if (style === 'macro_swing') {
-    if (bearishTrend || rsi14 >= 75 || ret5 <= -0.0045) return 'sell'
-    if (bullishTrend && rsi14 >= 45 && rsi14 <= 68 && ret5 >= -0.0015) return 'buy'
+    if (bearishTrend || rsi14 >= 75 || ret20 <= -0.006 || ret5 <= -0.0045) return 'sell'
+    if (bullishTrend && rsi14 >= 44 && rsi14 <= 70 && ret20 >= -0.002) return 'buy'
     return 'hold'
   }
 
-  if (ret5 <= -0.002 || rsi14 >= 72 || bearishTrend) return 'sell'
-  if (ret5 >= 0.002 && bullishTrend && rsi14 <= 70) return 'buy'
+  if (ret5 <= -0.0014 || ret20 <= -0.003 || rsi14 >= 72 || bearishTrend) return 'sell'
+  if ((ret5 >= 0.0012 || ret20 >= 0.003) && bullishTrend && rsi14 <= 72) return 'buy'
   return 'hold'
 }
 
@@ -189,14 +190,23 @@ function buildReasoning(action, context, traderProfile = {}) {
   const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
   const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
   const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
+  const marketOverviewBrief = String(context?.market_overview?.brief || '').trim()
+  const newsTitles = Array.isArray(context?.news_digest?.titles)
+    ? context.news_digest.titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 2)
+    : []
+
+  const macroBits = []
+  if (marketOverviewBrief) macroBits.push(`market=${marketOverviewBrief.slice(0, 96)}`)
+  if (newsTitles.length) macroBits.push(`news=${newsTitles.join(' / ').slice(0, 96)}`)
+  const macroSuffix = macroBits.length ? ` ${macroBits.join('; ')}` : ''
 
   if (action === 'buy') {
-    return `${style} buy setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, SMA20=${sma20.toFixed(2)}, SMA60=${sma60.toFixed(2)}, risk=${risk}).`
+    return `${style} buy setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, SMA20=${sma20.toFixed(2)}, SMA60=${sma60.toFixed(2)}, risk=${risk}).${macroSuffix}`
   }
   if (action === 'sell') {
-    return `${style} sell/risk-off setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, trend ${sma20.toFixed(2)} vs ${sma60.toFixed(2)}, risk=${risk}).`
+    return `${style} sell/risk-off setup (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, trend ${sma20.toFixed(2)} vs ${sma60.toFixed(2)}, risk=${risk}).${macroSuffix}`
   }
-  return `${style} no strong edge (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, risk=${risk}), hold.`
+  return `${style} no strong edge (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, risk=${risk}), hold.${macroSuffix}`
 }
 
 function buildDecisionInputPrompt(context, symbol, cycleNumber) {
@@ -219,6 +229,14 @@ function buildDecisionInputPrompt(context, symbol, cycleNumber) {
       shares: toSafeNumber(context?.position_state?.shares, 0),
       avg_cost: toSafeNumber(context?.position_state?.avg_cost, 0),
       cash_cny: toSafeNumber(context?.position_state?.cash_cny, 0),
+    },
+    market_overview: {
+      brief: String(context?.market_overview?.brief || '').slice(0, 240),
+    },
+    news_digest: {
+      titles: Array.isArray(context?.news_digest?.titles)
+        ? context.news_digest.titles.map((item) => String(item || '').slice(0, 96)).filter(Boolean).slice(0, 3)
+        : [],
     },
   }
   return JSON.stringify(payload)
@@ -275,6 +293,14 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const holdings = Array.isArray(context?.memory_state?.holdings) ? context.memory_state.holdings : []
   const hasAnyHoldings = holdings.some((holding) => toSafeNumber(holding?.shares, 0) > 0)
   const isFlat = !hasAnyHoldings && toSafeNumber(context?.position_state?.shares, 0) <= 0
+  const symbolSharesInMemory = holdings
+    .filter((holding) => String(holding?.symbol || '') === symbol)
+    .reduce((sum, holding) => sum + toSafeNumber(holding?.shares, 0), 0)
+  const symbolShares = Math.max(
+    toSafeNumber(context?.position_state?.shares, 0),
+    symbolSharesInMemory,
+  )
+  const hasSymbolShares = symbolShares > 0
   const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
   const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
   const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
@@ -282,9 +308,11 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
 
   const originalAction = String(llmDecision?.action || decideAction(context, traderProfile)).toLowerCase()
   let action = originalAction
+  let sellGuardedWithoutSymbolShares = false
   // Guardrail: never attempt to sell when flat in this virtual long-only market.
-  if (action === 'sell' && isFlat) {
+  if (action === 'sell' && !hasSymbolShares) {
     action = 'hold'
+    sellGuardedWithoutSymbolShares = true
   }
 
   // Anti-stall: when fully in cash for too long, open a small starter position.
@@ -312,7 +340,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const forcedFlatEntryQuantity = action === 'buy' && isFlat && flatEntryEnabled && Number(cycleNumber) >= flatEntryMinCycles
     ? lotSize * flatEntryLots
     : null
-  const requestedQuantity = action === 'hold'
+  let requestedQuantity = action === 'hold'
     ? 0
     : toLotQuantity(forcedFlatEntryQuantity ?? quantity, lotSize)
   const commissionRate = Math.max(0, toSafeNumber(context?.runtime_config?.commission_rate, 0.0003))
@@ -331,6 +359,17 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
 
   const symbolHolding = holdingsMap.get(symbol)
   symbolHolding.mark_price = round(price, 4)
+
+  let buyGuardedInsufficientCash = false
+  if (action === 'buy' && requestedQuantity > 0) {
+    const maxAffordableSharesPreview = Math.floor(cashCny / (price * (1 + commissionRate)))
+    const affordableQuantityPreview = toLotQuantity(maxAffordableSharesPreview, lotSize)
+    if (affordableQuantityPreview <= 0) {
+      action = 'hold'
+      requestedQuantity = 0
+      buyGuardedInsufficientCash = true
+    }
+  }
 
   let executed = false
   let filledQuantity = 0
@@ -385,10 +424,14 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const totalBalance = round(cashCny + marketValue, 2)
 
   let reasoning = llmDecision?.reasoning || buildReasoning(action, context, traderProfile)
-  if (forcedFlatEntry) {
+  if (buyGuardedInsufficientCash) {
+    reasoning = `guardrail: skip buy on ${symbol}, insufficient cash for one lot (lot=${lotSize}, cash=${cashCny.toFixed(2)}, price=${price.toFixed(2)}). ${reasoning}`
+  } else if (forcedFlatEntry) {
     reasoning = `flat-entry (in cash too long) -> starter buy ${lotSize * flatEntryLots} shares. ${reasoning}`
-  } else if (originalAction === 'sell' && action === 'hold' && isFlat) {
-    reasoning = `guardrail: ignore sell while flat (no shares). ${reasoning}`
+  } else if (originalAction === 'sell' && action === 'hold' && sellGuardedWithoutSymbolShares) {
+    reasoning = isFlat
+      ? `guardrail: ignore sell while flat (no shares). ${reasoning}`
+      : `guardrail: ignore sell without holdings on ${symbol}. ${reasoning}`
   }
   const decisionSource = llmDecision?.source === 'openai' ? 'llm.openai' : 'rule.heuristic'
   const systemPrompt = llmDecision?.system_prompt

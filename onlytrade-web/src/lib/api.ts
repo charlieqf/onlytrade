@@ -46,6 +46,8 @@ import type {
   ChatSessionBootstrapResult,
   RoomStreamPacket,
   DecisionAuditListPayload,
+  ViewerBetMarketPayload,
+  ViewerBetPlacePayload,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -106,6 +108,44 @@ export const api = {
       `${API_BASE}/chat/session/bootstrap`
     )
     if (!result.success || !result.data) throw new Error('初始化聊天会话失败')
+    return result.data
+  },
+
+  async getBetsMarket(options?: {
+    traderId?: string
+    market?: 'CN-A' | 'US'
+    userSessionId?: string
+  }): Promise<ViewerBetMarketPayload> {
+    const params = new URLSearchParams()
+    if (options?.traderId) {
+      params.set('trader_id', String(options.traderId).trim())
+    }
+    if (options?.market) {
+      params.set('market', String(options.market).trim().toUpperCase())
+    }
+    if (options?.userSessionId) {
+      params.set('user_session_id', String(options.userSessionId).trim())
+    }
+
+    const query = params.toString()
+    const url = query ? `${API_BASE}/bets/market?${query}` : `${API_BASE}/bets/market`
+    const result = await httpClient.get<ViewerBetMarketPayload>(url)
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '获取竞猜盘口失败')
+    }
+    return result.data
+  },
+
+  async placeViewerBet(
+    payload: ViewerBetPlacePayload
+  ): Promise<ViewerBetMarketPayload> {
+    const result = await httpClient.post<ViewerBetMarketPayload>(
+      `${API_BASE}/bets/place`,
+      payload
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '下注失败')
+    }
     return result.data
   },
 

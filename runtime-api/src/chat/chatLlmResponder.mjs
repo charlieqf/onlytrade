@@ -37,6 +37,12 @@ function buildSystemPrompt({ roomAgent, kind }) {
     : (kind === 'narration'
       ? 'You are narrating your latest trading decision to the room like a livestream host.'
       : 'You are writing a direct reply to a user message in the room.')
+  const contextRule = (kind === 'proactive' || kind === 'narration')
+    ? 'If room_context contains market_overview_brief or news_digest_titles, explicitly reference them in your message.'
+    : ''
+  const positionRule = (kind === 'proactive' || kind === 'narration')
+    ? 'If room_context.symbol_brief.position_shares_on_symbol is 0, do not claim you are currently holding that symbol; describe it as no-position/watchlist instead.'
+    : ''
   const style = styleHint(roomAgent)
 
   return [
@@ -44,6 +50,8 @@ function buildSystemPrompt({ roomAgent, kind }) {
     kindRule,
     'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON.',
     'Do not claim you executed real broker orders.',
+    contextRule,
+    positionRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
 }
@@ -85,7 +93,18 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
         news_digest_titles: Array.isArray(ctx.news_digest_titles)
           ? ctx.news_digest_titles.map((t) => String(t || '').slice(0, 80)).filter(Boolean).slice(0, 6)
           : [],
-        symbol_brief: ctx.symbol_brief || null,
+        symbol_brief: toSafeObject(ctx.symbol_brief)
+          ? {
+            symbol: ctx.symbol_brief.symbol || null,
+            action: ctx.symbol_brief.action || null,
+            confidence: ctx.symbol_brief.confidence ?? null,
+            order_executed: ctx.symbol_brief.order_executed === true,
+            position_shares_on_symbol: Math.max(0, Math.floor(toNumber(ctx.symbol_brief.position_shares_on_symbol, 0))),
+            reasoning: typeof ctx.symbol_brief.reasoning === 'string'
+              ? ctx.symbol_brief.reasoning.slice(0, 120)
+              : null,
+          }
+          : null,
       }
       : null,
     history_tail: Array.isArray(historyContext)

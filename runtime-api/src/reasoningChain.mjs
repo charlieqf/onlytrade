@@ -82,6 +82,7 @@ function buildActionStep({ decision, context } = {}) {
   const symbol = safeText(head?.symbol || context?.symbol || '', 20)
   const action = safeText(head?.action || '', 10).toUpperCase() || 'HOLD'
   const qty = toSafeNumber(head?.quantity, NaN)
+  const shares = toSafeNumber(context?.position_state?.shares, NaN)
   const confidence = toSafeNumber(head?.confidence, NaN)
   const stopLoss = toSafeNumber(head?.stop_loss, NaN)
   const takeProfit = toSafeNumber(head?.take_profit, NaN)
@@ -95,6 +96,9 @@ function buildActionStep({ decision, context } = {}) {
 
   const bits = []
   bits.push(`动作：${symbol ? symbol + ' ' : ''}${action}`)
+  if (action === 'HOLD' && Number.isFinite(shares) && shares <= 0) {
+    bits.push('当前无仓位，继续观察')
+  }
   if (Number.isFinite(qty) && qty > 0) bits.push(`数量${Math.floor(qty)}`)
   if (Number.isFinite(confidence)) bits.push(`置信度${Number(confidence).toFixed(2)}`)
   if (Number.isFinite(stopLoss) && stopLoss > 0) bits.push(`止损${stopLoss.toFixed(2)}`)

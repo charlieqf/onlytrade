@@ -15,7 +15,10 @@ from scripts.akshare.common import to_code
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run AKShare collect + convert cycle")
-    parser.add_argument("--symbols", default="600519,300750,601318,000001,688981")
+    parser.add_argument(
+        "--symbols",
+        default="002131,300058,002342,600519,300059,600089,600986,601899,002050,002195",
+    )
     parser.add_argument("--tail-bars", type=int, default=8)
     parser.add_argument(
         "--raw-minute-path", default="data/live/akshare/raw_minute.jsonl"

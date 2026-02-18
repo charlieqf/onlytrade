@@ -1,16 +1,18 @@
 import { useEffect, useState, useRef } from 'react'
+import useSWR from 'swr'
 import { ChartTabs } from '../components/ChartTabs'
 import { DecisionCard } from '../components/DecisionCard'
 import { PositionHistory } from '../components/PositionHistory'
 import { TraderAvatar } from '../components/TraderAvatar'
 import { formatPrice, formatQuantity } from '../utils/format'
 import { t, type Language } from '../i18n/translations'
-import { Info, MessageSquare } from 'lucide-react'
+import { MessageSquare } from 'lucide-react'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import { RoomPublicChatPanel } from '../components/chat/RoomPublicChatPanel'
 import { RoomPrivateChatPanel } from '../components/chat/RoomPrivateChatPanel'
 import { AuditExplorerPanel } from '../components/AuditExplorerPanel'
 import { RoomClockBadge } from '../components/RoomClockBadge'
+import { api } from '../lib/api'
 import { useUserSessionId } from '../hooks/useUserSessionId'
 import type {
   SystemStatus,
@@ -20,6 +22,7 @@ import type {
   TraderInfo,
   RoomStreamPacket,
   ReplayRuntimeStatus,
+  ViewerBetMarketPayload,
 } from '../types'
 
 type RoomSseStatus = 'connecting' | 'connected' | 'reconnecting' | 'error'
@@ -260,6 +263,57 @@ export function TraderDashboardPage({
     }
   }
 
+  const formatMinuteLabel = (minuteValue: any) => {
+    const minute = Number(minuteValue)
+    if (!Number.isFinite(minute) || minute < 0) return '--:--'
+    const h = Math.floor(minute / 60)
+    const m = Math.floor(minute % 60)
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  const placeBet = async () => {
+    if (!selectedTrader) return
+    if (!userSessionId || !userNickname) {
+      setBetError(
+        language === 'zh'
+          ? '聊天会话尚未初始化。'
+          : 'Chat session is not ready yet.'
+      )
+      return
+    }
+
+    const traderId = String(betTraderId || selectedTrader.trader_id).trim()
+    const stakeAmount = Number(betStakeInput)
+    if (!traderId) {
+      setBetError(language === 'zh' ? '请选择下注交易员。' : 'Select a trader first.')
+      return
+    }
+    if (!Number.isFinite(stakeAmount) || stakeAmount <= 0) {
+      setBetError(
+        language === 'zh' ? '请输入有效下注金额。' : 'Enter a valid stake amount.'
+      )
+      return
+    }
+
+    setBetSubmitting(true)
+    setBetError('')
+    setBetNotice('')
+    try {
+      const payload = await api.placeViewerBet({
+        user_session_id: userSessionId,
+        user_nickname: userNickname,
+        trader_id: traderId,
+        stake_amount: stakeAmount,
+      })
+      await mutateBetMarket(payload, { revalidate: false })
+      setBetNotice(language === 'zh' ? '下注已更新。' : 'Bet updated.')
+    } catch (error) {
+      setBetError(error instanceof Error ? error.message : 'bet_place_failed')
+    } finally {
+      setBetSubmitting(false)
+    }
+  }
+
   const safeJson = (value: any, maxLen: number = 2500) => {
     try {
       const text = JSON.stringify(value, null, 2)
@@ -305,6 +359,52 @@ export function TraderDashboardPage({
     isLoading: chatSessionLoading,
     error: chatSessionError,
   } = useUserSessionId()
+
+  const [betStakeInput, setBetStakeInput] = useState<string>('100')
+  const [betTraderId, setBetTraderId] = useState<string>('')
+  const [betSubmitting, setBetSubmitting] = useState<boolean>(false)
+  const [betError, setBetError] = useState<string>('')
+  const [betNotice, setBetNotice] = useState<string>('')
+
+  const {
+    data: betMarket,
+    error: betMarketError,
+    isLoading: betMarketLoading,
+    mutate: mutateBetMarket,
+  } = useSWR<ViewerBetMarketPayload>(
+    selectedTrader && userSessionId
+      ? ['bets-market', selectedTrader.trader_id, userSessionId]
+      : null,
+    () =>
+      api.getBetsMarket({
+        traderId: selectedTrader?.trader_id,
+        userSessionId: userSessionId || undefined,
+      }),
+    {
+      refreshInterval: 8000,
+      revalidateOnFocus: false,
+    }
+  )
+
+  useEffect(() => {
+    const candidateIds = Array.isArray(betMarket?.entries)
+      ? betMarket.entries
+          .map((entry) => String(entry?.trader_id || '').trim())
+          .filter(Boolean)
+      : []
+    const fallbackId = String(selectedTrader?.trader_id || '').trim()
+    const current = String(betTraderId || '').trim()
+    if (current && candidateIds.includes(current)) return
+    if (fallbackId && candidateIds.includes(fallbackId)) {
+      setBetTraderId(fallbackId)
+      return
+    }
+    if (candidateIds.length > 0) {
+      setBetTraderId(candidateIds[0])
+      return
+    }
+    setBetTraderId(fallbackId)
+  }, [selectedTrader?.trader_id, betMarket?.day_key, betMarket?.entries, betTraderId])
 
   // Current positions pagination
   const [positionsPageSize, setPositionsPageSize] = useState<number>(20)
@@ -974,30 +1074,126 @@ export function TraderDashboardPage({
                 )}
             </div>
 
-            <div className="nofx-glass p-4 border border-nofx-gold/20 rounded-lg">
-              <div className="flex items-center gap-2 text-sm font-semibold text-nofx-gold mb-2">
-                <Info className="w-4 h-4" />
-                {language === 'zh'
-                  ? '模拟规则（Demo）'
-                  : 'Simulation Rules (Demo)'}
+            <div className="nofx-glass p-5 border border-white/10 rounded-lg">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <div className="text-base font-bold text-nofx-text-main">
+                    {language === 'zh' ? '当日竞猜盘' : 'Daily Bet Board'}
+                  </div>
+                  <div className="text-xs text-nofx-text-muted mt-1">
+                    {language === 'zh'
+                      ? '按当日收益率动态赔率，收盘前30分钟截止。'
+                      : 'Dynamic odds by daily return; cutoff is 30 minutes before close.'}
+                  </div>
+                </div>
+                <div
+                  className={`px-2 py-1 rounded text-[11px] font-mono border ${betMarket?.betting_open ? 'border-nofx-green/35 text-nofx-green bg-nofx-green/10' : 'border-nofx-red/35 text-nofx-red bg-nofx-red/10'}`}
+                >
+                  {betMarket?.betting_open ? 'OPEN' : 'CLOSED'}
+                </div>
               </div>
-              <ul className="text-xs text-nofx-text-muted space-y-1">
-                <li>
-                  {language === 'zh'
-                    ? 'HS300 标的，虚拟仓位，无真实资金。'
-                    : 'HS300 symbols, virtual positions, no real funds.'}
-                </li>
-                <li>
-                  {language === 'zh'
-                    ? '成交按下一根K线开盘价 + 固定滑点。'
-                    : 'Fills use next-bar open + fixed slippage.'}
-                </li>
-                <li>
-                  {language === 'zh'
-                    ? 'A股约束：100股一手，T+1。'
-                    : 'A-share constraints: 100-share lots, T+1.'}
-                </li>
-              </ul>
+
+              <div className="text-[11px] text-nofx-text-muted font-mono mb-3 flex flex-wrap gap-x-3 gap-y-1">
+                <span>{`day=${betMarket?.day_key || '--'}`}</span>
+                <span>{`cutoff=${formatMinuteLabel(betMarket?.cutoff_minute)}`}</span>
+                <span>{`close=${formatMinuteLabel(betMarket?.close_minute)}`}</span>
+                <span>{`pool=${formatPrice(Number(betMarket?.totals?.stake_amount || 0))}`}</span>
+              </div>
+
+              {betMarketLoading && (
+                <div className="text-xs text-nofx-text-muted mb-2">
+                  {language === 'zh' ? '加载盘口中...' : 'Loading market...'}
+                </div>
+              )}
+
+              {(betMarketError || betError) && (
+                <div className="text-xs text-nofx-red mb-2">
+                  {String(
+                    (betError || (betMarketError as any)?.message || '').trim() ||
+                      (language === 'zh'
+                        ? '盘口加载失败。'
+                        : 'Bet market failed to load.')
+                  )}
+                </div>
+              )}
+
+              {betNotice && (
+                <div className="text-xs text-nofx-green mb-2">{betNotice}</div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_110px] gap-2 mb-3">
+                <select
+                  value={betTraderId}
+                  onChange={(e) => setBetTraderId(String(e.target.value || ''))}
+                  className="px-3 py-2 rounded bg-black/35 border border-white/10 text-sm text-nofx-text-main"
+                >
+                  {(betMarket?.entries || []).map((entry) => (
+                    <option key={entry.trader_id} value={entry.trader_id}>
+                      {entry.trader_name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  max={100000}
+                  step={1}
+                  value={betStakeInput}
+                  onChange={(e) => setBetStakeInput(String(e.target.value || ''))}
+                  className="px-3 py-2 rounded bg-black/35 border border-white/10 text-sm text-nofx-text-main"
+                  placeholder={language === 'zh' ? '金额' : 'Stake'}
+                />
+                <button
+                  type="button"
+                  onClick={placeBet}
+                  disabled={!betMarket?.betting_open || betSubmitting || !userSessionId}
+                  className="px-3 py-2 rounded text-sm font-semibold bg-nofx-gold text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {betSubmitting
+                    ? language === 'zh'
+                      ? '提交中...'
+                      : 'Placing...'
+                    : language === 'zh'
+                      ? '下注'
+                      : 'Place'}
+                </button>
+              </div>
+
+              {betMarket?.my_bet && (
+                <div className="mb-3 text-xs text-nofx-text-main bg-black/25 border border-white/10 rounded px-3 py-2">
+                  {language === 'zh' ? '我的下注' : 'My bet'}:{' '}
+                  {betMarket.my_bet.trader_id} ·{' '}
+                  {formatPrice(betMarket.my_bet.stake_amount)}
+                  {betMarket.my_bet.estimated_odds != null && (
+                    <span className="text-nofx-text-muted">
+                      {` · x${Number(betMarket.my_bet.estimated_odds).toFixed(2)}`}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {(betMarket?.entries || []).slice(0, 8).map((entry) => (
+                  <div
+                    key={entry.trader_id}
+                    className="rounded border border-white/10 bg-black/25 px-3 py-2 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-nofx-text-main truncate">
+                        {entry.trader_name}
+                      </div>
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        ret {Number(entry.daily_return_pct || 0).toFixed(2)}% · odds
+                        {' '}x{Number(entry.odds || 0).toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="text-right text-[11px] font-mono text-nofx-text-muted shrink-0">
+                      <div>{formatPrice(entry.total_stake)}</div>
+                      <div>{entry.ticket_count} tk</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="nofx-glass p-5 border border-white/5 rounded-lg">

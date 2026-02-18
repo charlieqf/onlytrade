@@ -239,6 +239,12 @@ const AGENT_REGISTRY_PATH = path.resolve(
   process.env.AGENT_REGISTRY_PATH || path.join('data', 'agents', 'registry.json')
 )
 
+const BETS_LEDGER_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.BETS_LEDGER_PATH || path.join('data', 'bets', 'ledger.json')
+)
+const BETS_HOUSE_EDGE = Math.max(0, Math.min(0.3, Number(process.env.BETS_HOUSE_EDGE || 0.08)))
+
 if (STRICT_LIVE_MODE && RUNTIME_DATA_MODE !== 'live_file') {
   throw new Error('strict_live_mode_requires_runtime_data_mode_live_file')
 }
@@ -512,6 +518,332 @@ function getCompetitionData() {
       day_bar_count: simulation.day_bar_count,
     },
   }
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function marketCloseMinute(market) {
+  return market === 'US' ? (16 * 60) : (15 * 60)
+}
+
+function marketOpenMinute(market) {
+  return 9 * 60 + 30
+}
+
+function bettingDayStateId(market, dayKey) {
+  return `${String(market || 'CN-A')}::${String(dayKey || '').trim()}`
+}
+
+function safeStakeAmount(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 10
+  return clampNumber(Math.round(n), 1, 100000)
+}
+
+function computeDailyReturnPctForTrader(traderId) {
+  const account = getAccount(traderId)
+  const initial = Math.max(1, Number(account?.initial_balance || 100000))
+  const dailyPnl = Number(account?.daily_pnl || 0)
+  return Number(((dailyPnl / initial) * 100).toFixed(4))
+}
+
+function normalizeBetsLedgerShape(value) {
+  const raw = value && typeof value === 'object' ? value : {}
+  const days = raw.days && typeof raw.days === 'object' ? raw.days : {}
+  return {
+    schema_version: 'bets.ledger.v1',
+    days,
+  }
+}
+
+function ensureBetDayState({ market, dayKey }) {
+  const stateId = bettingDayStateId(market, dayKey)
+  if (!betsLedgerState.days[stateId]) {
+    betsLedgerState.days[stateId] = {
+      state_id: stateId,
+      market,
+      day_key: dayKey,
+      created_ts_ms: Date.now(),
+      updated_ts_ms: Date.now(),
+      pools: {},
+      user_bets: {},
+      freeze_returns_by_trader: null,
+      freeze_ts_ms: null,
+    }
+  } else {
+    const dayState = betsLedgerState.days[stateId]
+    if (!dayState || typeof dayState !== 'object') {
+      betsLedgerState.days[stateId] = {
+        state_id: stateId,
+        market,
+        day_key: dayKey,
+        created_ts_ms: Date.now(),
+        updated_ts_ms: Date.now(),
+        pools: {},
+        user_bets: {},
+        freeze_returns_by_trader: null,
+        freeze_ts_ms: null,
+      }
+    } else {
+      dayState.state_id = String(dayState.state_id || stateId)
+      dayState.market = String(dayState.market || market)
+      dayState.day_key = String(dayState.day_key || dayKey)
+      if (!Number.isFinite(Number(dayState.created_ts_ms))) {
+        dayState.created_ts_ms = Date.now()
+      }
+      if (!Number.isFinite(Number(dayState.updated_ts_ms))) {
+        dayState.updated_ts_ms = Date.now()
+      }
+      if (!dayState.pools || typeof dayState.pools !== 'object') {
+        dayState.pools = {}
+      }
+      if (!dayState.user_bets || typeof dayState.user_bets !== 'object') {
+        dayState.user_bets = {}
+      }
+      if (
+        dayState.freeze_returns_by_trader != null
+        && typeof dayState.freeze_returns_by_trader !== 'object'
+      ) {
+        dayState.freeze_returns_by_trader = null
+      }
+      if (!Number.isFinite(Number(dayState.freeze_ts_ms))) {
+        dayState.freeze_ts_ms = null
+      }
+    }
+  }
+  return betsLedgerState.days[stateId]
+}
+
+function marketNowSnapshot(market, fallbackNowMs = Date.now()) {
+  const nowTsMs = effectiveSessionNowMs({ fallbackNowMs })
+  const exchangeId = market === 'US' ? 'sim-us' : 'sim-cn'
+  const session = getMarketSessionStatusForExchange(exchangeId, nowTsMs)
+  const closeMinute = marketCloseMinute(market)
+  const openMinute = marketOpenMinute(market)
+  const cutoffMinute = closeMinute - 30
+  const minute = Number(session?.minutes_since_midnight)
+  const hasMinute = Number.isFinite(minute)
+  const weekend = Number(session?.weekday) === 0 || Number(session?.weekday) === 6
+  const beforeCutoff = hasMinute && minute < cutoffMinute
+  const afterCutoff = hasMinute && minute >= cutoffMinute
+
+  return {
+    ts_ms: nowTsMs,
+    session,
+    open_minute: openMinute,
+    close_minute: closeMinute,
+    cutoff_minute: cutoffMinute,
+    betting_open: !weekend && beforeCutoff,
+    odds_update_active: !weekend && beforeCutoff,
+    after_cutoff: !weekend && afterCutoff,
+  }
+}
+
+function computeMarketOddsEntries({ market, returnsByTrader, poolsByTrader, traders }) {
+  const safeTraders = Array.isArray(traders) ? traders : []
+  const totalStake = safeTraders.reduce((sum, trader) => {
+    const amount = Number(poolsByTrader?.[trader.trader_id]?.amount || 0)
+    return sum + (Number.isFinite(amount) ? amount : 0)
+  }, 0)
+
+  const weighted = []
+  for (const trader of safeTraders) {
+    const traderId = String(trader?.trader_id || '').trim()
+    if (!traderId) continue
+    const retPct = Number(returnsByTrader?.[traderId] || 0)
+    const perfScore = Math.exp(clampNumber(retPct, -20, 20) / 8)
+    const crowdStake = Number(poolsByTrader?.[traderId]?.amount || 0)
+    const crowdShare = totalStake > 0 ? crowdStake / totalStake : 0
+    const weightedScore = perfScore * (1 + crowdShare * 0.75)
+    weighted.push({ traderId, weightedScore, retPct })
+  }
+
+  const sumWeighted = weighted.reduce((sum, row) => sum + row.weightedScore, 0)
+  const denominator = sumWeighted > 0 ? sumWeighted : Math.max(1, weighted.length)
+
+  return weighted
+    .map((row) => {
+      const trader = safeTraders.find((item) => item.trader_id === row.traderId)
+      const impliedProb = sumWeighted > 0 ? (row.weightedScore / denominator) : (1 / denominator)
+      const odds = clampNumber((1 - BETS_HOUSE_EDGE) / Math.max(0.02, impliedProb), 1.05, 30)
+      const pool = poolsByTrader?.[row.traderId] || {}
+      const amount = Number(pool.amount || 0)
+      const tickets = Number(pool.tickets || 0)
+
+      return {
+        trader_id: row.traderId,
+        trader_name: String(trader?.trader_name || row.traderId),
+        market,
+        is_running: !!trader?.is_running,
+        daily_return_pct: Number(row.retPct.toFixed(4)),
+        implied_prob: Number(impliedProb.toFixed(6)),
+        odds: Number(odds.toFixed(4)),
+        total_stake: Number((Number.isFinite(amount) ? amount : 0).toFixed(2)),
+        ticket_count: Number.isFinite(tickets) ? Math.max(0, Math.floor(tickets)) : 0,
+      }
+    })
+    .sort((a, b) => {
+      if (b.daily_return_pct !== a.daily_return_pct) return b.daily_return_pct - a.daily_return_pct
+      return b.odds - a.odds
+    })
+}
+
+async function persistBetsLedgerState() {
+  const dir = path.dirname(BETS_LEDGER_PATH)
+  await mkdir(dir, { recursive: true })
+  const tmpPath = `${BETS_LEDGER_PATH}.tmp`
+  await writeFile(tmpPath, JSON.stringify(betsLedgerState, null, 2), 'utf8')
+  await rename(tmpPath, BETS_LEDGER_PATH)
+}
+
+async function loadBetsLedgerState() {
+  try {
+    const raw = await readFile(BETS_LEDGER_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    betsLedgerState = normalizeBetsLedgerShape(parsed)
+  } catch {
+    betsLedgerState = normalizeBetsLedgerShape(null)
+  }
+}
+
+function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
+  const safeMarket = String(market || 'CN-A').toUpperCase() === 'US' ? 'US' : 'CN-A'
+  const spec = getMarketSpecForExchange(safeMarket === 'US' ? 'sim-us' : 'sim-cn')
+  const clock = marketNowSnapshot(safeMarket, Date.now())
+  const dayKey = dayKeyInTimeZone(clock.ts_ms, spec.timezone)
+  const dayState = ensureBetDayState({ market: safeMarket, dayKey })
+
+  const candidateTraders = getLobbyTraders().filter((trader) => {
+    const traderMarket = getMarketSpecForExchange(trader.exchange_id).market
+    return traderMarket === safeMarket
+  })
+
+  const liveReturnsByTrader = {}
+  for (const trader of candidateTraders) {
+    liveReturnsByTrader[trader.trader_id] = computeDailyReturnPctForTrader(trader.trader_id)
+  }
+
+  if (clock.after_cutoff && !dayState.freeze_returns_by_trader) {
+    dayState.freeze_returns_by_trader = { ...liveReturnsByTrader }
+    dayState.freeze_ts_ms = clock.ts_ms
+    dayState.updated_ts_ms = Date.now()
+  }
+
+  const returnsByTrader = clock.after_cutoff && dayState.freeze_returns_by_trader
+    ? dayState.freeze_returns_by_trader
+    : liveReturnsByTrader
+
+  const entries = computeMarketOddsEntries({
+    market: safeMarket,
+    returnsByTrader,
+    poolsByTrader: dayState.pools || {},
+    traders: candidateTraders,
+  })
+
+  const totalStake = entries.reduce((sum, item) => sum + Number(item.total_stake || 0), 0)
+  const totalTickets = entries.reduce((sum, item) => sum + Number(item.ticket_count || 0), 0)
+
+  const safeUserSessionId = String(userSessionId || '').trim()
+  const myBet = safeUserSessionId
+    ? (dayState.user_bets?.[safeUserSessionId] || null)
+    : null
+
+  const myBetWithEstimate = myBet
+    ? (() => {
+      const entry = entries.find((item) => item.trader_id === myBet.trader_id)
+      const odds = Number(entry?.odds || 0)
+      const stake = Number(myBet.stake_amount || 0)
+      const estPayout = odds > 0 ? Number((odds * stake).toFixed(2)) : null
+      return {
+        ...myBet,
+        estimated_odds: odds || null,
+        estimated_payout: estPayout,
+      }
+    })()
+    : null
+
+  return {
+    schema_version: 'bets.market.v1',
+    market: safeMarket,
+    time_zone: spec.timezone,
+    mode: RUNTIME_DATA_MODE,
+    ts_ms: clock.ts_ms,
+    day_key: dayKey,
+    betting_open: clock.betting_open,
+    odds_update_active: clock.odds_update_active,
+    cutoff_minute: clock.cutoff_minute,
+    close_minute: clock.close_minute,
+    house_edge: BETS_HOUSE_EDGE,
+    totals: {
+      stake_amount: Number(totalStake.toFixed(2)),
+      ticket_count: Math.max(0, Math.floor(totalTickets)),
+    },
+    entries,
+    my_bet: myBetWithEstimate,
+    freeze_ts_ms: dayState.freeze_ts_ms || null,
+  }
+}
+
+async function placeViewerBet({ userSessionId, userNickname, traderId, stakeAmount }) {
+  const safeUserSessionId = String(userSessionId || '').trim()
+  const safeTraderId = String(traderId || '').trim()
+  if (!safeUserSessionId) {
+    throw httpError('invalid_user_session_id', 400)
+  }
+  if (!safeTraderId) {
+    throw httpError('invalid_trader_id', 400)
+  }
+
+  const trader = getTraderById(safeTraderId)
+  if (!trader || trader.show_in_competition === false) {
+    throw httpError('trader_not_available_for_bet', 404)
+  }
+
+  const market = getMarketSpecForExchange(trader.exchange_id).market
+  const clock = marketNowSnapshot(market, Date.now())
+  if (!clock.betting_open) {
+    throw httpError('betting_closed_before_market_close_30m', 409)
+  }
+
+  const spec = getMarketSpecForExchange(trader.exchange_id)
+  const dayKey = dayKeyInTimeZone(clock.ts_ms, spec.timezone)
+  const dayState = ensureBetDayState({ market, dayKey })
+  const amount = safeStakeAmount(stakeAmount)
+
+  const existing = dayState.user_bets?.[safeUserSessionId] || null
+  if (existing) {
+    const oldTraderId = String(existing.trader_id || '').trim()
+    const oldAmount = Number(existing.stake_amount || 0)
+    if (oldTraderId) {
+      const pool = dayState.pools?.[oldTraderId]
+      if (pool) {
+        pool.amount = Number((Math.max(0, Number(pool.amount || 0) - Math.max(0, oldAmount))).toFixed(2))
+        pool.tickets = Math.max(0, Math.floor(Number(pool.tickets || 0)) - 1)
+      }
+    }
+  }
+
+  if (!dayState.pools[safeTraderId]) {
+    dayState.pools[safeTraderId] = { amount: 0, tickets: 0 }
+  }
+  dayState.pools[safeTraderId].amount = Number((Number(dayState.pools[safeTraderId].amount || 0) + amount).toFixed(2))
+  dayState.pools[safeTraderId].tickets = Math.max(0, Math.floor(Number(dayState.pools[safeTraderId].tickets || 0)) + 1)
+
+  dayState.user_bets[safeUserSessionId] = {
+    user_session_id: safeUserSessionId,
+    user_nickname: resolveNicknameForSession(safeUserSessionId, userNickname),
+    trader_id: safeTraderId,
+    stake_amount: amount,
+    placed_ts_ms: Date.now(),
+    market,
+    day_key: dayKey,
+  }
+  dayState.updated_ts_ms = Date.now()
+
+  await persistBetsLedgerState()
+  return buildBetsMarketPayload({ market, userSessionId: safeUserSessionId })
 }
 
 function getTraderById(traderId) {
@@ -1989,6 +2321,10 @@ const chatSessionRegistry = new Map()
 const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
+let betsLedgerState = {
+  schema_version: 'bets.ledger.v1',
+  days: {},
+}
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
 const roomEventBufferByRoom = new Map()
@@ -3860,6 +4196,47 @@ app.get('/api/agents/:agentId/decision-audit/day', async (req, res) => {
   }
 })
 
+app.get('/api/bets/market', async (req, res) => {
+  try {
+    const traderId = String(req.query.trader_id || '').trim()
+    const userSessionId = String(req.query.user_session_id || '').trim()
+    const requestedMarket = String(req.query.market || '').trim().toUpperCase()
+
+    let market = requestedMarket === 'US' ? 'US' : 'CN-A'
+    if (traderId) {
+      const trader = getTraderById(traderId)
+      const traderMarket = getMarketSpecForExchange(trader?.exchange_id).market
+      market = traderMarket === 'US' ? 'US' : 'CN-A'
+    }
+
+    const payload = buildBetsMarketPayload({ market, userSessionId })
+    res.json(ok(payload))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.code || error?.message || 'bets_market_failed' })
+  }
+})
+
+app.post('/api/bets/place', async (req, res) => {
+  try {
+    const userSessionId = String(req.body?.user_session_id || '').trim()
+    const userNickname = String(req.body?.user_nickname || '').trim()
+    const traderId = String(req.body?.trader_id || '').trim()
+    const stakeAmount = req.body?.stake_amount
+
+    const payload = await placeViewerBet({
+      userSessionId,
+      userNickname,
+      traderId,
+      stakeAmount,
+    })
+
+    res.json(ok(payload))
+  } catch (error) {
+    const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500
+    res.status(status).json({ success: false, error: error?.code || error?.message || 'bets_place_failed' })
+  }
+})
+
 app.get('/api/status', (req, res) => {
   const traderId = String(req.query.trader_id || getTraderById('').trader_id)
   res.json(ok(getStatus(traderId)))
@@ -4482,6 +4859,7 @@ app.use('/api', (_req, res) => {
 await loadKillSwitchState()
 await loadReplayBatch()
 await loadDailyHistoryBatch()
+await loadBetsLedgerState()
 if (RESET_AGENT_MEMORY_ON_BOOT) {
   await memoryStore.resetAll()
 } else {

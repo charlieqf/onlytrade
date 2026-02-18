@@ -225,7 +225,7 @@ watch_status() {
 }
 
 akshare_run_once() {
-  local symbols_csv="${1:-600519,300750,601318,000001,688981}"
+  local symbols_csv="${1:-002131,300058,002342,600519,300059,600089,600986,601899,002050,002195}"
   local canonical_path="${ONLYTRADE_AKSHARE_CANONICAL:-data/live/onlytrade/frames.1m.json}"
 
   if command -v python3 >/dev/null 2>&1; then
@@ -599,7 +599,7 @@ main() {
       start_three_day_run "$speed" "$bars" "$mode" "$loop_mode"
       ;;
     akshare-run-once)
-      local symbols_csv="600519,300750,601318,000001,688981"
+      local symbols_csv="002131,300058,002342,600519,300059,600089,600986,601899,002050,002195"
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --symbols)

@@ -13,6 +13,7 @@ if __package__ is None or __package__ == "":
 import akshare as ak
 
 from scripts.akshare.common import atomic_write_json
+from scripts.akshare.hot_news_module import collect_hot_news_bundle
 
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
@@ -64,6 +65,8 @@ def main() -> int:
     parser.add_argument("--symbols", default="600519,000001,300750,601318")
     parser.add_argument("--limit-per-symbol", type=int, default=6)
     parser.add_argument("--limit-total", type=int, default=20)
+    parser.add_argument("--hot-limit-per-category", type=int, default=4)
+    parser.add_argument("--hot-limit-total", type=int, default=20)
     args = parser.parse_args()
 
     symbols = [s.strip() for s in str(args.symbols or "").split(",") if s.strip()]
@@ -72,7 +75,35 @@ def main() -> int:
 
     headlines: list[dict] = []
     seen = set()
+
+    hot_bundle = collect_hot_news_bundle(
+        limit_per_category=max(1, int(args.hot_limit_per_category or 4)),
+        limit_total=max(5, int(args.hot_limit_total or 20)),
+    )
+    hot_categories = hot_bundle.get("categories") or {}
+    hot_commentary = [
+        str(x or "").strip()
+        for x in (hot_bundle.get("commentary") or [])
+        if str(x or "").strip()
+    ]
+    hot_titles = [
+        str(x or "").strip()
+        for x in (hot_bundle.get("titles") or [])
+        if str(x or "").strip()
+    ]
+
+    for item in hot_bundle.get("headlines") or []:
+        title = str(item.get("title") or "").strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        headlines.append(item)
+        if len(headlines) >= limit_total:
+            break
+
     for sym in symbols:
+        if len(headlines) >= limit_total:
+            break
         for item in _collect_titles(sym, per_symbol):
             key = item.get("title") or ""
             if not key or key in seen:
@@ -81,8 +112,6 @@ def main() -> int:
             headlines.append(item)
             if len(headlines) >= limit_total:
                 break
-        if len(headlines) >= limit_total:
-            break
 
     now = datetime.now(SH_TZ)
     payload = {
@@ -90,11 +119,15 @@ def main() -> int:
         "market": "CN-A",
         "mode": "real",
         "provider": "akshare",
+        "source_kind": "hot_news_plus_symbol_news",
         "day_key": now.strftime("%Y-%m-%d"),
         "as_of_ts_ms": int(now.timestamp() * 1000),
         "symbols": symbols,
         "headline_count": len(headlines),
         "headlines": headlines,
+        "categories": hot_categories,
+        "commentary": hot_commentary,
+        "titles": hot_titles,
     }
     atomic_write_json(args.canonical_path, payload)
     print(

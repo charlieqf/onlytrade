@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
+from datetime import time
 from pathlib import Path
 from typing import Any
 import sys
+from zoneinfo import ZoneInfo
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -20,11 +22,39 @@ from scripts.akshare.common import (
 )
 
 
-DEFAULT_SYMBOLS = ["600519", "300750", "601318", "000001", "688981"]
+DEFAULT_SYMBOLS = [
+    "002131",
+    "300058",
+    "002342",
+    "600519",
+    "300059",
+    "600089",
+    "600986",
+    "601899",
+    "002050",
+    "002195",
+]
 DEFAULT_RAW_MINUTE_PATH = Path("data/live/akshare/raw_minute.jsonl")
 DEFAULT_RAW_QUOTES_PATH = Path("data/live/akshare/raw_quotes.json")
 DEFAULT_CHECKPOINT_PATH = Path("data/live/akshare/checkpoint.json")
 MIN_RECOVERY_BARS = 240
+SH_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _is_cn_a_market_open(now: datetime | None = None) -> bool:
+    current = now or datetime.now(SH_TZ)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=SH_TZ)
+    else:
+        current = current.astimezone(SH_TZ)
+
+    if current.weekday() >= 5:
+        return False
+
+    current_time = current.time()
+    morning_open = time(9, 30) <= current_time <= time(11, 30)
+    afternoon_open = time(13, 0) <= current_time <= time(15, 0)
+    return morning_open or afternoon_open
 
 
 def _as_float(value: Any, fallback: float = 0.0) -> float:
@@ -146,6 +176,44 @@ def build_quote_snapshot_from_minute_row(
     }
 
 
+def _current_shanghai_minute_str() -> str:
+    now = datetime.now(SH_TZ).replace(second=0, microsecond=0)
+    return now.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def build_synthetic_minute_row_from_quote(
+    code: str,
+    quote: dict[str, Any],
+    minute_time: str,
+    volume_lot_delta: float = 0.0,
+    amount_cny_delta: float = 0.0,
+) -> dict[str, Any]:
+    normalized = to_code(code)
+    latest = _as_float(quote.get("latest"))
+    # Quote APIs are usually day-level snapshots; for synthetic 1m bars we avoid
+    # injecting day-open/high/low or cumulative turnover into a single minute.
+    # Use flat OHLC at latest price and incremental volume/amount deltas only.
+    open_price = latest
+    high_price = latest
+    low_price = latest
+    volume_lot = max(0.0, _as_float(volume_lot_delta))
+    amount_cny = max(0.0, _as_float(amount_cny_delta))
+    avg_price = latest
+
+    return {
+        "symbol_code": normalized,
+        "time": minute_time,
+        "open": open_price,
+        "close": latest,
+        "high": high_price,
+        "low": low_price,
+        "volume_lot": volume_lot,
+        "amount_cny": amount_cny,
+        "avg_price": avg_price,
+        "source": "akshare.quote_synthetic_minute",
+    }
+
+
 def fetch_minute_tail(code: str, tail_bars: int = 8) -> list[dict[str, Any]]:
     normalized = to_code(code)
     lookback_bars = max(int(tail_bars), MIN_RECOVERY_BARS)
@@ -203,9 +271,16 @@ def run_collection(
 ) -> dict[str, Any]:
     checkpoint = read_json_or_default(checkpoint_path, {"last_time_by_symbol": {}})
     last_time_by_symbol = dict(checkpoint.get("last_time_by_symbol") or {})
+    last_quote_volume_lot_by_symbol = dict(
+        checkpoint.get("last_quote_volume_lot_by_symbol") or {}
+    )
+    last_quote_turnover_cny_by_symbol = dict(
+        checkpoint.get("last_quote_turnover_cny_by_symbol") or {}
+    )
 
     ensure_parent_dir(raw_minute_path)
     appended = 0
+    synthetic_appended = 0
     quote_rows: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     spot_quote_map: dict[str, dict[str, Any]] | None = None
@@ -214,6 +289,8 @@ def run_collection(
     with raw_minute_path.open("a", encoding="utf-8") as writer:
         for symbol in symbols:
             code = to_code(symbol)
+            new_minute_written = False
+            quote: dict[str, Any] | None = None
 
             try:
                 minute_rows = fetch_minute_tail(code, tail_bars=tail_bars)
@@ -230,6 +307,7 @@ def run_collection(
                     row["ingest_ts"] = datetime.now().isoformat(timespec="seconds")
                     writer.write(json.dumps(row, ensure_ascii=False) + "\n")
                     appended += 1
+                    new_minute_written = True
                     last_time_by_symbol[code] = current
             except Exception as error:
                 errors.append(
@@ -264,14 +342,59 @@ def run_collection(
                     quote = build_quote_snapshot_from_minute_row(code, minute_row)
                     quote["ingest_ts"] = datetime.now().isoformat(timespec="seconds")
                     quote_rows.append(quote)
-                    continue
+                else:
+                    errors.append(
+                        {
+                            "symbol_code": code,
+                            "stage": "quote",
+                            "error": f"primary={error}; fallback={fallback_error}",
+                        }
+                    )
 
-                errors.append(
-                    {
-                        "symbol_code": code,
-                        "stage": "quote",
-                        "error": f"primary={error}; fallback={fallback_error}",
-                    }
+            if quote is not None and not new_minute_written and _is_cn_a_market_open():
+                minute_time = _current_shanghai_minute_str()
+                last_seen = str(last_time_by_symbol.get(code) or "")
+                if minute_time and (not last_seen or minute_time > last_seen):
+                    prev_volume_lot = _as_float(
+                        last_quote_volume_lot_by_symbol.get(code), -1
+                    )
+                    prev_turnover_cny = _as_float(
+                        last_quote_turnover_cny_by_symbol.get(code), -1
+                    )
+                    curr_volume_lot = _as_float(quote.get("volume_lot"), 0)
+                    curr_turnover_cny = _as_float(quote.get("turnover_cny"), 0)
+                    volume_lot_delta = (
+                        max(0.0, curr_volume_lot - prev_volume_lot)
+                        if prev_volume_lot >= 0
+                        else 0.0
+                    )
+                    amount_cny_delta = (
+                        max(0.0, curr_turnover_cny - prev_turnover_cny)
+                        if prev_turnover_cny >= 0
+                        else 0.0
+                    )
+
+                    synthetic_row = build_synthetic_minute_row_from_quote(
+                        code,
+                        quote,
+                        minute_time,
+                        volume_lot_delta=volume_lot_delta,
+                        amount_cny_delta=amount_cny_delta,
+                    )
+                    synthetic_row["ingest_ts"] = datetime.now().isoformat(
+                        timespec="seconds"
+                    )
+                    writer.write(json.dumps(synthetic_row, ensure_ascii=False) + "\n")
+                    appended += 1
+                    synthetic_appended += 1
+                    last_time_by_symbol[code] = minute_time
+
+            if quote is not None:
+                last_quote_volume_lot_by_symbol[code] = _as_float(
+                    quote.get("volume_lot"), 0
+                )
+                last_quote_turnover_cny_by_symbol[code] = _as_float(
+                    quote.get("turnover_cny"), 0
                 )
 
     atomic_write_json(
@@ -290,12 +413,15 @@ def run_collection(
             "schema_version": "akshare.collector.checkpoint.v1",
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "last_time_by_symbol": last_time_by_symbol,
+            "last_quote_volume_lot_by_symbol": last_quote_volume_lot_by_symbol,
+            "last_quote_turnover_cny_by_symbol": last_quote_turnover_cny_by_symbol,
         },
     )
 
     return {
         "symbols_requested": len(symbols),
         "minute_rows_appended": appended,
+        "synthetic_minute_rows_appended": synthetic_appended,
         "quotes_collected": len(quote_rows),
         "errors": errors,
         "raw_minute_path": str(raw_minute_path),

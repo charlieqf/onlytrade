@@ -138,10 +138,13 @@ function safeText(value: unknown, maxLen = 160) {
 
 type StreamReaction = {
   id: string
+  source: 'chat' | 'decision' | 'gift'
   emoji: string
   left_pct: number
   size_px: number
   duration_ms: number
+  drift_px: number
+  rotate_deg: number
 }
 
 function freshnessBadge(stale: boolean | null | undefined) {
@@ -547,18 +550,34 @@ function ReactionLayer({
         {reactions.map((item) => (
           <motion.div
             key={item.id}
-            initial={{ opacity: 0, y: 0, scale: 0.8 }}
-            animate={{ opacity: 1, y: -190, scale: 1.08 }}
+            initial={{
+              opacity: 0,
+              y: 8,
+              x: 0,
+              scale: item.source === 'gift' ? 0.65 : 0.82,
+              rotate: 0,
+            }}
+            animate={{
+              opacity: [0, 1, 1, 0],
+              y: item.source === 'gift' ? -310 : -205,
+              x: item.drift_px,
+              scale: item.source === 'gift' ? 1.35 : 1.08,
+              rotate: item.rotate_deg,
+            }}
             exit={{ opacity: 0, scale: 0.7 }}
             transition={{
               duration: item.duration_ms / 1000,
               ease: 'easeOut',
+              times: [0, 0.12, 0.75, 1],
             }}
             style={{
               left: `${item.left_pct}%`,
-              bottom: 26,
+              bottom: item.source === 'gift' ? 34 : 26,
               fontSize: `${item.size_px}px`,
-              filter: 'drop-shadow(0 8px 20px rgba(0,0,0,0.35))',
+              filter:
+                item.source === 'gift'
+                  ? 'drop-shadow(0 0 22px rgba(240,185,11,0.65)) drop-shadow(0 10px 28px rgba(0,0,0,0.45))'
+                  : 'drop-shadow(0 8px 20px rgba(0,0,0,0.35))',
             }}
             className="absolute select-none"
             onAnimationComplete={() => onDone(item.id)}
@@ -1028,15 +1047,16 @@ export function StreamingRoomPage({
   ) => {
     const now = Date.now()
     const inWindow = reactionWindowRef.current.filter((ts) => now - ts < 5000)
-    const maxBurstWindow = prefersReducedMotion ? 7 : 14
+    const maxBurstWindow = prefersReducedMotion ? 8 : 18
     const remaining = Math.max(0, maxBurstWindow - inWindow.length)
     if (remaining <= 0) {
       reactionWindowRef.current = inWindow
       return
     }
 
-    const sourceMax = source === 'chat' ? 2 : source === 'gift' ? 4 : 3
-    const sizeBase = source === 'chat' ? 18 : 21
+    const sourceMax = source === 'chat' ? 2 : source === 'gift' ? 8 : 3
+    const sizeBase =
+      source === 'gift' ? 30 : source === 'chat' ? 18 : 22
     const emojiPool =
       source === 'chat'
         ? ['❤️', '👏', '✨']
@@ -1052,19 +1072,27 @@ export function StreamingRoomPage({
       const emoji = emojiPool[Math.floor(Math.random() * emojiPool.length)]
       batch.push({
         id: `${now}-${source}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        source,
         emoji,
-        left_pct: 58 + Math.random() * 35,
-        size_px: sizeBase + Math.floor(Math.random() * 6),
+        left_pct:
+          source === 'gift' ? 50 + Math.random() * 42 : 58 + Math.random() * 35,
+        size_px: sizeBase + Math.floor(Math.random() * (source === 'gift' ? 10 : 6)),
         duration_ms:
-          source === 'decision'
+          source === 'gift'
+            ? 2200 + Math.floor(Math.random() * 1100)
+            : source === 'decision'
             ? 1600 + Math.floor(Math.random() * 700)
             : 1300 + Math.floor(Math.random() * 500),
+        drift_px:
+          (Math.random() - 0.5) * (source === 'gift' ? 120 : 56),
+        rotate_deg:
+          (Math.random() - 0.5) * (source === 'gift' ? 34 : 18),
       })
       inWindow.push(now)
     }
 
     reactionWindowRef.current = inWindow
-    setReactions((prev) => [...prev, ...batch].slice(-16))
+    setReactions((prev) => [...prev, ...batch].slice(-22))
   }
 
   const placeBet = async () => {
@@ -1123,7 +1151,7 @@ export function StreamingRoomPage({
     startGiftCooldown()
     setGiftError('')
     setGiftNotice('')
-    spawnReactions(kind === 'rocket' ? 3 : 2, 'gift')
+    spawnReactions(kind === 'rocket' ? 8 : 5, 'gift')
     try {
       await api.postRoomMessage(roomId, {
         user_session_id: userSessionId,
@@ -1371,13 +1399,15 @@ export function StreamingRoomPage({
     <div
       className={`relative ${immersive ? 'min-h-screen' : 'min-h-[calc(100vh-64px)]'}`}
       style={{
-        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
-        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 10px)',
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 6px)',
       }}
     >
-      <DeepVoidBackground />
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        <DeepVoidBackground />
+      </div>
 
-      <div className="relative z-10 px-3 sm:px-4">
+      <div className="relative z-10 px-3 sm:px-4 pt-1">
         <div className="mx-auto max-w-[1700px]">
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
@@ -1420,26 +1450,26 @@ export function StreamingRoomPage({
                     </div>
                   </div>
 
-                  <div className="absolute left-3 top-14 z-30">
-                    <div className="inline-flex rounded-full border border-white/12 bg-black/35 p-1 backdrop-blur-sm">
+                  <div className="absolute left-3 top-12 z-30">
+                    <div className="inline-flex w-[176px] rounded-full border border-white/12 bg-black/45 p-1 backdrop-blur-sm shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
                       <button
                         type="button"
                         onClick={() => setChatMode('danmu')}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'danmu' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+                        className={`flex-1 min-h-8 px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'danmu' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
                       >
                         Danmu
                       </button>
                       <button
                         type="button"
                         onClick={() => setChatMode('window')}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'window' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+                        className={`flex-1 min-h-8 px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'window' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
                       >
                         Chat
                       </button>
                     </div>
                   </div>
 
-                  <div className="absolute right-3 top-14 z-30">
+                  <div className="absolute right-3 top-12 z-30">
                     <RoomClockBadge
                       replayRuntimeStatus={replayRuntimeStatus}
                       language={language}

@@ -279,7 +279,16 @@ const DEFAULT_TRADERS = [
 ]
 
 const CN_STOCK_NAME_BY_SYMBOL = {
+  '002050.SZ': '三花智控',
+  '002131.SZ': '利欧股份',
+  '002195.SZ': '岩山科技',
+  '002342.SZ': '巨力索具',
+  '300058.SZ': '蓝色光标',
+  '300059.SZ': '东方财富',
   '600519.SH': '贵州茅台',
+  '600089.SH': '特变电工',
+  '600986.SH': '浙文互联',
+  '601899.SH': '紫金矿业',
   '601318.SH': '中国平安',
   '600036.SH': '招商银行',
   '300750.SZ': '宁德时代',
@@ -328,6 +337,19 @@ function getReplaySimulationState() {
     day_bar_index: 0,
     day_bar_count: 0,
   }
+}
+
+function effectiveSessionNowMs({ fallbackNowMs = Date.now(), contextAsOfTsMs = null } = {}) {
+  const fallback = Number.isFinite(Number(fallbackNowMs)) ? Number(fallbackNowMs) : Date.now()
+  if (RUNTIME_DATA_MODE !== 'replay') return fallback
+
+  const contextTs = Number(contextAsOfTsMs)
+  if (Number.isFinite(contextTs) && contextTs > 0) return contextTs
+
+  const replayTs = Number(replayEngine?.getStatus?.()?.current_ts_ms)
+  if (Number.isFinite(replayTs) && replayTs > 0) return replayTs
+
+  return fallback
 }
 
 function ok(data) {
@@ -2270,6 +2292,7 @@ async function getNewsDigestSnapshot(marketId) {
 function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) {
   const exchangeId = String(trader?.exchange_id || '').trim().toLowerCase()
   const market = exchangeId.includes('sim-us') ? 'US' : 'CN-A'
+  const sessionNowMs = effectiveSessionNowMs({ fallbackNowMs: nowMs })
   const reasons = []
   let level = 'OK'
 
@@ -2284,7 +2307,7 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
     }
   }
 
-  const session = getMarketSessionStatusForExchange(exchangeId || (market === 'US' ? 'sim-us' : 'sim-cn'), nowMs)
+  const session = getMarketSessionStatusForExchange(exchangeId || (market === 'US' ? 'sim-us' : 'sim-cn'), sessionNowMs)
   if (session?.is_open === false) {
     if (level === 'OK') level = 'WARN'
     reasons.push('market_closed')
@@ -2294,7 +2317,7 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
     level,
     reasons,
     market,
-    ts_ms: nowMs,
+    ts_ms: sessionNowMs,
   }
 }
 
@@ -2309,11 +2332,19 @@ async function buildRoomChatContext(roomId, {
   const marketSpec = getMarketSpecForExchange(trader.exchange_id)
   const market = marketSpec.market
   const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now()
+  const sessionNowMs = effectiveSessionNowMs({ fallbackNowMs: now })
   const latest = latestDecision
     ? [latestDecision]
     : (agentRuntime?.getLatestDecisions?.(safeRoomId, 1) || [])
   const effectiveDecision = latest[0] || null
   const head = effectiveDecision?.decisions?.[0] || null
+  const headSymbol = String(head?.symbol || '').trim().toUpperCase()
+  let positionSharesOnSymbol = 0
+  if (headSymbol) {
+    const positions = getPositions(safeRoomId)
+    const matched = positions.find((item) => String(item?.symbol || '').trim().toUpperCase() === headSymbol)
+    positionSharesOnSymbol = Number.isFinite(Number(matched?.quantity)) ? Number(matched.quantity) : 0
+  }
 
   let effectiveOverview = overview
   let effectiveDigest = digest
@@ -2340,11 +2371,13 @@ async function buildRoomChatContext(roomId, {
       action: head.action || null,
       confidence: head.confidence ?? null,
       reasoning: typeof head.reasoning === 'string' ? head.reasoning.slice(0, 120) : null,
+      order_executed: head.executed === true,
+      position_shares_on_symbol: Math.max(0, Math.floor(positionSharesOnSymbol)),
     }
     : null
 
   return {
-    data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: now }),
+    data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
     symbol_brief: symbolBrief,
@@ -2401,6 +2434,10 @@ function normalizeForProactiveDedupe(value) {
 function fallbackProactiveText({ roomContext, latestDecision }) {
   const readiness = String(roomContext?.data_readiness?.level || '').toUpperCase() || ''
   const symbolBrief = roomContext?.symbol_brief || null
+  const marketBrief = String(roomContext?.market_overview_brief || '').trim()
+  const newsTitles = Array.isArray(roomContext?.news_digest_titles)
+    ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 2)
+    : []
   const head = latestDecision?.decisions?.[0] || null
   const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
   const action = String(symbolBrief?.action || head?.action || '').trim()
@@ -2417,6 +2454,12 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   }
   if (readiness) {
     bits.push(`数据就绪${readiness}`)
+  }
+  if (marketBrief) {
+    bits.push(`盘面${marketBrief.slice(0, 40)}`)
+  }
+  if (newsTitles.length) {
+    bits.push(`消息${newsTitles.join('；').slice(0, 46)}`)
   }
   if (bits.length === 0) {
     return '房间已连接，等待下一轮信号。'
@@ -3232,7 +3275,11 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       source_kind: digest?.source_kind || null,
       titles: Array.isArray(digest?.titles) ? digest.titles : [],
     }
-    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: Date.now() })
+    const sessionNowMs = effectiveSessionNowMs({
+      fallbackNowMs: Date.now(),
+      contextAsOfTsMs: context?.as_of_ts_ms,
+    })
+    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs })
     context.symbol_brief = {
       symbol,
       last_bar_ts_ms: Number.isFinite(Number(latestEventTs)) ? Number(latestEventTs) : null,
@@ -3240,7 +3287,11 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       ret_20: context?.intraday?.feature_snapshot?.ret_20 ?? null,
     }
   } catch {
-    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: Date.now() })
+    const sessionNowMs = effectiveSessionNowMs({
+      fallbackNowMs: Date.now(),
+      contextAsOfTsMs: context?.as_of_ts_ms,
+    })
+    context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs })
   }
 
   if (llmDecider && !killSwitchState.active && !readinessError) {
@@ -3510,11 +3561,16 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
   const runtimeDecisions = agentRuntime?.getLatestDecisions?.(safeRoomId, limit) || []
   let persisted = []
   try {
-    persisted = await decisionLogStore.listLatest({ traderId: safeRoomId, limit: 1, timeZone: tz })
+    persisted = await decisionLogStore.listLatest({
+      traderId: safeRoomId,
+      limit,
+      timeZone: tz,
+    })
   } catch {
     persisted = []
   }
-  const latestDecision = (runtimeDecisions && runtimeDecisions[0]) || (persisted && persisted[0]) || null
+  const decisionsLatest = runtimeDecisions.length > 0 ? runtimeDecisions : persisted
+  const latestDecision = (decisionsLatest && decisionsLatest[0]) || null
 
   const head = latestDecision?.decisions?.[0] || null
   const meta = lastDecisionMetaByTraderId.get(safeRoomId) || null
@@ -3563,7 +3619,7 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
     status: getStatus(safeRoomId),
     account: getAccount(safeRoomId),
     positions: getPositions(safeRoomId),
-    decisions_latest: runtimeDecisions,
+    decisions_latest: decisionsLatest,
     decision_latest: latestDecision,
     decision_audit_preview: decisionAuditPreview,
     decision_meta: effectiveMeta,
@@ -4498,6 +4554,26 @@ agentRuntime = createInMemoryAgentRuntime({
     try {
       const tz = getMarketSpecForExchange(trader.exchange_id).timezone
       const head = decision?.decisions?.[0] || null
+      const headSymbol = String(head?.symbol || '')
+      const action = String(head?.action || '').toLowerCase()
+      const matchedPosition = Array.isArray(positions)
+        ? positions.find((item) => String(item?.symbol || '') === headSymbol)
+        : null
+      const positionSharesOnSymbol = Number(
+        matchedPosition?.quantity ?? matchedPosition?.shares ?? 0
+      )
+      const orderExecuted = Boolean(head?.executed)
+      const holdWithoutPosition = (
+        action === 'hold'
+        && !orderExecuted
+        && positionSharesOnSymbol <= 0
+      )
+      const holdWithPosition = (
+        action === 'hold'
+        && !orderExecuted
+        && positionSharesOnSymbol > 0
+      )
+
       await decisionAuditStore.appendAudit({
         traderId: trader.trader_id,
         timeZone: tz,
@@ -4508,6 +4584,15 @@ agentRuntime = createInMemoryAgentRuntime({
           action: head?.action || null,
           decision_source: decision?.decision_source || null,
           forced_hold: context?.llm_decision?.source === 'readiness_gate',
+          order_executed: orderExecuted,
+          position_shares_on_symbol: Number.isFinite(positionSharesOnSymbol)
+            ? positionSharesOnSymbol
+            : 0,
+          hold_semantics: holdWithoutPosition
+            ? 'no_position_no_order'
+            : holdWithPosition
+              ? 'keep_existing_position'
+              : null,
           data_readiness: context?.data_readiness || null,
           session_gate: context?.session_gate || null,
           market_overview: context?.market_overview || null,

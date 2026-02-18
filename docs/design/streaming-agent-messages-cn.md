@@ -103,9 +103,12 @@ Rule: the generator may only cite values present in this context.
 
 - Proactive interval: 18 seconds (configurable)
 - Sentence length: hard-capped by post-processing
+- Danmu fly-through duration: target **11-18 seconds** per line (longer lines fly slower)
+- Danmu rate limit: keep per-sender and global throttles so overlay stays readable
 
 ## Acceptance Criteria
 
 - During market open + agent running, proactive public messages appear about every 15-20 seconds.
 - All messages are Chinese, short, and safe for future TTS.
 - Messages do not hallucinate facts; any missing/stale data is handled via generic talk or explicit caution.
+- Danmu remains readable on phone-width layouts (no rapid unreadable fly-by).

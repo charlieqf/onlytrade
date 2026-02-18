@@ -269,7 +269,9 @@ function App() {
 
   const { data: replayRuntimeStatus, mutate: mutateReplayRuntimeStatus } =
     useSWR<ReplayRuntimeStatus>(
-      runtimeControlsEnabled && hasRuntimeAccess
+      (runtimeControlsEnabled && hasRuntimeAccess)
+        || currentPage === 'room'
+        || currentPage === 'stream'
         ? 'replay-runtime-status'
         : null,
       api.getReplayRuntimeStatus,
@@ -439,6 +441,7 @@ function App() {
                   decisions={decisions}
                   streamPacket={streamPacket}
                   roomSseState={roomSseState}
+                  replayRuntimeStatus={replayRuntimeStatus}
                   decisionsLimit={decisionsLimit}
                   onDecisionsLimitChange={setDecisionsLimit}
                   lastUpdate={lastUpdate}
@@ -481,6 +484,7 @@ function App() {
                   selectedTrader={selectedTrader}
                   streamPacket={streamPacket}
                   roomSseState={roomSseState}
+                  replayRuntimeStatus={replayRuntimeStatus}
                   language={language}
                 />
               ) : (

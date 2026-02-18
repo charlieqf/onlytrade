@@ -101,6 +101,12 @@ Expected: the agent replies immediately (subject to LLM latency).
 
 If LLM is disabled or timing out, mention replies may fallback to a short canned reply depending on the runtime build.
 
+### Session-state sanity in replay
+
+In replay mode, room/chat data-readiness should follow replay clock instead of wall clock.
+If the room keeps saying `市场当前处于休市状态` while replay bars are advancing during session time,
+verify runtime is using replay timestamps for session gating/context generation.
+
 ## Common adjustments
 
 - Faster soak tests (not real-time): increase replay speed

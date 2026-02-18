@@ -35,6 +35,31 @@ function safeJson(value: any, maxLen: number = 2400) {
   }
 }
 
+function actionSemanticsText(rec: DecisionAuditRecord, language: Language) {
+  const action = String(rec?.action || '').toLowerCase()
+  if (action !== 'hold') return ''
+
+  const semantics = String(rec?.hold_semantics || '')
+  if (semantics === 'no_position_no_order') {
+    return language === 'zh'
+      ? '不买不卖（当前无仓位）'
+      : 'no buy/sell (flat position)'
+  }
+  if (semantics === 'keep_existing_position') {
+    return language === 'zh'
+      ? '不下单（继续持有现有仓位）'
+      : 'no new order (keep existing position)'
+  }
+
+  const shares = Number(rec?.position_shares_on_symbol || 0)
+  if (shares > 0) {
+    return language === 'zh'
+      ? '不下单（继续持仓）'
+      : 'no new order (keep position)'
+  }
+  return language === 'zh' ? '不买不卖（无新订单）' : 'no buy/sell (no new order)'
+}
+
 async function copyToClipboard(text: string) {
   const payload = String(text || '')
   if (!payload) return
@@ -57,7 +82,7 @@ export function AuditExplorerPanel({
       return ''
     }
   })
-  const [limit, setLimit] = useState<number>(50)
+  const [limit, setLimit] = useState<number>(10)
   const [copiedKey, setCopiedKey] = useState<string>('')
   const [symbolQuery, setSymbolQuery] = useState<string>('')
   const [readinessLevel, setReadinessLevel] = useState<string>('ALL')
@@ -181,7 +206,7 @@ export function AuditExplorerPanel({
               onClick={() => {
                 setMode('latest')
                 setExpandedKey('')
-                if (limit > 500) setLimit(50)
+                if (limit > 500) setLimit(10)
               }}
               className={`text-[11px] px-2 py-1 ${mode === 'latest' ? 'text-nofx-text-main bg-white/10' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
             >
@@ -320,6 +345,7 @@ export function AuditExplorerPanel({
             const action = String(rec.action || '').toUpperCase() || '--'
             const symbol = String(rec.symbol || '') || '--'
             const time = formatTime(rec.saved_ts_ms || rec.timestamp)
+            const actionHint = actionSemanticsText(rec, language)
 
             return (
               <div
@@ -341,6 +367,11 @@ export function AuditExplorerPanel({
                     <div className="text-sm text-nofx-text-main truncate">
                       {symbol} {action} | readiness {readinessLevel}
                     </div>
+                    {!!actionHint && (
+                      <div className="text-[11px] text-nofx-text-muted truncate">
+                        {actionHint}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button

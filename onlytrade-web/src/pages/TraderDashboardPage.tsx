@@ -10,6 +10,7 @@ import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import { RoomPublicChatPanel } from '../components/chat/RoomPublicChatPanel'
 import { RoomPrivateChatPanel } from '../components/chat/RoomPrivateChatPanel'
 import { AuditExplorerPanel } from '../components/AuditExplorerPanel'
+import { RoomClockBadge } from '../components/RoomClockBadge'
 import { useUserSessionId } from '../hooks/useUserSessionId'
 import type {
   SystemStatus,
@@ -18,6 +19,7 @@ import type {
   DecisionRecord,
   TraderInfo,
   RoomStreamPacket,
+  ReplayRuntimeStatus,
 } from '../types'
 
 type RoomSseStatus = 'connecting' | 'connected' | 'reconnecting' | 'error'
@@ -72,6 +74,7 @@ interface TraderDashboardPageProps {
   decisions?: DecisionRecord[]
   streamPacket?: RoomStreamPacket
   roomSseState?: RoomSseState
+  replayRuntimeStatus?: ReplayRuntimeStatus
   decisionsLimit: number
   onDecisionsLimitChange: (limit: number) => void
   lastUpdate: string
@@ -86,6 +89,7 @@ export function TraderDashboardPage({
   decisions,
   streamPacket,
   roomSseState,
+  replayRuntimeStatus,
   decisionsLimit,
   onDecisionsLimitChange,
   lastUpdate,
@@ -557,6 +561,11 @@ export function TraderDashboardPage({
                 {selectedTrader.strategy_name || 'Virtual AI'}
               </span>
             </span>
+            <span className="w-px h-3 bg-white/10 hidden md:block" />
+            <RoomClockBadge
+              replayRuntimeStatus={replayRuntimeStatus}
+              language={language}
+            />
             {status && (
               <div className="hidden md:contents">
                 <span className="w-px h-3 bg-white/10" />
@@ -1290,11 +1299,6 @@ export function TraderDashboardPage({
               </div>
             </div>
 
-            <AuditExplorerPanel
-              roomId={selectedTrader.trader_id}
-              language={language}
-            />
-
             <div
               className="nofx-glass p-6 animate-slide-in h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-120px)] flex flex-col"
               style={{ animationDelay: '0.2s' }}
@@ -1332,6 +1336,13 @@ export function TraderDashboardPage({
                   <option value={50}>50</option>
                   <option value={100}>100</option>
                 </select>
+              </div>
+
+              <div className="mb-4">
+                <AuditExplorerPanel
+                  roomId={selectedTrader.trader_id}
+                  language={language}
+                />
               </div>
 
               <div

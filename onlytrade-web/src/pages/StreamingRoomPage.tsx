@@ -4,11 +4,13 @@ import useSWR from 'swr'
 import { api } from '../lib/api'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
 import { TraderAvatar } from '../components/TraderAvatar'
+import { RoomClockBadge } from '../components/RoomClockBadge'
 import { formatPrice, formatQuantity } from '../utils/format'
 import type {
   ChatMessage,
   DecisionRecord,
   Position,
+  ReplayRuntimeStatus,
   RoomStreamPacket,
   TraderInfo,
 } from '../types'
@@ -497,6 +499,10 @@ function DecisionHero({
 }
 
 function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
+  const MIN_DANMU_SPEED_MS = 11_000
+  const MAX_DANMU_SPEED_MS = 18_000
+  const BASE_DANMU_SPEED_MS = 12_500
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [items, setItems] = useState<
     Array<{
@@ -574,9 +580,9 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
 
       // Global and per-sender rate limits to keep danmu readable.
       const lastGlobal = Number(lastGlobalEmitRef.current || 0)
-      if (now - lastGlobal < 260) continue
+      if (now - lastGlobal < 420) continue
       const lastSender = Number(perSender.get(sender) || 0)
-      if (now - lastSender < 1200) continue
+      if (now - lastSender < 1500) continue
 
       const laneIdx = pickLane(now)
       const topPx = computeLaneTopPx(laneIdx)
@@ -584,8 +590,10 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
       const full = `${sender}: ${text}`
       const color =
         msg?.sender_type === 'agent' ? '#F0B90B' : colorForSender(sender)
-      const base = 8200
-      const speedMs = Math.min(12_000, Math.max(7200, base + full.length * 24))
+      const speedMs = Math.min(
+        MAX_DANMU_SPEED_MS,
+        Math.max(MIN_DANMU_SPEED_MS, BASE_DANMU_SPEED_MS + full.length * 34)
+      )
 
       // Reserve lane until the animation is done.
       const nextFree = laneNextFreeMsRef.current
@@ -737,11 +745,13 @@ export function StreamingRoomPage({
   selectedTrader,
   streamPacket,
   roomSseState,
+  replayRuntimeStatus,
   language,
 }: {
   selectedTrader: TraderInfo
   streamPacket?: RoomStreamPacket
   roomSseState?: RoomSseState
+  replayRuntimeStatus?: ReplayRuntimeStatus
   language: Language
 }) {
   const [chatMode, setChatMode] = useState<ChatMode>('danmu')
@@ -931,6 +941,10 @@ export function StreamingRoomPage({
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <RoomClockBadge
+                      replayRuntimeStatus={replayRuntimeStatus}
+                      language={language}
+                    />
                     <div className="inline-flex rounded-full border border-white/10 bg-black/25 p-1">
                       <button
                         type="button"

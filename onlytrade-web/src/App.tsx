@@ -31,7 +31,14 @@ import type {
   RoomStreamPacket,
 } from './types'
 
-type Page = 'lobby' | 'room' | 'stream' | 'leaderboard' | 'login' | 'register'
+type Page =
+  | 'lobby'
+  | 'room'
+  | 'stream'
+  | 'streamOnly'
+  | 'leaderboard'
+  | 'login'
+  | 'register'
 
 function App() {
   const { language, setLanguage } = useLanguage()
@@ -51,6 +58,8 @@ function App() {
     if (path === '/leaderboard' || path === '/competition') return 'leaderboard'
     if (path === '/room' || path === '/dashboard') return 'room'
     if (path === '/stream' || path === '/streaming-room') return 'stream'
+    if (path === '/stream-only' || path === '/stream-standalone')
+      return 'streamOnly'
     return 'lobby'
   }
 
@@ -69,6 +78,7 @@ function App() {
       lobby: '/lobby',
       room: '/room',
       stream: '/stream',
+      streamOnly: '/stream-only',
       leaderboard: '/leaderboard',
       login: '/login',
       register: '/register',
@@ -137,6 +147,11 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/stream-only' || path === '/stream-standalone') {
+        setCurrentPage('streamOnly')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       }
       setRoute(path)
     }
@@ -182,7 +197,10 @@ function App() {
   // Room atomic stream packet (status/account/positions/decisions/context)
   const { data: streamPacket, mutate: mutateStreamPacket } =
     useSWR<RoomStreamPacket>(
-      (currentPage === 'room' || currentPage === 'stream') && selectedTraderId
+      (currentPage === 'room' ||
+        currentPage === 'stream' ||
+        currentPage === 'streamOnly') &&
+        selectedTraderId
         ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
         : null,
       () => api.getRoomStreamPacket(selectedTraderId!, decisionsLimit),
@@ -195,7 +213,10 @@ function App() {
     )
 
   const roomSseEnabled =
-    (currentPage === 'room' || currentPage === 'stream') && !!selectedTraderId
+    (currentPage === 'room' ||
+      currentPage === 'stream' ||
+      currentPage === 'streamOnly') &&
+    !!selectedTraderId
   const lastRoomStreamPacketEventTsRef = useRef<number>(0)
 
   const handleRoomSseStreamPacket = useCallback(
@@ -272,6 +293,7 @@ function App() {
       (runtimeControlsEnabled && hasRuntimeAccess)
         || currentPage === 'room'
         || currentPage === 'stream'
+        || currentPage === 'streamOnly'
         ? 'replay-runtime-status'
         : null,
       api.getReplayRuntimeStatus,
@@ -368,6 +390,10 @@ function App() {
       setCurrentPage('lobby')
     } else if (route === '/room' || route === '/dashboard') {
       setCurrentPage('room')
+    } else if (route === '/stream' || route === '/streaming-room') {
+      setCurrentPage('stream')
+    } else if (route === '/stream-only' || route === '/stream-standalone') {
+      setCurrentPage('streamOnly')
     }
   }, [route])
 
@@ -400,6 +426,30 @@ function App() {
   if (route === '/reset-password') {
     return <ResetPasswordPage />
   }
+
+  if (currentPage === 'streamOnly') {
+    return selectedTrader ? (
+      <StreamingRoomPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+        immersive
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+        data-testid="stream-only-empty-state"
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+
   return (
     <div
       className="min-h-screen"

@@ -13,6 +13,7 @@ import type {
   ReplayRuntimeStatus,
   RoomStreamPacket,
   TraderInfo,
+  ViewerBetCreditsPayload,
 } from '../types'
 import type { Language } from '../i18n/translations'
 
@@ -42,6 +43,14 @@ function formatTime(tsMs: number | null | undefined) {
   } catch {
     return String(n)
   }
+}
+
+function formatMinuteLabel(minuteValue: unknown) {
+  const minute = Number(minuteValue)
+  if (!Number.isFinite(minute) || minute < 0) return '--:--'
+  const h = Math.floor(minute / 60)
+  const m = Math.floor(minute % 60)
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
 function compactReasoning(decision: DecisionRecord | null) {
@@ -125,6 +134,33 @@ function safeText(value: unknown, maxLen = 160) {
     .trim()
   if (!text) return ''
   return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text
+}
+
+type StreamReaction = {
+  id: string
+  emoji: string
+  left_pct: number
+  size_px: number
+  duration_ms: number
+}
+
+function freshnessBadge(stale: boolean | null | undefined) {
+  if (stale == null) {
+    return {
+      label: 'n/a',
+      cls: 'border-white/15 text-nofx-text-muted bg-black/20',
+    }
+  }
+  if (stale === true) {
+    return {
+      label: 'stale',
+      cls: 'border-nofx-red/35 text-nofx-red bg-nofx-red/10',
+    }
+  }
+  return {
+    label: 'fresh',
+    cls: 'border-nofx-green/35 text-nofx-green bg-nofx-green/10',
+  }
 }
 
 function parseStreamingParams() {
@@ -498,6 +534,94 @@ function DecisionHero({
   )
 }
 
+function ReactionLayer({
+  reactions,
+  onDone,
+}: {
+  reactions: StreamReaction[]
+  onDone: (id: string) => void
+}) {
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <AnimatePresence>
+        {reactions.map((item) => (
+          <motion.div
+            key={item.id}
+            initial={{ opacity: 0, y: 0, scale: 0.8 }}
+            animate={{ opacity: 1, y: -190, scale: 1.08 }}
+            exit={{ opacity: 0, scale: 0.7 }}
+            transition={{
+              duration: item.duration_ms / 1000,
+              ease: 'easeOut',
+            }}
+            style={{
+              left: `${item.left_pct}%`,
+              bottom: 26,
+              fontSize: `${item.size_px}px`,
+              filter: 'drop-shadow(0 8px 20px rgba(0,0,0,0.35))',
+            }}
+            className="absolute select-none"
+            onAnimationComplete={() => onDone(item.id)}
+          >
+            {item.emoji}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function LowerThirdTicker({
+  decision,
+  language,
+}: {
+  decision: DecisionRecord | null
+  language: Language
+}) {
+  const head = decision?.decisions?.[0] || null
+  const tone = actionTone(head?.action)
+  const symbol = String(head?.symbol || '--')
+  const conf = Number.isFinite(Number(head?.confidence))
+    ? Number(head?.confidence)
+    : null
+  const reasoning = safeText(head?.reasoning || compactReasoning(decision), 110)
+  const key = `${decision?.timestamp || '--'}:${decision?.cycle_number || 0}:${head?.action || '--'}:${symbol}`
+
+  return (
+    <div
+      className="pointer-events-none absolute left-3 right-3 z-20"
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}
+    >
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={key}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 10 }}
+          transition={{ duration: 0.24, ease: 'easeOut' }}
+          className="rounded-2xl border border-white/20 bg-black/60 backdrop-blur-sm px-3 py-2"
+        >
+          <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono">
+            <span className={`px-2 py-0.5 rounded-full border ${tone.cls}`}>
+              {tone.label}
+            </span>
+            <span className="text-nofx-text-main font-bold">{symbol}</span>
+            {conf != null && (
+              <span className="text-nofx-text-muted">{`conf ${conf.toFixed(2)}`}</span>
+            )}
+            <span className="text-nofx-text-muted opacity-70">
+              {decision ? formatTime(new Date(decision.timestamp).getTime()) : '--'}
+            </span>
+          </div>
+          <div className="mt-1 text-xs text-nofx-text-main opacity-95 truncate">
+            {reasoning || (language === 'zh' ? '等待新解说...' : 'Waiting for next narration...')}
+          </div>
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
   const MIN_DANMU_SPEED_MS = 11_000
   const MAX_DANMU_SPEED_MS = 18_000
@@ -570,7 +694,7 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
       speedMs: number
     }> = []
     for (const msg of messages.slice(-20)) {
-      if (fresh.length >= 3) break
+      if (fresh.length >= 2) break
       const id = String(msg?.id || '')
       if (!id || seenSet.has(id)) continue
 
@@ -614,7 +738,7 @@ function DanmuOverlay({ messages }: { messages: ChatMessage[] }) {
     }
 
     if (fresh.length) {
-      setItems((prev) => [...prev, ...fresh].slice(-22))
+      setItems((prev) => [...prev, ...fresh].slice(-14))
     }
   }, [messages])
 
@@ -665,17 +789,18 @@ function DigitalPersonStage({
   videoUrl: string
 }) {
   return (
-    <div className="relative rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
+    <div className="relative mx-auto w-full max-w-[440px] rounded-[30px] border border-white/12 bg-black/35 overflow-hidden shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
       <div
         className="relative"
+        aria-label={`${trader.trader_name} streaming stage`}
         style={{
           background:
             'radial-gradient(1200px 500px at 20% 10%, rgba(240,185,11,0.10) 0%, rgba(0,0,0,0) 55%),' +
             'radial-gradient(900px 420px at 85% 30%, rgba(14,203,129,0.08) 0%, rgba(0,0,0,0) 60%),' +
-            'linear-gradient(180deg, rgba(0,0,0,0.20) 0%, rgba(0,0,0,0.55) 100%)',
+            'linear-gradient(180deg, rgba(0,0,0,0.20) 0%, rgba(0,0,0,0.62) 100%)',
         }}
       >
-        <div className="aspect-[9/16] sm:aspect-[16/9]">
+        <div className="aspect-[9/16]">
           <div className="absolute inset-0">
             <DigitalPersonViewport
               trader={trader}
@@ -683,57 +808,17 @@ function DigitalPersonStage({
               videoUrl={videoUrl}
               language={language}
             />
-
             <div
-              className="absolute inset-0 opacity-30"
+              className="absolute inset-0 opacity-22"
               style={{
                 backgroundImage:
-                  'linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px),' +
-                  'linear-gradient(180deg, rgba(255,255,255,0.04) 1px, transparent 1px)',
-                backgroundSize: '28px 28px',
+                  'linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px),' +
+                  'linear-gradient(180deg, rgba(255,255,255,0.035) 1px, transparent 1px)',
+                backgroundSize: '30px 30px',
               }}
             />
-
-            <div className="absolute left-4 top-4 flex items-center gap-2">
-              <div className="w-9 h-9 rounded-2xl border border-white/10 bg-black/35 flex items-center justify-center">
-                <span className="text-xs font-bold text-nofx-gold">AI</span>
-              </div>
-              <div>
-                <div className="text-sm font-bold text-nofx-text-main">
-                  {trader.trader_name}
-                </div>
-                <div className="text-[11px] font-mono text-nofx-text-muted">
-                  {language === 'zh'
-                    ? '数字人位（占位）'
-                    : 'Digital person slot (placeholder)'}
-                </div>
-              </div>
-            </div>
-
-            <div className="absolute right-4 top-4 flex flex-col gap-2">
-              <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[11px] font-mono text-nofx-text-muted">
-                {language === 'zh' ? '摄像头: 关闭' : 'Camera: off'}
-              </div>
-              <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[11px] font-mono text-nofx-text-muted">
-                {language === 'zh' ? '数字人:' : 'Digital:'}{' '}
-                {digitalPerson.status}
-              </div>
-            </div>
-
-            <div className="absolute left-4 bottom-4 right-4">
-              <div className="rounded-2xl border border-white/10 bg-black/35 px-4 py-3">
-                <div className="text-[11px] font-mono text-nofx-text-muted">
-                  stage
-                </div>
-                <div className="mt-1 text-sm text-nofx-text-main opacity-95">
-                  {language === 'zh'
-                    ? '这里将展示数字人 / 视频画面；弹幕叠加在此区域。'
-                    : 'Digital person / video renders here; danmu overlays this region.'}
-                </div>
-              </div>
-            </div>
+            <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/55 to-transparent" />
           </div>
-
           {mode === 'danmu' && <DanmuOverlay messages={messages} />}
         </div>
       </div>
@@ -747,15 +832,32 @@ export function StreamingRoomPage({
   roomSseState,
   replayRuntimeStatus,
   language,
+  immersive = false,
 }: {
   selectedTrader: TraderInfo
   streamPacket?: RoomStreamPacket
   roomSseState?: RoomSseState
   replayRuntimeStatus?: ReplayRuntimeStatus
   language: Language
+  immersive?: boolean
 }) {
   const [chatMode, setChatMode] = useState<ChatMode>('danmu')
   const roomId = selectedTrader.trader_id
+  const [reactions, setReactions] = useState<StreamReaction[]>([])
+  const lastDecisionKeyRef = useRef<string>('')
+  const lastMessageCountRef = useRef<number>(0)
+  const [userSessionId, setUserSessionId] = useState<string>('')
+  const [userNickname, setUserNickname] = useState<string>('')
+  const [sessionLoading, setSessionLoading] = useState<boolean>(false)
+  const [sessionError, setSessionError] = useState<string>('')
+  const [betStakeInput, setBetStakeInput] = useState<string>('100')
+  const [betTraderId, setBetTraderId] = useState<string>('')
+  const [betSubmitting, setBetSubmitting] = useState<boolean>(false)
+  const [betError, setBetError] = useState<string>('')
+  const [betNotice, setBetNotice] = useState<string>('')
+  const [giftSending, setGiftSending] = useState<boolean>(false)
+  const [giftError, setGiftError] = useState<string>('')
+  const [giftNotice, setGiftNotice] = useState<string>('')
 
   const streamingParams = useMemo(() => parseStreamingParams(), [])
   const [digitalPerson, setDigitalPerson] = useState<DigitalPersonState>(
@@ -766,12 +868,76 @@ export function StreamingRoomPage({
       last_source: null,
     })
   )
+  const [pageVisible, setPageVisible] = useState<boolean>(
+    typeof document === 'undefined' ? true : !document.hidden
+  )
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState<boolean>(
+    false
+  )
+  const [giftCoolingDown, setGiftCoolingDown] = useState<boolean>(false)
+  const [betCoolingDown, setBetCoolingDown] = useState<boolean>(false)
+  const giftCooldownTimerRef = useRef<number | null>(null)
+  const betCooldownTimerRef = useRef<number | null>(null)
+  const reactionWindowRef = useRef<number[]>([])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      setPageVisible(!document.hidden)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setPrefersReducedMotion(Boolean(mq.matches))
+    update()
+    mq.addEventListener('change', update)
+    return () => {
+      mq.removeEventListener('change', update)
+    }
+  }, [])
+
+  const startGiftCooldown = () => {
+    if (giftCooldownTimerRef.current != null) {
+      window.clearTimeout(giftCooldownTimerRef.current)
+    }
+    setGiftCoolingDown(true)
+    giftCooldownTimerRef.current = window.setTimeout(() => {
+      setGiftCoolingDown(false)
+      giftCooldownTimerRef.current = null
+    }, 1600)
+  }
+
+  const startBetCooldown = () => {
+    if (betCooldownTimerRef.current != null) {
+      window.clearTimeout(betCooldownTimerRef.current)
+    }
+    setBetCoolingDown(true)
+    betCooldownTimerRef.current = window.setTimeout(() => {
+      setBetCoolingDown(false)
+      betCooldownTimerRef.current = null
+    }, 1800)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (giftCooldownTimerRef.current != null) {
+        window.clearTimeout(giftCooldownTimerRef.current)
+      }
+      if (betCooldownTimerRef.current != null) {
+        window.clearTimeout(betCooldownTimerRef.current)
+      }
+    }
+  }, [])
 
   const { data: chatData } = useSWR(
     roomId ? ['room-public-chat', roomId] : null,
     () => api.getRoomPublicMessages(roomId, 80),
     {
-      refreshInterval: 60000,
+      refreshInterval: pageVisible ? 45000 : 90000,
       revalidateOnFocus: false,
     }
   )
@@ -784,6 +950,197 @@ export function StreamingRoomPage({
       )
       .slice(-80)
   }, [chatData])
+
+  const {
+    data: betMarket,
+    error: betMarketError,
+    isLoading: betMarketLoading,
+    mutate: mutateBetMarket,
+  } = useSWR(
+    roomId && userSessionId
+      ? ['stream-bets-market', roomId, userSessionId]
+      : null,
+    () =>
+      api.getBetsMarket({
+        traderId: roomId,
+        userSessionId,
+      }),
+    {
+      refreshInterval: pageVisible ? 12000 : 30000,
+      revalidateOnFocus: false,
+    }
+  )
+
+  useEffect(() => {
+    if (userSessionId) return
+    let cancelled = false
+    setSessionLoading(true)
+    setSessionError('')
+    api
+      .bootstrapChatSession()
+      .then((session) => {
+        if (cancelled) return
+        setUserSessionId(String(session.user_session_id || '').trim())
+        setUserNickname(String(session.user_nickname || '').trim())
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setSessionError(String(error instanceof Error ? error.message : 'session_init_failed'))
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSessionLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [userSessionId])
+
+  useEffect(() => {
+    const candidateIds = Array.isArray(betMarket?.entries)
+      ? betMarket.entries.map((row) => String(row.trader_id || '').trim()).filter(Boolean)
+      : []
+    if (!candidateIds.length) return
+    const current = String(betTraderId || '').trim()
+    if (!current || !candidateIds.includes(current)) {
+      setBetTraderId(candidateIds.includes(roomId) ? roomId : candidateIds[0])
+    }
+  }, [betMarket?.entries, betTraderId, roomId])
+
+  const { data: creditsData, error: creditsError } = useSWR<ViewerBetCreditsPayload>(
+    roomId ? ['bets-credits-stream', roomId] : null,
+    () => api.getBetsCredits({ limit: 8 }),
+    {
+      refreshInterval: pageVisible ? 20000 : 45000,
+      revalidateOnFocus: false,
+    }
+  )
+
+  const supporters = Array.isArray(creditsData?.leaderboard)
+    ? creditsData.leaderboard.slice(0, 6)
+    : []
+
+  const spawnReactions = (
+    count: number,
+    source: 'chat' | 'decision' | 'gift'
+  ) => {
+    const now = Date.now()
+    const inWindow = reactionWindowRef.current.filter((ts) => now - ts < 5000)
+    const maxBurstWindow = prefersReducedMotion ? 7 : 14
+    const remaining = Math.max(0, maxBurstWindow - inWindow.length)
+    if (remaining <= 0) {
+      reactionWindowRef.current = inWindow
+      return
+    }
+
+    const sourceMax = source === 'chat' ? 2 : source === 'gift' ? 4 : 3
+    const sizeBase = source === 'chat' ? 18 : 21
+    const emojiPool =
+      source === 'chat'
+        ? ['❤️', '👏', '✨']
+        : source === 'gift'
+          ? ['🎁', '🚀', '💫', '🔥']
+          : ['🚀', '🔥', '📈', '⚡']
+    const safeCount = Math.max(
+      1,
+      Math.min(Math.floor(count), sourceMax, remaining)
+    )
+    const batch: StreamReaction[] = []
+    for (let i = 0; i < safeCount; i++) {
+      const emoji = emojiPool[Math.floor(Math.random() * emojiPool.length)]
+      batch.push({
+        id: `${now}-${source}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        emoji,
+        left_pct: 58 + Math.random() * 35,
+        size_px: sizeBase + Math.floor(Math.random() * 6),
+        duration_ms:
+          source === 'decision'
+            ? 1600 + Math.floor(Math.random() * 700)
+            : 1300 + Math.floor(Math.random() * 500),
+      })
+      inWindow.push(now)
+    }
+
+    reactionWindowRef.current = inWindow
+    setReactions((prev) => [...prev, ...batch].slice(-16))
+  }
+
+  const placeBet = async () => {
+    if (!userSessionId || !userNickname) {
+      setBetError(language === 'zh' ? '会话未初始化。' : 'Session is not ready.')
+      return
+    }
+
+    const traderId = String(betTraderId || roomId).trim()
+    const stakeAmount = Number(betStakeInput)
+    if (!traderId) {
+      setBetError(language === 'zh' ? '请选择下注对象。' : 'Select a trader.')
+      return
+    }
+    if (!Number.isFinite(stakeAmount) || stakeAmount <= 0) {
+      setBetError(language === 'zh' ? '请输入有效金额。' : 'Enter a valid stake.')
+      return
+    }
+
+    setBetSubmitting(true)
+    startBetCooldown()
+    setBetError('')
+    setBetNotice('')
+    try {
+      await api.placeViewerBet({
+        user_session_id: userSessionId,
+        user_nickname: userNickname,
+        trader_id: traderId,
+        stake_amount: Math.round(stakeAmount),
+      })
+      await mutateBetMarket()
+      setBetNotice(
+        language === 'zh'
+          ? `下注成功：${Math.round(stakeAmount)} 积分。`
+          : `Bet placed: ${Math.round(stakeAmount)} points.`
+      )
+      spawnReactions(2, 'gift')
+    } catch (error) {
+      setBetError(String(error instanceof Error ? error.message : 'bet_place_failed'))
+    } finally {
+      setBetSubmitting(false)
+    }
+  }
+
+  const sendSupportGift = async (kind: 'gift' | 'rocket') => {
+    if (!userSessionId || !userNickname) {
+      setGiftError(language === 'zh' ? '会话未初始化。' : 'Session is not ready.')
+      return
+    }
+
+    const text = kind === 'rocket'
+      ? `🚀 ${userNickname} sent a rocket!`
+      : `🎁 ${userNickname} sent a gift!`
+
+    setGiftSending(true)
+    startGiftCooldown()
+    setGiftError('')
+    setGiftNotice('')
+    spawnReactions(kind === 'rocket' ? 3 : 2, 'gift')
+    try {
+      await api.postRoomMessage(roomId, {
+        user_session_id: userSessionId,
+        user_nickname: userNickname,
+        visibility: 'public',
+        message_type: 'public_plain',
+        text,
+      })
+      setGiftNotice(kind === 'rocket'
+        ? (language === 'zh' ? '火箭已发射。' : 'Rocket sent.')
+        : (language === 'zh' ? '礼物已送达。' : 'Gift sent.'))
+    } catch (error) {
+      setGiftError(String(error instanceof Error ? error.message : 'gift_send_failed'))
+    } finally {
+      setGiftSending(false)
+    }
+  }
 
   // Auto speaking detection: if a fresh agent message arrives, mark speaking for a short window.
   useEffect(() => {
@@ -816,6 +1173,16 @@ export function StreamingRoomPage({
   }, [publicMessages])
 
   useEffect(() => {
+    const currentCount = publicMessages.length
+    const prev = lastMessageCountRef.current
+    lastMessageCountRef.current = currentCount
+    const delta = Math.max(0, currentCount - prev)
+    if (delta <= 0) return
+    const burst = delta >= 4 ? 3 : delta >= 2 ? 2 : 1
+    spawnReactions(burst, 'chat')
+  }, [publicMessages])
+
+  useEffect(() => {
     const sseStatus = roomSseState?.status
     if (!sseStatus) return
     setDigitalPerson((prev) => {
@@ -840,6 +1207,22 @@ export function StreamingRoomPage({
       : []
     return latest[0] || null
   }, [streamPacket])
+
+  const decisionKey = useMemo(() => {
+    const head = decision?.decisions?.[0]
+    return `${decision?.timestamp || ''}:${decision?.cycle_number || 0}:${head?.action || ''}:${head?.symbol || ''}`
+  }, [decision])
+
+  useEffect(() => {
+    if (!decisionKey) return
+    if (!lastDecisionKeyRef.current) {
+      lastDecisionKeyRef.current = decisionKey
+      return
+    }
+    if (lastDecisionKeyRef.current === decisionKey) return
+    lastDecisionKeyRef.current = decisionKey
+    spawnReactions(3, 'decision')
+  }, [decisionKey])
 
   const fuel = useMemo(() => {
     const readiness =
@@ -887,86 +1270,119 @@ export function StreamingRoomPage({
           ? 'bg-nofx-red/10 text-nofx-red border-nofx-red/25'
           : 'bg-white/5 text-nofx-text-muted border-white/10'
 
+  const replayMode = String((replayRuntimeStatus as any)?.data_mode || '')
+    .trim()
+    .toLowerCase()
+  const modeChip = replayMode === 'live_file'
+    ? {
+      label: 'LIVE',
+      cls: 'bg-nofx-red text-white shadow-[0_10px_30px_rgba(246,70,93,0.35)]',
+    }
+    : replayMode === 'replay'
+      ? {
+        label: 'REPLAY',
+        cls: 'bg-nofx-gold text-black shadow-[0_10px_30px_rgba(240,185,11,0.30)]',
+      }
+      : {
+        label: 'STREAM',
+        cls: 'bg-white/80 text-black',
+      }
+
+  const barProgress = Number.isFinite(Number(replayRuntimeStatus?.day_bar_index))
+    && Number.isFinite(Number(replayRuntimeStatus?.day_bar_count))
+    ? `${Number(replayRuntimeStatus?.day_bar_index)}/${Number(replayRuntimeStatus?.day_bar_count)}`
+    : '--/--'
+
+  const overviewFreshness = freshnessBadge(
+    typeof streamPacket?.market_overview?.status?.stale === 'boolean'
+      ? streamPacket.market_overview.status.stale
+      : null
+  )
+  const digestFreshness = freshnessBadge(
+    typeof streamPacket?.news_digest?.status?.stale === 'boolean'
+      ? streamPacket.news_digest.status.stale
+      : null
+  )
+
+  const recentChatPerMinute = useMemo(() => {
+    if (!publicMessages.length) return 0
+    const latestTs = Math.max(
+      ...publicMessages.map((m) => Number(m.created_ts_ms || 0)).filter((n) => Number.isFinite(n))
+    )
+    const floorTs = latestTs - 60_000
+    return publicMessages.filter((m) => Number(m.created_ts_ms || 0) >= floorTs).length
+  }, [publicMessages])
+
+  const myCreditPoints = Math.max(
+    0,
+    Math.floor(
+      Number(
+        betMarket?.my_credits?.credit_points ?? creditsData?.my_credits?.credit_points ?? 0
+      )
+    )
+  )
+  const mySettledCount = Math.max(
+    0,
+    Math.floor(
+      Number(
+        betMarket?.my_credits?.settled_bets ??
+          creditsData?.my_credits?.settled_bets ??
+          0
+      )
+    )
+  )
+  const myWinCount = Math.max(
+    0,
+    Math.floor(
+      Number(
+        betMarket?.my_credits?.win_count ?? creditsData?.my_credits?.win_count ?? 0
+      )
+    )
+  )
+  const myBet = betMarket?.my_bet || null
+  const betSettlement = betMarket?.settlement || null
+  const betDisabled =
+    !betMarket?.betting_open ||
+    betSubmitting ||
+    !userSessionId ||
+    sessionLoading ||
+    betCoolingDown
+  const giftDisabled =
+    giftSending || !userSessionId || sessionLoading || giftCoolingDown
+  const decisionReasoning = safeText(
+    decision?.decisions?.[0]?.reasoning || compactReasoning(decision),
+    110
+  )
+  const myBetTraderName = String(
+    (betMarket?.entries || []).find((entry) => entry.trader_id === myBet?.trader_id)
+      ?.trader_name ||
+      myBet?.trader_id ||
+      '--'
+  )
+  const settlementWinnerNames =
+    Array.isArray(betSettlement?.winning_trader_ids) && betSettlement.winning_trader_ids.length
+      ? betSettlement.winning_trader_ids.map((id) => {
+          const hit = (betMarket?.entries || []).find((entry) => entry.trader_id === id)
+          return hit?.trader_name || id
+        })
+      : []
+
   return (
-    <div className="relative min-h-[calc(100vh-64px)]">
+    <div
+      className={`relative ${immersive ? 'min-h-screen' : 'min-h-[calc(100vh-64px)]'}`}
+      style={{
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 10px)',
+      }}
+    >
       <DeepVoidBackground />
 
-      <div className="relative z-10 px-4 py-5">
-        <div className="max-w-[1600px] mx-auto">
-          <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
-            {/* Stage */}
+      <div className="relative z-10 px-3 sm:px-4">
+        <div className="mx-auto max-w-[1700px]">
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
-              <div className="relative">
-                {/* Top bar */}
-                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/5 bg-black/25">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="shrink-0">
-                      <div className="relative">
-                        <TraderAvatar
-                          traderId={selectedTrader.trader_id}
-                          traderName={selectedTrader.trader_name}
-                          avatarUrl={selectedTrader.avatar_url}
-                          avatarHdUrl={selectedTrader.avatar_hd_url}
-                          size={44}
-                          className="rounded-2xl border border-white/10"
-                        />
-                        <div className="absolute -right-1 -bottom-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-nofx-red text-white shadow-[0_10px_30px_rgba(246,70,93,0.35)]">
-                          LIVE
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-nofx-text-main truncate">
-                        {selectedTrader.trader_name}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span
-                          className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${sseCls}`}
-                        >
-                          SSE:{sseStatus}
-                        </span>
-                        {roomSseState?.last_event_ts_ms && (
-                          <span className="text-[11px] font-mono text-nofx-text-muted opacity-80">
-                            last {formatTime(roomSseState.last_event_ts_ms)}
-                          </span>
-                        )}
-                        {streamPacket?.ts_ms && (
-                          <span className="text-[11px] font-mono text-nofx-text-muted opacity-70">
-                            pkt {formatTime(streamPacket.ts_ms)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <RoomClockBadge
-                      replayRuntimeStatus={replayRuntimeStatus}
-                      language={language}
-                    />
-                    <div className="inline-flex rounded-full border border-white/10 bg-black/25 p-1">
-                      <button
-                        type="button"
-                        onClick={() => setChatMode('danmu')}
-                        className={`px-3 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'danmu' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
-                      >
-                        Danmu
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setChatMode('window')}
-                        className={`px-3 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'window' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
-                      >
-                        Chat
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Main content area */}
-                <div className="relative p-4 sm:p-6">
-                  {/* Digital person / video stage */}
+              <div className="relative px-2 pt-2 sm:px-4 sm:pt-4">
+                <div className="relative">
                   <DigitalPersonStage
                     trader={selectedTrader}
                     mode={chatMode}
@@ -976,165 +1392,546 @@ export function StreamingRoomPage({
                     videoUrl={streamingParams.videoUrl}
                   />
 
-                  {/* Decision hero */}
-                  <div className="mt-4">
-                    <DecisionHero
-                      decision={decision}
-                      streamPacket={streamPacket}
+                  <div className="pointer-events-none absolute left-3 right-3 top-3 z-20 flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className={`px-2.5 py-1 text-[10px] font-black rounded-full ${modeChip.cls}`}
+                      >
+                        {modeChip.label}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${overviewFreshness.cls}`}
+                      >
+                        {language === 'zh' ? '概览' : 'overview'} {overviewFreshness.label}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-mono border ${digestFreshness.cls}`}
+                      >
+                        {language === 'zh' ? '新闻' : 'news'} {digestFreshness.label}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 text-[10px] font-mono">
+                      <span className={`px-2 py-0.5 rounded-full border ${sseCls}`}>
+                        SSE {sseStatus}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full border border-white/10 bg-black/40 text-nofx-text-muted">
+                        bar {barProgress}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="absolute left-3 top-14 z-30">
+                    <div className="inline-flex rounded-full border border-white/12 bg-black/35 p-1 backdrop-blur-sm">
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('danmu')}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'danmu' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+                      >
+                        Danmu
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatMode('window')}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${chatMode === 'window' ? 'bg-nofx-gold text-black' : 'text-nofx-text-muted hover:text-nofx-text-main'}`}
+                      >
+                        Chat
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="absolute right-3 top-14 z-30">
+                    <RoomClockBadge
+                      replayRuntimeStatus={replayRuntimeStatus}
                       language={language}
                     />
                   </div>
 
-                  {/* Bet summary */}
-                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                      <div className="text-[10px] font-mono text-nofx-text-muted">
-                        equity
-                      </div>
-                      <div className="text-sm font-bold text-nofx-text-main">
-                        {account ? formatPrice(account.total_equity) : '--'}
-                      </div>
+                  <div
+                    className="absolute right-3 z-30 flex flex-col gap-2 xl:hidden"
+                    style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 84px)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => sendSupportGift('gift')}
+                      disabled={giftDisabled}
+                      className="h-11 w-11 rounded-full border border-white/20 bg-black/45 text-base text-nofx-text-main disabled:opacity-45 disabled:cursor-not-allowed"
+                      title={language === 'zh' ? '送礼' : 'Send gift'}
+                    >
+                      🎁
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendSupportGift('rocket')}
+                      disabled={giftDisabled}
+                      className="h-11 w-11 rounded-full border border-nofx-gold/45 bg-nofx-gold/18 text-base text-nofx-gold disabled:opacity-45 disabled:cursor-not-allowed"
+                      title={language === 'zh' ? '发射火箭' : 'Send rocket'}
+                    >
+                      🚀
+                    </button>
+                  </div>
+
+                  <ReactionLayer
+                    reactions={reactions}
+                    onDone={(id) => {
+                      setReactions((prev) =>
+                        prev.filter((item) => item.id !== id)
+                      )
+                    }}
+                  />
+                  <LowerThirdTicker decision={decision} language={language} />
+                </div>
+              </div>
+
+              <div className="px-2 pb-3 pt-3 sm:px-4 sm:pb-4 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '净值' : 'equity'}
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                      <div className="text-[10px] font-mono text-nofx-text-muted">
-                        unreal pnl
+                    <div className="text-sm font-bold text-nofx-text-main">
+                      {account ? formatPrice(account.total_equity) : '--'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '浮动盈亏' : 'unreal pnl'}
+                    </div>
+                    <div
+                      className={`text-sm font-bold ${Number(account?.unrealized_profit || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}
+                    >
+                      {account ? formatPrice(account.unrealized_profit) : '--'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '持仓数' : 'positions'}
+                    </div>
+                    <div className="text-sm font-bold text-nofx-text-main">
+                      {account ? String(account.position_count) : String(positions.length)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '保证金' : 'margin'}
+                    </div>
+                    <div className="text-sm font-bold text-nofx-text-main">
+                      {account ? `${Number(account.margin_used_pct || 0).toFixed(1)}%` : '--'}
+                    </div>
+                  </div>
+                </div>
+
+                {featuredPos && (
+                  <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-mono text-nofx-text-muted">
+                          {language === 'zh'
+                            ? '重点仓位（波动最大）'
+                            : 'Featured position (largest swing)'}
+                        </div>
+                        <div className="text-sm font-bold text-nofx-text-main truncate">
+                          {featuredPos.symbol} · {String(featuredPos.side || '').toUpperCase()} ·{' '}
+                          {formatQuantity(featuredPos.quantity)}
+                        </div>
                       </div>
                       <div
-                        className={`text-sm font-bold ${Number(account?.unrealized_profit || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}
+                        className={`text-sm font-bold ${Number(featuredPos.unrealized_pnl || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}
                       >
-                        {account
-                          ? formatPrice(account.unrealized_profit)
-                          : '--'}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                      <div className="text-[10px] font-mono text-nofx-text-muted">
-                        positions
-                      </div>
-                      <div className="text-sm font-bold text-nofx-text-main">
-                        {account
-                          ? String(account.position_count)
-                          : String(positions.length)}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
-                      <div className="text-[10px] font-mono text-nofx-text-muted">
-                        margin
-                      </div>
-                      <div className="text-sm font-bold text-nofx-text-main">
-                        {account
-                          ? `${Number(account.margin_used_pct || 0).toFixed(1)}%`
-                          : '--'}
+                        {formatPrice(featuredPos.unrealized_pnl)}
                       </div>
                     </div>
                   </div>
+                )}
 
-                  {featuredPos && (
-                    <div className="mt-3 rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[10px] font-mono text-nofx-text-muted">
-                            {language === 'zh'
-                              ? '当前下注 (最大波动)'
-                              : 'Featured bet (largest swing)'}
-                          </div>
-                          <div className="text-sm font-bold text-nofx-text-main truncate">
-                            {featuredPos.symbol} ·{' '}
-                            {String(featuredPos.side || '').toUpperCase()} ·{' '}
-                            {formatQuantity(featuredPos.quantity)}
-                          </div>
-                        </div>
-                        <div
-                          className={`text-sm font-bold ${Number(featuredPos.unrealized_pnl || 0) >= 0 ? 'text-nofx-green' : 'text-nofx-red'}`}
-                        >
-                          {formatPrice(featuredPos.unrealized_pnl)}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div className="md:hidden rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+                  <div className="flex items-center gap-2 text-[11px] font-mono">
+                    <span className="text-nofx-gold font-bold uppercase">
+                      {decision?.decisions?.[0]?.action || '--'}
+                    </span>
+                    <span className="text-nofx-text-main font-semibold">
+                      {decision?.decisions?.[0]?.symbol || '--'}
+                    </span>
+                    {decision?.decisions?.[0]?.confidence != null && (
+                      <span className="text-nofx-text-muted">
+                        conf {Number(decision.decisions[0].confidence).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-nofx-text-main opacity-90">
+                    {decisionReasoning ||
+                      (language === 'zh'
+                        ? '等待下一条决策说明...'
+                        : 'Waiting for next decision narrative...')}
+                  </div>
+                </div>
 
-                  {/* Fuel cards */}
-                  <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                <div className="hidden md:block">
+                  <DecisionHero
+                    decision={decision}
+                    streamPacket={streamPacket}
+                    language={language}
+                  />
+                </div>
+
+                <div className="hidden lg:grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="text-[11px] font-mono text-nofx-text-muted">
-                        market overview
+                        {language === 'zh' ? '市场概览' : 'market overview'}
                       </div>
-                      <div className="mt-2 text-sm text-nofx-text-main leading-relaxed opacity-95">
-                        {fuel.overviewBrief ||
-                          (language === 'zh'
-                            ? '暂无概览。'
-                            : 'No overview yet.')}
-                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${overviewFreshness.cls}`}>
+                        {overviewFreshness.label}
+                      </span>
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                      <div className="text-[11px] font-mono text-nofx-text-muted">
-                        headlines
-                      </div>
-                      {fuel.newsTitles.length ? (
-                        <div className="mt-2 space-y-1 text-sm text-nofx-text-main">
-                          {fuel.newsTitles.slice(0, 4).map((title, idx) => (
-                            <div
-                              key={`${idx}-${String(title)}`}
-                              className="opacity-95"
-                            >
-                              · {String(title)}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-sm text-nofx-text-muted opacity-70">
-                          {language === 'zh' ? '暂无摘要。' : 'No digest.'}
-                        </div>
-                      )}
+                    <div className="mt-2 text-sm text-nofx-text-main leading-relaxed opacity-95">
+                      {fuel.overviewBrief ||
+                        (language === 'zh' ? '暂无概览。' : 'No overview yet.')}
                     </div>
                   </div>
 
-                  {/* Window chat inside stage (optional) */}
-                  {chatMode === 'window' && (
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
-                        <div className="text-[11px] font-mono text-nofx-text-muted">
-                          public chat (read-only)
-                        </div>
-                        <div className="text-[11px] text-nofx-text-muted">
-                          {publicMessages.length}
-                        </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        {language === 'zh' ? '新闻摘要' : 'headlines'}
                       </div>
-                      <div className="max-h-[280px] overflow-y-auto px-4 py-3 space-y-2">
-                        {publicMessages.slice(-30).map((m) => (
-                          <div
-                            key={m.id}
-                            className="flex items-start justify-between gap-3"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-[11px] font-semibold text-nofx-text-main opacity-95">
-                                {senderLabel(m)}
-                              </div>
-                              <div className="text-sm text-nofx-text-main break-words opacity-95">
-                                {m.text}
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-[11px] font-mono text-nofx-text-muted opacity-70">
-                              {formatTime(m.created_ts_ms)}
-                            </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${digestFreshness.cls}`}>
+                        {digestFreshness.label}
+                      </span>
+                    </div>
+                    {fuel.newsTitles.length ? (
+                      <div className="mt-2 space-y-1 text-sm text-nofx-text-main">
+                        {fuel.newsTitles.slice(0, 4).map((title, idx) => (
+                          <div key={`${idx}-${String(title)}`} className="opacity-95">
+                            · {String(title)}
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="mt-2 text-sm text-nofx-text-muted opacity-70">
+                        {language === 'zh' ? '暂无摘要。' : 'No digest.'}
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {chatMode === 'window' && (
+                  <div className="rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        {language === 'zh'
+                          ? '公开聊天（仅展示，文本输入关闭）'
+                          : 'public chat (display only, text input disabled)'}
+                      </div>
+                      <div className="text-[11px] text-nofx-text-muted">
+                        {publicMessages.length}
+                      </div>
+                    </div>
+                    <div className="max-h-[280px] overflow-y-auto px-4 py-3 space-y-2">
+                      {publicMessages.slice(-30).map((m) => (
+                        <div key={m.id} className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold text-nofx-text-main opacity-95">
+                              {senderLabel(m)}
+                            </div>
+                            <div className="text-sm text-nofx-text-main break-words opacity-95">
+                              {m.text}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-[11px] font-mono text-nofx-text-muted opacity-70">
+                            {formatTime(m.created_ts_ms)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Side rail (TikTok-ish chat list + quick stats) */}
-            <div className="space-y-4">
+            <div className="space-y-3">
+              <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/5 bg-black/25 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <TraderAvatar
+                      traderId={selectedTrader.trader_id}
+                      traderName={selectedTrader.trader_name}
+                      avatarUrl={selectedTrader.avatar_url}
+                      avatarHdUrl={selectedTrader.avatar_hd_url}
+                      size={34}
+                      className="rounded-xl border border-white/12"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-nofx-text-main truncate">
+                        {language === 'zh' ? '互动支持' : 'Interactive Support'}
+                      </div>
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        {userNickname
+                          ? `${userNickname} · ${userSessionId.slice(0, 8)}`
+                          : language === 'zh'
+                            ? '会话初始化中'
+                            : 'session bootstrapping'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '我的积分' : 'my points'}
+                    </div>
+                    <div className="text-sm font-bold text-nofx-gold">
+                      {myCreditPoints} pts
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => sendSupportGift('gift')}
+                      disabled={giftDisabled}
+                      className="px-3 py-2 rounded-xl text-sm font-semibold border border-white/15 bg-black/30 text-nofx-text-main disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      {giftSending
+                        ? language === 'zh'
+                          ? '发送中...'
+                          : 'Sending...'
+                        : language === 'zh'
+                          ? '送礼 🎁'
+                          : 'Gift 🎁'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => sendSupportGift('rocket')}
+                      disabled={giftDisabled}
+                      className="px-3 py-2 rounded-xl text-sm font-semibold border border-nofx-gold/35 bg-nofx-gold/10 text-nofx-gold disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      {giftSending
+                        ? language === 'zh'
+                          ? '发送中...'
+                          : 'Sending...'
+                        : language === 'zh'
+                          ? '火箭 🚀'
+                          : 'Rocket 🚀'}
+                    </button>
+                  </div>
+
+                  {giftCoolingDown && !giftSending && (
+                    <div className="text-[11px] text-nofx-text-muted">
+                      {language === 'zh'
+                        ? '礼物按钮冷却中，防止重复提交。'
+                        : 'Gift actions cooling down to prevent multi-submit.'}
+                    </div>
+                  )}
+                  {giftNotice && <div className="text-xs text-nofx-green">{giftNotice}</div>}
+                  {giftError && <div className="text-xs text-nofx-red">{giftError}</div>}
+
+                  <div className="pt-2 border-t border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-semibold text-nofx-text-main">
+                        {language === 'zh' ? '直播内竞猜' : 'In-stream betting'}
+                      </div>
+                      <div
+                        className={`text-[11px] px-2 py-0.5 rounded border font-mono ${betMarket?.betting_open ? 'border-nofx-green/35 text-nofx-green bg-nofx-green/10' : 'border-nofx-red/35 text-nofx-red bg-nofx-red/10'}`}
+                      >
+                        {betMarket?.betting_open
+                          ? language === 'zh'
+                            ? '开放'
+                            : 'OPEN'
+                          : language === 'zh'
+                            ? '关闭'
+                            : 'CLOSED'}
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] font-mono text-nofx-text-muted mb-2 flex flex-wrap gap-x-2 gap-y-1">
+                      <span>{`day=${betMarket?.day_key || '--'}`}</span>
+                      <span>{`cutoff=${formatMinuteLabel(betMarket?.cutoff_minute)}`}</span>
+                      <span>{`pool=${formatPrice(Number(betMarket?.totals?.stake_amount || 0))}`}</span>
+                      <span>{`my=${myCreditPoints} pts`}</span>
+                    </div>
+
+                    {sessionLoading && (
+                      <div className="text-xs text-nofx-text-muted mb-2">
+                        {language === 'zh' ? '初始化会话中...' : 'Initializing session...'}
+                      </div>
+                    )}
+                    {!sessionLoading && !sessionError && userSessionId && (
+                      <div className="text-xs text-nofx-green mb-2">
+                        {language === 'zh' ? '会话已就绪。' : 'Session ready.'}
+                      </div>
+                    )}
+                    {sessionError && (
+                      <div className="text-xs text-nofx-red mb-2">{sessionError}</div>
+                    )}
+                    {betMarketLoading && (
+                      <div className="text-xs text-nofx-text-muted mb-2">
+                        {language === 'zh' ? '加载盘口中...' : 'Loading market...'}
+                      </div>
+                    )}
+                    {(betMarketError || betError) && (
+                      <div className="text-xs text-nofx-red mb-2">
+                        {String(
+                          betError ||
+                            (betMarketError as { message?: string } | undefined)?.message ||
+                            'bet_market_error'
+                        )}
+                      </div>
+                    )}
+                    {betNotice && <div className="text-xs text-nofx-green mb-2">{betNotice}</div>}
+
+                    <div className="grid grid-cols-[1fr_92px] gap-2 mb-2">
+                      <select
+                        value={betTraderId}
+                        onChange={(e) => setBetTraderId(String(e.target.value || ''))}
+                        className="px-3 py-2 rounded bg-black/35 border border-white/10 text-sm text-nofx-text-main"
+                      >
+                        {(betMarket?.entries || []).map((entry) => (
+                          <option key={entry.trader_id} value={entry.trader_id}>
+                            {entry.trader_name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100000}
+                        step={1}
+                        value={betStakeInput}
+                        onChange={(e) => setBetStakeInput(String(e.target.value || ''))}
+                        className="px-3 py-2 rounded bg-black/35 border border-white/10 text-sm text-nofx-text-main"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={placeBet}
+                      disabled={betDisabled}
+                      className="w-full px-3 py-2 rounded-xl text-sm font-semibold bg-nofx-gold text-black disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      {betSubmitting
+                        ? language === 'zh'
+                          ? '提交中...'
+                          : 'Placing...'
+                        : language === 'zh'
+                          ? '下注'
+                          : 'Place Bet'}
+                    </button>
+
+                    {betCoolingDown && !betSubmitting && (
+                      <div className="mt-2 text-[11px] text-nofx-text-muted">
+                        {language === 'zh'
+                          ? '下注按钮冷却中，避免重复提交。'
+                          : 'Bet action cooling down to avoid accidental multi-submit.'}
+                      </div>
+                    )}
+
+                    {myBet && (
+                      <div className="mt-2 text-[11px] text-nofx-text-muted">
+                        {language === 'zh'
+                          ? `当前下注：${myBetTraderName} · ${formatPrice(Number(myBet.stake_amount || 0))}`
+                          : `Current bet: ${myBetTraderName} · ${formatPrice(Number(myBet.stake_amount || 0))}`}
+                        {myBet.settlement_status === 'settled' && (
+                          <span>
+                            {myBet.settled_is_winner
+                              ? language === 'zh'
+                                ? ` · 已结算 +${Math.max(0, Math.floor(Number(myBet.settled_credit_points || 0)))} pts`
+                                : ` · settled +${Math.max(0, Math.floor(Number(myBet.settled_credit_points || 0)))} pts`
+                              : language === 'zh'
+                                ? ' · 已结算 未中奖'
+                                : ' · settled lost'}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {betSettlement?.settled_ts_ms && (
+                      <div className="mt-2 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] text-nofx-text-muted">
+                        <div className="font-semibold text-nofx-text-main">
+                          {language === 'zh' ? '当日结算' : 'Day settlement'}
+                        </div>
+                        <div className="mt-1">
+                          {language === 'zh'
+                            ? `胜出交易员：${settlementWinnerNames.join(' / ') || '--'}`
+                            : `Winners: ${settlementWinnerNames.join(' / ') || '--'}`}
+                        </div>
+                        {betSettlement.winning_return_pct != null && (
+                          <div>
+                            {language === 'zh'
+                              ? `胜出收益率：${Number(betSettlement.winning_return_pct).toFixed(2)}%`
+                              : `Winning return: ${Number(betSettlement.winning_return_pct).toFixed(2)}%`}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-nofx-text-muted">
+                    {language === 'zh'
+                      ? '当前页面已启用互动下注 + 礼物（礼物/火箭）；文本聊天输入关闭，仅显示消息。'
+                      : 'Interactive betting + gifts (gift/rocket) are enabled; free-text public chat input is disabled (display only).'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/5 bg-black/25 flex items-center justify-between gap-2">
+                  <div className="text-sm font-bold text-nofx-text-main">
+                    {language === 'zh' ? 'Top Supporters（支持榜）' : 'Top Supporters'}
+                  </div>
+                  <div className="text-[11px] font-mono text-nofx-text-muted">
+                    {`chat/min ${recentChatPerMinute}`}
+                  </div>
+                </div>
+                <div className="p-4 space-y-2">
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] font-mono text-nofx-text-muted">
+                    {language === 'zh'
+                      ? `我：${myCreditPoints} pts · ${myWinCount} 胜 · ${mySettledCount} 已结算`
+                      : `me: ${myCreditPoints} pts · ${myWinCount} wins · ${mySettledCount} settled`}
+                  </div>
+                  {creditsError ? (
+                    <div className="text-xs text-nofx-red">
+                      {language === 'zh' ? '积分榜暂不可用' : 'credits unavailable'}
+                    </div>
+                  ) : supporters.length === 0 ? (
+                    <div className="text-xs text-nofx-text-muted opacity-80">
+                      {language === 'zh'
+                        ? '暂无支持积分数据'
+                        : 'No supporter points yet'}
+                    </div>
+                  ) : (
+                    supporters.map((row, idx) => (
+                      <div
+                        key={row.user_session_id}
+                        className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm text-nofx-text-main truncate">
+                            {`${idx + 1}. ${row.user_nickname || row.user_session_id}`}
+                          </div>
+                          <div className="text-[11px] font-mono text-nofx-text-muted">
+                            {language === 'zh'
+                              ? `${row.win_count} 胜 · ${row.settled_bets} 已结算`
+                              : `${row.win_count} wins · ${row.settled_bets} settled`}
+                          </div>
+                        </div>
+                        <div className="text-sm font-bold text-nofx-gold">
+                          {`${Math.max(0, Math.floor(Number(row.credit_points || 0)))} pts`}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
               <div className="nofx-glass border border-white/10 rounded-2xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/5 bg-black/25">
                   <div className="text-sm font-bold text-nofx-text-main">
-                    Public Chat
+                    {language === 'zh' ? '公开聊天（仅展示）' : 'Public Chat (Display only)'}
                   </div>
                   <div className="text-[11px] font-mono text-nofx-text-muted">
-                    read-only
+                    {language === 'zh'
+                      ? '文本输入关闭'
+                      : 'text input disabled'}
                   </div>
                 </div>
                 <div className="p-4 space-y-2 max-h-[520px] overflow-y-auto">
@@ -1158,17 +1955,6 @@ export function StreamingRoomPage({
                       </div>
                     </div>
                   ))}
-                </div>
-              </div>
-
-              <div className="nofx-glass border border-white/10 rounded-2xl p-4">
-                <div className="text-sm font-bold text-nofx-text-main">
-                  Streamer Notes
-                </div>
-                <div className="mt-2 text-xs text-nofx-text-muted leading-relaxed opacity-80">
-                  {language === 'zh'
-                    ? '此页面为只读“直播间”布局：头像（未来可替换为数字人）、最新交易决策与解读、弹幕/聊天、燃料信息。'
-                    : 'Read-only streaming layout: avatar (future digital person), latest trade decision + reasoning, danmu/chat, fuel info.'}
                 </div>
               </div>
             </div>

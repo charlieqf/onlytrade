@@ -10,7 +10,10 @@ from zoneinfo import ZoneInfo
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-import akshare as ak
+try:
+    import akshare as ak  # type: ignore
+except Exception:
+    ak = None
 
 from scripts.akshare.common import atomic_write_json
 from scripts.akshare.hot_news_module import collect_hot_news_bundle
@@ -27,6 +30,9 @@ def _safe_text(value: object, max_len: int = 240) -> str:
 
 
 def _collect_titles(symbol: str, limit: int) -> list[dict]:
+    if ak is None:
+        return []
+
     # ak.stock_news_em returns columns with Chinese names.
     col_title = "\u65b0\u95fb\u6807\u9898"  # 新闻标题
     col_time = "\u53d1\u5e03\u65f6\u95f4"  # 发布时间
@@ -118,8 +124,10 @@ def main() -> int:
         "schema_version": "news.digest.v1",
         "market": "CN-A",
         "mode": "real",
-        "provider": "akshare",
-        "source_kind": "hot_news_plus_symbol_news",
+        "provider": "akshare" if ak is not None else "rss-hot-news",
+        "source_kind": "hot_news_plus_symbol_news"
+        if ak is not None
+        else "hot_news_only",
         "day_key": now.strftime("%Y-%m-%d"),
         "as_of_ts_ms": int(now.timestamp() * 1000),
         "symbols": symbols,

@@ -48,6 +48,7 @@ import type {
   DecisionAuditListPayload,
   ViewerBetMarketPayload,
   ViewerBetPlacePayload,
+  ViewerBetCreditsPayload,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -145,6 +146,29 @@ export const api = {
     )
     if (!result.success || !result.data) {
       throw new Error(result.message || '下注失败')
+    }
+    return result.data
+  },
+
+  async getBetsCredits(options?: {
+    userSessionId?: string
+    limit?: number
+  }): Promise<ViewerBetCreditsPayload> {
+    const params = new URLSearchParams()
+    if (options?.userSessionId) {
+      params.set('user_session_id', String(options.userSessionId).trim())
+    }
+    if (options?.limit != null) {
+      params.set('limit', String(Math.max(1, Math.min(Number(options.limit) || 20, 200))))
+    }
+
+    const query = params.toString()
+    const url = query
+      ? `${API_BASE}/bets/credits?${query}`
+      : `${API_BASE}/bets/credits`
+    const result = await httpClient.get<ViewerBetCreditsPayload>(url)
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '获取积分榜失败')
     }
     return result.data
   },

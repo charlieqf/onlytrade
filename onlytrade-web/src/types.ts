@@ -287,6 +287,14 @@ export interface ReplayRuntimeState {
 
 export interface ReplayRuntimeStatus extends ReplayRuntimeState {
   symbols: string[]
+  data_mode?: 'replay' | 'live_file' | string
+  live_file?: {
+    stale?: boolean
+    last_error?: string | null
+    frame_count?: number
+    last_mtime_ms?: number | null
+    last_load_ts_ms?: number | null
+  } | null
 }
 
 export interface ReplayRuntimeControlResult {
@@ -410,6 +418,38 @@ export interface ViewerBetSelection {
   day_key: string
   estimated_odds?: number | null
   estimated_payout?: number | null
+  settlement_status?: 'pending' | 'settled'
+  settled_is_winner?: boolean
+  settled_credit_points?: number
+}
+
+export interface ViewerCreditPointsSummary {
+  credit_points: number
+  settled_bets: number
+  win_count: number
+}
+
+export interface ViewerBetSettlementSummary {
+  schema_version: 'bets.settlement.v1'
+  settled_ts_ms: number | null
+  winning_trader_ids: string[]
+  winning_return_pct: number | null
+}
+
+export interface ViewerCreditLeaderboardEntry {
+  user_session_id: string
+  user_nickname: string
+  credit_points: number
+  settled_bets: number
+  win_count: number
+  updated_ts_ms: number | null
+}
+
+export interface ViewerBetCreditsPayload {
+  schema_version: 'bets.credits.v1'
+  count: number
+  leaderboard: ViewerCreditLeaderboardEntry[]
+  my_credits: ViewerCreditLeaderboardEntry | null
 }
 
 export interface ViewerBetMarketPayload {
@@ -430,6 +470,8 @@ export interface ViewerBetMarketPayload {
   }
   entries: ViewerBetOddsEntry[]
   my_bet: ViewerBetSelection | null
+  my_credits: ViewerCreditPointsSummary | null
+  settlement: ViewerBetSettlementSummary | null
   freeze_ts_ms: number | null
 }
 

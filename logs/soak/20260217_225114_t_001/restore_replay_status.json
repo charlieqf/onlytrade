@@ -1,0 +1,49 @@
+{
+  "status_code": 200,
+  "payload": {
+    "success": true,
+    "data": {
+      "running": false,
+      "speed": 12,
+      "loop": false,
+      "completed": true,
+      "warmup_bars": 120,
+      "cursor_index": 239,
+      "timeline_length": 240,
+      "current_ts_ms": 1770966000000,
+      "day_count": 1,
+      "day_index": 1,
+      "trading_day": "2026-02-13",
+      "is_day_start": false,
+      "is_day_end": true,
+      "day_bar_index": 240,
+      "day_bar_count": 240,
+      "data_mode": "replay",
+      "live_file": null,
+      "live_files": {
+        "CN-A": null,
+        "US": null
+      },
+      "symbols": [
+        "002131.SZ",
+        "300058.SZ",
+        "002342.SZ",
+        "600519.SH",
+        "300059.SZ",
+        "600089.SH",
+        "600986.SH",
+        "601899.SH",
+        "002050.SZ",
+        "002195.SZ",
+        "AAPL",
+        "MSFT",
+        "AMZN",
+        "GOOGL",
+        "META",
+        "NVDA",
+        "TSLA"
+      ]
+    }
+  },
+  "data_mode": "replay"
+}

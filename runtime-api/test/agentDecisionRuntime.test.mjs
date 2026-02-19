@@ -164,6 +164,34 @@ test('createDecisionFromContext guards unaffordable buy to hold without failure'
   assert.match(decision.decisions[0].reasoning, /insufficient cash for one lot/)
 })
 
+test('createDecisionFromContext applies opening-phase quantity and confidence caps', () => {
+  const context = makeContext({ ret5: 0.004, rsi14: 58, sma20: 106, sma60: 100, price: 108 })
+  context.runtime_config = {
+    opening_phase_mode: 'true',
+    opening_phase_max_lots: 1,
+    opening_phase_max_confidence: 0.62,
+  }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'buy',
+    confidence: 0.93,
+    quantity: 900,
+    reasoning: 'opening move confirmation',
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 16,
+    context,
+    timestampIso: '2026-02-12T00:03:30.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'buy')
+  assert.equal(decision.decisions[0].requested_quantity, 100)
+  assert.equal(decision.decisions[0].confidence, 0.62)
+  assert.match(decision.decisions[0].reasoning, /opening-phase cap/)
+})
+
 test('in-memory runtime stores per-trader latest decisions and metrics', async () => {
   const runtime = createInMemoryAgentRuntime({
     traders: [trader],

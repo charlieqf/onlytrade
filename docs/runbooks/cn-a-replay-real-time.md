@@ -13,6 +13,22 @@ This runbook uses `runtime-api` replay mode.
 - `runtime-api` and `onlytrade-web` running locally
 - Replay dataset exists:
   - `onlytrade-web/public/replay/cn-a/latest/frames.1m.json`
+  - `onlytrade-web/public/replay/cn-a/latest/market_breadth.1m.json`
+
+Build replay breadth file if missing:
+
+```bash
+bash scripts/onlytrade-ops.sh red-blue-replay-build
+```
+
+If you need exactly one replay trading day:
+
+```bash
+bash scripts/onlytrade-ops.sh red-blue-replay-build \
+  --frames-path onlytrade-web/public/replay/cn-a/latest/frames.1m.json \
+  --output-path onlytrade-web/public/replay/cn-a/latest/market_breadth.1m.json \
+  --day-key 2026-02-11
+```
 
 ## Configure runtime-api
 

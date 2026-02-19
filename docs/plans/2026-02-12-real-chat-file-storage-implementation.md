@@ -15,7 +15,7 @@
 **Files:**
 - Create: `docs/architecture/room-chat-file-contract.md`
 - Modify: `README.md`
-- Test: `mock-api/test/chatContract.test.mjs`
+- Test: `runtime-api/test/chatContract.test.mjs`
 
 **Step 1: Write the failing test**
 
@@ -34,12 +34,12 @@ test('chat contract supports only three message types', () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- chatContract.test.mjs`
+Run: `npm --prefix runtime-api test -- chatContract.test.mjs`
 Expected: FAIL with module not found for `chatContract.mjs`.
 
 **Step 3: Write minimal implementation**
 
-Create `mock-api/src/chat/chatContract.mjs`:
+Create `runtime-api/src/chat/chatContract.mjs`:
 
 ```js
 const MESSAGE_TYPES = new Set(['public_plain', 'public_mention_agent', 'private_agent_dm'])
@@ -66,13 +66,13 @@ In `docs/architecture/room-chat-file-contract.md`, define:
 
 **Step 5: Run test to verify it passes**
 
-Run: `npm --prefix mock-api test -- chatContract.test.mjs`
+Run: `npm --prefix runtime-api test -- chatContract.test.mjs`
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add docs/architecture/room-chat-file-contract.md README.md mock-api/src/chat/chatContract.mjs mock-api/test/chatContract.test.mjs
+git add docs/architecture/room-chat-file-contract.md README.md runtime-api/src/chat/chatContract.mjs runtime-api/test/chatContract.test.mjs
 git commit -m "feat: define room chat contract and file layout"
 ```
 
@@ -81,8 +81,8 @@ git commit -m "feat: define room chat contract and file layout"
 ### Task 2: Implement append-only file chat store (public + private)
 
 **Files:**
-- Create: `mock-api/src/chat/chatFileStore.mjs`
-- Test: `mock-api/test/chatFileStore.test.mjs`
+- Create: `runtime-api/src/chat/chatFileStore.mjs`
+- Test: `runtime-api/test/chatFileStore.test.mjs`
 
 **Step 1: Write the failing test**
 
@@ -104,7 +104,7 @@ test('chat store appends and reads public/private history', async () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- chatFileStore.test.mjs`
+Run: `npm --prefix runtime-api test -- chatFileStore.test.mjs`
 Expected: FAIL.
 
 **Step 3: Write minimal implementation**
@@ -124,13 +124,13 @@ Ignore malformed lines during reads and continue parsing remaining valid lines.
 
 **Step 5: Run test to verify it passes**
 
-Run: `npm --prefix mock-api test -- chatFileStore.test.mjs`
+Run: `npm --prefix runtime-api test -- chatFileStore.test.mjs`
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add mock-api/src/chat/chatFileStore.mjs mock-api/test/chatFileStore.test.mjs
+git add runtime-api/src/chat/chatFileStore.mjs runtime-api/test/chatFileStore.test.mjs
 git commit -m "feat: add append-only file chat store for room public and private threads"
 ```
 
@@ -139,8 +139,8 @@ git commit -m "feat: add append-only file chat store for room public and private
 ### Task 3: Implement chat service validation and routing rules
 
 **Files:**
-- Create: `mock-api/src/chat/chatService.mjs`
-- Test: `mock-api/test/chatService.test.mjs`
+- Create: `runtime-api/src/chat/chatService.mjs`
+- Test: `runtime-api/test/chatService.test.mjs`
 
 **Step 1: Write the failing test (mention rules)**
 
@@ -166,7 +166,7 @@ test('rejects mention targets other than room agent', async () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- chatService.test.mjs`
+Run: `npm --prefix runtime-api test -- chatService.test.mjs`
 Expected: FAIL.
 
 **Step 3: Write minimal implementation**
@@ -188,13 +188,13 @@ In-memory guard by `(roomId, userSessionId)` with default `CHAT_RATE_LIMIT_PER_M
 
 **Step 5: Run tests**
 
-Run: `npm --prefix mock-api test -- chatService.test.mjs`
+Run: `npm --prefix runtime-api test -- chatService.test.mjs`
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add mock-api/src/chat/chatService.mjs mock-api/test/chatService.test.mjs
+git add runtime-api/src/chat/chatService.mjs runtime-api/test/chatService.test.mjs
 git commit -m "feat: enforce one-room-one-agent chat routing and mention validation"
 ```
 
@@ -203,9 +203,9 @@ git commit -m "feat: enforce one-room-one-agent chat routing and mention validat
 ### Task 4: Implement agent reply policy for three message types
 
 **Files:**
-- Create: `mock-api/src/chat/chatAgentResponder.mjs`
-- Modify: `mock-api/src/chat/chatService.mjs`
-- Test: `mock-api/test/chatAgentResponder.test.mjs`
+- Create: `runtime-api/src/chat/chatAgentResponder.mjs`
+- Modify: `runtime-api/src/chat/chatService.mjs`
+- Test: `runtime-api/test/chatAgentResponder.test.mjs`
 
 **Step 1: Write the failing test**
 
@@ -223,7 +223,7 @@ test('agent reply policy by message type', () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- chatAgentResponder.test.mjs`
+Run: `npm --prefix runtime-api test -- chatAgentResponder.test.mjs`
 Expected: FAIL.
 
 **Step 3: Write minimal implementation**
@@ -244,13 +244,13 @@ After user message write:
 
 **Step 5: Run tests**
 
-Run: `npm --prefix mock-api test -- chatAgentResponder.test.mjs`
+Run: `npm --prefix runtime-api test -- chatAgentResponder.test.mjs`
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add mock-api/src/chat/chatAgentResponder.mjs mock-api/src/chat/chatService.mjs mock-api/test/chatAgentResponder.test.mjs
+git add runtime-api/src/chat/chatAgentResponder.mjs runtime-api/src/chat/chatService.mjs runtime-api/test/chatAgentResponder.test.mjs
 git commit -m "feat: add agent reply policy for public mention and private dm"
 ```
 
@@ -259,8 +259,8 @@ git commit -m "feat: add agent reply policy for public mention and private dm"
 ### Task 5: Add backend chat APIs and anonymous session bootstrap
 
 **Files:**
-- Modify: `mock-api/server.mjs`
-- Test: `mock-api/test/chatRoutes.test.mjs`
+- Modify: `runtime-api/server.mjs`
+- Test: `runtime-api/test/chatRoutes.test.mjs`
 
 **Step 1: Write the failing route test**
 
@@ -278,7 +278,7 @@ test('POST /api/chat/session/bootstrap returns user_session_id', async () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- chatRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- chatRoutes.test.mjs`
 Expected: FAIL (route missing).
 
 **Step 3: Implement routes**
@@ -302,13 +302,13 @@ Body for post:
 
 **Step 4: Run tests**
 
-Run: `npm --prefix mock-api test -- chatRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- chatRoutes.test.mjs`
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add mock-api/server.mjs mock-api/test/chatRoutes.test.mjs
+git add runtime-api/server.mjs runtime-api/test/chatRoutes.test.mjs
 git commit -m "feat: expose room chat APIs and anonymous chat session bootstrap"
 ```
 
@@ -489,7 +489,7 @@ git commit -m "docs: add room chat ops runbook and diagnostics commands"
 1. Backend tests:
 
 ```bash
-npm --prefix mock-api test
+npm --prefix runtime-api test
 ```
 
 2. Frontend tests/build:

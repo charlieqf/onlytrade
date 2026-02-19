@@ -1,12 +1,12 @@
-# Runtime API Rename Plan (mock-api -> runtime-api)
+# Runtime API Rename Plan (runtime-api -> runtime-api)
 
 ## Why
 
-`mock-api` now runs live/realtime trading runtime, so the name is misleading for operations and onboarding.
+`runtime-api` now runs live/realtime trading runtime, so the name is misleading for operations and onboarding.
 
 ## Goal
 
-Rename service/package/path references from `mock-api` to `runtime-api` without breaking deployment, scripts, or integrations.
+Rename service/package/path references from `runtime-api` to `runtime-api` without breaking deployment, scripts, or integrations.
 
 ## Non-goals (for initial rename)
 
@@ -18,12 +18,12 @@ Rename service/package/path references from `mock-api` to `runtime-api` without 
 
 1. **Compatibility alias phase**
    - create `runtime-api/` as primary code location
-   - keep `mock-api/` as thin shim (delegates to runtime-api start/test scripts)
+   - keep `runtime-api/` as thin shim (delegates to runtime-api start/test scripts)
    - keep existing deploy scripts working
 
 2. **Ops update phase**
    - update VM/systemd/pm2/process runner references to `runtime-api`
-   - update local scripts (`onlytrade-ops.sh`, `deploy-vm.sh`) to prefer `runtime-api`, fallback to `mock-api`
+   - update local scripts (`onlytrade-ops.sh`, `deploy-vm.sh`) to prefer `runtime-api`, fallback to `runtime-api`
 
 3. **Verification phase**
    - health + runtime endpoints
@@ -37,8 +37,8 @@ Rename service/package/path references from `mock-api` to `runtime-api` without 
 
 ## Rollback
 
-- keep `mock-api` entrypoint available until cleanup phase
-- if issues appear, switch process runner back to `mock-api` start command (same code)
+- keep `runtime-api` entrypoint available until cleanup phase
+- if issues appear, switch process runner back to `runtime-api` start command (same code)
 
 ## Acceptance criteria
 

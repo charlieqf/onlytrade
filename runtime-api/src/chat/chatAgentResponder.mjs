@@ -59,6 +59,37 @@ function sanitizeGeneratedText(value, fallback = '', { maxChars = 120, maxSenten
   return trimmed || fallback
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function collapseRepeatedMentions(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.replace(/(@[^\s@]{1,32})(?:\s+\1)+/g, '$1')
+}
+
+function ensureSingleSenderMentionPrefix(text, senderName) {
+  const body = String(text || '').trim()
+  const safeSenderName = String(senderName || '').trim()
+  if (!safeSenderName) {
+    return collapseRepeatedMentions(body)
+  }
+
+  const mention = `@${safeSenderName}`
+  const escapedMention = escapeRegExp(mention)
+
+  let normalized = body
+  normalized = normalized.replace(new RegExp(`^(?:${escapedMention}[\\s，,。.!！?？:：-]*){2,}`), `${mention} `)
+  normalized = collapseRepeatedMentions(normalized)
+
+  if (new RegExp(`^${escapedMention}(?:\\s|$|[，,。.!！?？:：])`).test(normalized)) {
+    return normalized
+  }
+
+  return `${mention} ${normalized}`.trim()
+}
+
 export function shouldAgentReply({
   messageType,
   random = Math.random(),
@@ -87,7 +118,9 @@ export function buildAgentReply({
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
 
   const inboundSenderName = String(inboundMessage?.sender_name || '').trim()
-  const mentionPrefix = inboundSenderName ? `@${inboundSenderName} ` : ''
+  const fallbackText = `${agentName}：收到。`
+  const generatedText = sanitizeGeneratedText(text, fallbackText, { maxChars, maxSentences })
+  const normalizedReply = ensureSingleSenderMentionPrefix(generatedText, inboundSenderName)
 
   return {
     id: `msg_agent_${messageTs}_${Math.random().toString(36).slice(2, 8)}`,
@@ -99,8 +132,8 @@ export function buildAgentReply({
     message_type: String(inboundMessage?.message_type || 'public_plain'),
     agent_message_kind: 'reply',
     text: sanitizeGeneratedText(
-      `${mentionPrefix}${sanitizeGeneratedText(text, `${agentName}：收到。`, { maxChars, maxSentences })}`,
-      `${agentName}：收到。`,
+      normalizedReply,
+      fallbackText,
       { maxChars, maxSentences }
     ),
     created_ts_ms: messageTs,

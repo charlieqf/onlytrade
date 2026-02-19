@@ -424,7 +424,7 @@ export function AuditExplorerPanel({
                       </button>
                     </div>
                     <div
-                      className="mt-2 rounded-lg p-3 text-[11px] font-mono whitespace-pre-wrap"
+                      className="mt-2 rounded-lg p-3 text-[11px] font-mono whitespace-pre-wrap max-h-72 overflow-y-auto custom-scrollbar"
                       style={{
                         background: '#0B0E11',
                         border: '1px solid #2B3139',

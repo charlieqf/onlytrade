@@ -8,6 +8,7 @@ Switch OnlyTrade market data for agents from replay mode to live-file mode backe
 
 - `scripts/akshare/run_cycle.py` can run successfully on host.
 - Canonical output exists at `data/live/onlytrade/frames.1m.json`.
+- Breadth output exists at `data/live/onlytrade/market_breadth.cn-a.json`.
 - Legal/compliance sign-off completed for AKShare usage in your environment.
 
 ## Enable live mode
@@ -16,6 +17,7 @@ Switch OnlyTrade market data for agents from replay mode to live-file mode backe
 
 ```bash
 python scripts/akshare/run_cycle.py
+python scripts/akshare/run_red_blue_cycle.py
 ```
 
 2. Set environment for backend:
@@ -28,12 +30,17 @@ LIVE_FILE_REFRESH_MS=10000
 
 3. Restart `runtime-api`.
 
+4. Ensure scheduler includes both jobs:
+   - `scripts/akshare/run_cycle_if_market_open.py`
+   - `scripts/akshare/run_red_blue_if_market_open.py`
+
 ## Verify live mode
 
 ```bash
 curl -fsS "http://127.0.0.1:18080/api/replay/runtime/status"
 curl -fsS "http://127.0.0.1:18080/api/market/frames?symbol=600519.SH&interval=1m&limit=5"
 curl -fsS "http://127.0.0.1:18080/api/agent/context?trader_id=t_001"
+curl -fsS "http://127.0.0.1:18080/api/rooms/t_001/stream-packet?decision_limit=2"
 ```
 
 Expected:
@@ -41,6 +48,7 @@ Expected:
 - Replay status includes `data_mode: live_file`.
 - Replay status `live_file.last_load_ts_ms` is recent.
 - `provider: akshare` with non-empty `frames` for watched symbols.
+- Stream packet has `market_breadth.source_kind = breadth_file` and non-stale status.
 
 ## Runtime checks
 

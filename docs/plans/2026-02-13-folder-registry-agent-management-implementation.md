@@ -16,7 +16,7 @@
 - Create: `docs/architecture/agent-folder-registry-contract.md`
 - Create: `agents/README.md`
 - Modify: `README.md`
-- Test: `mock-api/test/agentRegistryStore.test.mjs`
+- Test: `runtime-api/test/agentRegistryStore.test.mjs`
 
 **Step 1: Write the failing test**
 
@@ -37,7 +37,7 @@ test('discovers available agents from agents/*/agent.json', async () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- test/agentRegistryStore.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentRegistryStore.test.mjs`
 Expected: FAIL with module-not-found for `agentRegistryStore.mjs`.
 
 **Step 3: Write contract doc first**
@@ -60,13 +60,13 @@ In `agents/README.md` include:
 
 **Step 5: Run test (still expected fail at implementation stage)**
 
-Run: `npm --prefix mock-api test -- test/agentRegistryStore.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentRegistryStore.test.mjs`
 Expected: still FAIL until store implementation (Task 2).
 
 **Step 6: Commit docs scaffold**
 
 ```bash
-git add docs/architecture/agent-folder-registry-contract.md agents/README.md README.md mock-api/test/agentRegistryStore.test.mjs
+git add docs/architecture/agent-folder-registry-contract.md agents/README.md README.md runtime-api/test/agentRegistryStore.test.mjs
 git commit -m "docs: define folder and registry contract for agent discovery"
 ```
 
@@ -75,8 +75,8 @@ git commit -m "docs: define folder and registry contract for agent discovery"
 ### Task 2: Implement filesystem-backed agent registry store
 
 **Files:**
-- Create: `mock-api/src/agentRegistryStore.mjs`
-- Modify: `mock-api/test/agentRegistryStore.test.mjs`
+- Create: `runtime-api/src/agentRegistryStore.mjs`
+- Modify: `runtime-api/test/agentRegistryStore.test.mjs`
 
 **Step 1: Expand failing tests for core behaviors**
 
@@ -89,7 +89,7 @@ Add tests for:
 
 **Step 2: Run tests to verify failures**
 
-Run: `npm --prefix mock-api test -- test/agentRegistryStore.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentRegistryStore.test.mjs`
 Expected: FAIL on missing methods and wrong state transitions.
 
 **Step 3: Write minimal implementation**
@@ -110,13 +110,13 @@ Implementation details:
 
 **Step 4: Run tests to verify pass**
 
-Run: `npm --prefix mock-api test -- test/agentRegistryStore.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentRegistryStore.test.mjs`
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add mock-api/src/agentRegistryStore.mjs mock-api/test/agentRegistryStore.test.mjs
+git add runtime-api/src/agentRegistryStore.mjs runtime-api/test/agentRegistryStore.test.mjs
 git commit -m "feat: add folder discovery and registry-backed agent state store"
 ```
 
@@ -125,8 +125,8 @@ git commit -m "feat: add folder discovery and registry-backed agent state store"
 ### Task 3: Make runtime support dynamic registered/running agent sets
 
 **Files:**
-- Modify: `mock-api/src/agentDecisionRuntime.mjs`
-- Modify: `mock-api/test/agentDecisionRuntime.test.mjs`
+- Modify: `runtime-api/src/agentDecisionRuntime.mjs`
+- Modify: `runtime-api/test/agentDecisionRuntime.test.mjs`
 
 **Step 1: Write failing runtime test**
 
@@ -143,7 +143,7 @@ Example assertion flow:
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- test/agentDecisionRuntime.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentDecisionRuntime.test.mjs`
 Expected: FAIL due to missing `setTraders`/dynamic map behavior.
 
 **Step 3: Implement minimal runtime extension**
@@ -156,13 +156,13 @@ In `createInMemoryAgentRuntime`:
 
 **Step 4: Run test to verify pass**
 
-Run: `npm --prefix mock-api test -- test/agentDecisionRuntime.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentDecisionRuntime.test.mjs`
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add mock-api/src/agentDecisionRuntime.mjs mock-api/test/agentDecisionRuntime.test.mjs
+git add runtime-api/src/agentDecisionRuntime.mjs runtime-api/test/agentDecisionRuntime.test.mjs
 git commit -m "feat: support dynamic trader sets in in-memory runtime"
 ```
 
@@ -171,9 +171,9 @@ git commit -m "feat: support dynamic trader sets in in-memory runtime"
 ### Task 4: Replace hardcoded TRADERS in server with available+registered store
 
 **Files:**
-- Modify: `mock-api/server.mjs`
-- Create: `mock-api/test/agentManagementRoutes.test.mjs`
-- Modify: `mock-api/test/runtimeMode.test.mjs` (if assumptions on static traders exist)
+- Modify: `runtime-api/server.mjs`
+- Create: `runtime-api/test/agentManagementRoutes.test.mjs`
+- Modify: `runtime-api/test/runtimeMode.test.mjs` (if assumptions on static traders exist)
 
 **Step 1: Write failing route tests**
 
@@ -191,7 +191,7 @@ Also assert:
 
 **Step 2: Run tests to verify they fail**
 
-Run: `npm --prefix mock-api test -- test/agentManagementRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentManagementRoutes.test.mjs`
 Expected: FAIL with 404 for missing endpoints and static payload mismatches.
 
 **Step 3: Implement registry wiring in server**
@@ -219,13 +219,13 @@ Keep backward-compatible endpoints:
 
 **Step 5: Run tests to verify pass**
 
-Run: `npm --prefix mock-api test -- test/agentManagementRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentManagementRoutes.test.mjs`
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add mock-api/server.mjs mock-api/test/agentManagementRoutes.test.mjs mock-api/test/runtimeMode.test.mjs
+git add runtime-api/server.mjs runtime-api/test/agentManagementRoutes.test.mjs runtime-api/test/runtimeMode.test.mjs
 git commit -m "feat: add folder-registry agent management APIs and registry-backed trader endpoints"
 ```
 
@@ -242,11 +242,11 @@ git commit -m "feat: add folder-registry agent management APIs and registry-back
 
 **Step 1: Write failing bootstrap test**
 
-In `mock-api/test/agentManagementRoutes.test.mjs`, assert server boot with empty registry still discovers available agents from folder and can register them.
+In `runtime-api/test/agentManagementRoutes.test.mjs`, assert server boot with empty registry still discovers available agents from folder and can register them.
 
 **Step 2: Run test to verify failure**
 
-Run: `npm --prefix mock-api test -- test/agentManagementRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentManagementRoutes.test.mjs`
 Expected: FAIL if manifests missing.
 
 **Step 3: Add manifests and registry seed**
@@ -274,7 +274,7 @@ Registry seed example:
 
 **Step 4: Run tests to verify pass**
 
-Run: `npm --prefix mock-api test -- test/agentManagementRoutes.test.mjs`
+Run: `npm --prefix runtime-api test -- test/agentManagementRoutes.test.mjs`
 Expected: PASS.
 
 **Step 5: Commit**
@@ -389,13 +389,13 @@ git commit -m "feat: add ops commands and runbook for folder-registry agent life
 ### Task 8: End-to-end compatibility and regression checks
 
 **Files:**
-- Modify: `mock-api/test/chatRoutes.test.mjs` (if room validation now checks registered agents)
-- Modify: `mock-api/test/runtimeMode.test.mjs` (if trader source changed)
+- Modify: `runtime-api/test/chatRoutes.test.mjs` (if room validation now checks registered agents)
+- Modify: `runtime-api/test/runtimeMode.test.mjs` (if trader source changed)
 - Modify: `onlytrade-web/src/lib/chatApi.test.ts` (if API typing changed)
 
 **Step 1: Run full backend suite**
 
-Run: `npm --prefix mock-api test`
+Run: `npm --prefix runtime-api test`
 Expected: PASS all tests including new management and existing chat/runtime tests.
 
 **Step 2: Run full frontend suite**
@@ -420,7 +420,7 @@ Expected: PASS.
 **Step 5: Final commit**
 
 ```bash
-git add mock-api/test/chatRoutes.test.mjs mock-api/test/runtimeMode.test.mjs onlytrade-web/src/lib/chatApi.test.ts
+git add runtime-api/test/chatRoutes.test.mjs runtime-api/test/runtimeMode.test.mjs onlytrade-web/src/lib/chatApi.test.ts
 git commit -m "test: cover folder-registry agent lifecycle compatibility"
 ```
 
@@ -431,7 +431,7 @@ git commit -m "test: cover folder-registry agent lifecycle compatibility"
 1. Backend:
 
 ```bash
-npm --prefix mock-api test
+npm --prefix runtime-api test
 ```
 
 2. Frontend:

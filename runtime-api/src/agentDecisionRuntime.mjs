@@ -289,6 +289,13 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     50,
     85
   )
+  const openingPhaseMode = String(context?.runtime_config?.opening_phase_mode || '').trim().toLowerCase() === 'true'
+  const openingPhaseMaxLots = Math.max(1, Math.floor(toSafeNumber(context?.runtime_config?.opening_phase_max_lots, 1)))
+  const openingPhaseMaxConfidence = clamp(
+    toSafeNumber(context?.runtime_config?.opening_phase_max_confidence, 0.72),
+    0.51,
+    0.95
+  )
 
   const holdings = Array.isArray(context?.memory_state?.holdings) ? context.memory_state.holdings : []
   const hasAnyHoldings = holdings.some((holding) => toSafeNumber(holding?.shares, 0) > 0)
@@ -331,9 +338,12 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     action = 'buy'
   }
 
-  const confidence = Number.isFinite(Number(llmDecision?.confidence))
+  let confidence = Number.isFinite(Number(llmDecision?.confidence))
     ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
     : confidenceFromContext(context, action, traderProfile)
+  if (openingPhaseMode) {
+    confidence = Number(Math.min(confidence, openingPhaseMaxConfidence).toFixed(2))
+  }
   const quantity = Number.isFinite(Number(llmDecision?.quantity))
     ? Math.max(0, Math.floor(Number(llmDecision.quantity)))
     : baseQuantityFromProfile(action, lotSize, confidence, traderProfile)
@@ -343,6 +353,10 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   let requestedQuantity = action === 'hold'
     ? 0
     : toLotQuantity(forcedFlatEntryQuantity ?? quantity, lotSize)
+  if (openingPhaseMode && action !== 'hold' && requestedQuantity > 0) {
+    const maxOpeningQuantity = lotSize * openingPhaseMaxLots
+    requestedQuantity = Math.min(requestedQuantity, maxOpeningQuantity)
+  }
   const commissionRate = Math.max(0, toSafeNumber(context?.runtime_config?.commission_rate, 0.0003))
 
   let cashCny = Math.max(0, toSafeNumber(context?.position_state?.cash_cny, 0))
@@ -432,6 +446,9 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     reasoning = isFlat
       ? `guardrail: ignore sell while flat (no shares). ${reasoning}`
       : `guardrail: ignore sell without holdings on ${symbol}. ${reasoning}`
+  }
+  if (openingPhaseMode && action !== 'hold') {
+    reasoning = `opening-phase cap (max ${openingPhaseMaxLots} lot, conf<=${openingPhaseMaxConfidence.toFixed(2)}). ${reasoning}`
   }
   const decisionSource = llmDecision?.source === 'openai' ? 'llm.openai' : 'rule.heuristic'
   const systemPrompt = llmDecision?.system_prompt

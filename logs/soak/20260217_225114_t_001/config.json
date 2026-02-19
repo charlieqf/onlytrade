@@ -1,0 +1,12 @@
+{
+  "run_id": "20260217_225114_t_001",
+  "started_at": "2026-02-17T22:51:14.734377+00:00",
+  "repo_root": "C:\\work\\code\\onlytrade",
+  "api_base": "http://127.0.0.1:18080",
+  "agent_id": "t_001",
+  "duration_min": 90,
+  "mention_interval_min": 10,
+  "probe_interval_sec": 30,
+  "review_interval_min": 5,
+  "replay_speed": 12
+}

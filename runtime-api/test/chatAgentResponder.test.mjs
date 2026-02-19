@@ -49,6 +49,27 @@ test('agent reply uses provided llm text', () => {
   assert.equal(message.agent_message_kind, 'reply')
 })
 
+test('agent reply deduplicates repeated sender mention', () => {
+  const message = buildAgentReply({
+    roomAgent: {
+      agentName: 'HS300 Momentum',
+    },
+    inboundMessage: {
+      room_id: 't_001',
+      user_session_id: 'usr_sess_1',
+      visibility: 'public',
+      message_type: 'public_mention_agent',
+      sender_name: '观众02',
+      text: '@agent 600986怎么看',
+    },
+    text: '@观众02 @观众02 当前偏震荡，先控仓。',
+    nowMs: 456,
+  })
+
+  assert.equal(message.text.includes('@观众02 @观众02'), false)
+  assert.match(message.text, /^@观众02\s/)
+})
+
 test('narration message caps to two sentences and strips markdown', () => {
   const message = buildNarrationAgentMessage({
     roomAgent: {

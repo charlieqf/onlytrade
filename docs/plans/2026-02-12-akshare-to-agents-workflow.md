@@ -4,7 +4,7 @@
 
 **Goal:** Build a reliable file-based pipeline that collects AKShare data, converts it into OnlyTrade canonical frames, and serves it to agents without replay-engine resets.
 
-**Architecture:** Use a two-stage Python pipeline (`collector` -> `converter`) writing atomic files, then a Node live-file provider in `mock-api` that hot-refreshes canonical frames from disk by file mtime. Keep existing replay mode for deterministic competitions and add a separate live mode for 24x7 operation.
+**Architecture:** Use a two-stage Python pipeline (`collector` -> `converter`) writing atomic files, then a Node live-file provider in `runtime-api` that hot-refreshes canonical frames from disk by file mtime. Keep existing replay mode for deterministic competitions and add a separate live mode for 24x7 operation.
 
 **Tech Stack:** Python (AKShare, stdlib), Node.js (Express, node:test), JSON/JSONL files, cron/systemd for scheduling.
 
@@ -14,8 +14,8 @@
 
 **Files:**
 - Create: `docs/architecture/akshare-live-data-contract.md`
-- Modify: `mock-api/server.mjs`
-- Test: `mock-api/test/runtimeMode.test.mjs`
+- Modify: `runtime-api/server.mjs`
+- Test: `runtime-api/test/runtimeMode.test.mjs`
 
 **Step 1: Write the failing test**
 
@@ -33,12 +33,12 @@ test('resolveRuntimeDataMode supports replay and live_file', () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- runtimeMode.test.mjs`
+Run: `npm --prefix runtime-api test -- runtimeMode.test.mjs`
 Expected: FAIL with `Cannot find module '../src/runtimeDataMode.mjs'`
 
 **Step 3: Write minimal implementation**
 
-Create `mock-api/src/runtimeDataMode.mjs`:
+Create `runtime-api/src/runtimeDataMode.mjs`:
 
 ```js
 export function resolveRuntimeDataMode(value) {
@@ -50,7 +50,7 @@ export function resolveRuntimeDataMode(value) {
 
 **Step 4: Wire mode env in server**
 
-In `mock-api/server.mjs`, add:
+In `runtime-api/server.mjs`, add:
 
 ```js
 const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE || 'replay')
@@ -58,13 +58,13 @@ const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE |
 
 **Step 5: Run test to verify it passes**
 
-Run: `npm --prefix mock-api test -- runtimeMode.test.mjs`
+Run: `npm --prefix runtime-api test -- runtimeMode.test.mjs`
 Expected: PASS
 
 **Step 6: Commit**
 
 ```bash
-git add docs/architecture/akshare-live-data-contract.md mock-api/src/runtimeDataMode.mjs mock-api/server.mjs mock-api/test/runtimeMode.test.mjs
+git add docs/architecture/akshare-live-data-contract.md runtime-api/src/runtimeDataMode.mjs runtime-api/server.mjs runtime-api/test/runtimeMode.test.mjs
 git commit -m "feat: define runtime data modes for replay and live-file"
 ```
 
@@ -216,12 +216,12 @@ git commit -m "feat: convert akshare raw data to canonical market frames"
 
 ---
 
-### Task 4: Add live-file provider in `mock-api` (hot refresh, no replay reset)
+### Task 4: Add live-file provider in `runtime-api` (hot refresh, no replay reset)
 
 **Files:**
-- Create: `mock-api/src/liveFileFrameProvider.mjs`
-- Modify: `mock-api/server.mjs`
-- Test: `mock-api/test/liveFileFrameProvider.test.mjs`
+- Create: `runtime-api/src/liveFileFrameProvider.mjs`
+- Modify: `runtime-api/server.mjs`
+- Test: `runtime-api/test/liveFileFrameProvider.test.mjs`
 
 **Step 1: Write failing test for mtime-based refresh**
 
@@ -238,7 +238,7 @@ test('provider reloads when file mtime changes', async () => {
 
 **Step 2: Run test to verify it fails**
 
-Run: `npm --prefix mock-api test -- liveFileFrameProvider.test.mjs`
+Run: `npm --prefix runtime-api test -- liveFileFrameProvider.test.mjs`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -260,7 +260,7 @@ const status = provider.getStatus()
 
 **Step 4: Integrate into server runtime path**
 
-In `mock-api/server.mjs`:
+In `runtime-api/server.mjs`:
 - If `RUNTIME_DATA_MODE==='live_file'`, use live provider for `1m` query path.
 - Keep replay engine path unchanged for `replay` mode.
 - Add status to `/api/replay/runtime/status` payload when in live mode:
@@ -268,13 +268,13 @@ In `mock-api/server.mjs`:
 
 **Step 5: Run tests**
 
-Run: `npm --prefix mock-api test -- liveFileFrameProvider.test.mjs`
+Run: `npm --prefix runtime-api test -- liveFileFrameProvider.test.mjs`
 Expected: PASS
 
 **Step 6: Commit**
 
 ```bash
-git add mock-api/src/liveFileFrameProvider.mjs mock-api/server.mjs mock-api/test/liveFileFrameProvider.test.mjs
+git add runtime-api/src/liveFileFrameProvider.mjs runtime-api/server.mjs runtime-api/test/liveFileFrameProvider.test.mjs
 git commit -m "feat: add live-file frame provider for hot data refresh"
 ```
 
@@ -383,7 +383,7 @@ git commit -m "docs: add akshare live cutover and rollback runbook"
 
 **Step 1: Run backend test suite**
 
-Run: `npm --prefix mock-api test`
+Run: `npm --prefix runtime-api test`
 Expected: PASS all tests
 
 **Step 2: Run Python unit tests**

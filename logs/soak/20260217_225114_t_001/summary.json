@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-02-17T23:11:28.144981+00:00",
+  "endpoint_checks": 41,
+  "endpoint_all_ok_checks": 41,
+  "endpoint_all_ok_rate": 1.0,
+  "audit_count_start": 0,
+  "audit_count_end": 50,
+  "audit_count_growth": 50,
+  "day_index_start": 1,
+  "day_index_end": 1,
+  "mentions_total": 1,
+  "mentions_ok": 1,
+  "mentions_ok_rate": 1.0,
+  "mention_latency_ms_p50": 665,
+  "mention_latency_ms_max": 665,
+  "ended_at": "2026-02-17T23:11:28.145025+00:00",
+  "restore_data_mode": "replay"
+}

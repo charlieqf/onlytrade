@@ -1,0 +1,7 @@
+{
+  "schema_version": "market.frames.v1",
+  "market": "CN-A",
+  "mode": "real",
+  "provider": "yahoo-finance",
+  "frames": []
+}

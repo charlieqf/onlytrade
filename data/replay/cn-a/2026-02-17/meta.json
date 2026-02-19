@@ -1,0 +1,15 @@
+{
+  "trading_day": "2026-02-17",
+  "trading_day_start": "2026-02-17",
+  "trading_day_end": "2026-02-17",
+  "trading_days": [
+    "2026-02-17"
+  ],
+  "trading_day_count": 1,
+  "provider": "yahoo-finance",
+  "interval": "1m",
+  "symbols": [],
+  "frame_count": 0,
+  "generated_at": "2026-02-17T22:46:34.251Z",
+  "source_note": "Yahoo Finance 1m bars replay pack for frontend mock/replay use (multi-day)"
+}

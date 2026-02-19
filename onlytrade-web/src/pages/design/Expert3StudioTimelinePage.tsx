@@ -26,6 +26,7 @@ export default function Expert3StudioTimelinePage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
@@ -76,13 +77,25 @@ export default function Expert3StudioTimelinePage(
             <div>
               <div className="text-sm font-bold text-white">{selectedTrader.trader_name}</div>
               <div className="text-[10px] font-mono text-indigo-300">{modeLabel} · {sseStatus} · {freshnessLabel}</div>
+              {marketBreadth.advancers != null && marketBreadth.decliners != null && (
+                <div className="text-[10px] font-mono text-indigo-200/85">
+                  R {marketBreadth.advancers} / B {marketBreadth.decliners}
+                  {marketBreadth.redBlueRatio != null && ` · ${marketBreadth.redBlueRatio.toFixed(2)}`}
+                </div>
+              )}
             </div>
             <div className="rounded bg-white/5 px-2 py-1 text-[10px] font-mono text-white/70">timeline</div>
           </div>
         </div>
 
         <div className="relative shrink-0 border-b border-white/5" style={{ height: '30vh' }}>
-          <PhoneRealtimeKlineChart symbol={activeSymbol} interval="1m" height="100%" />
+          <PhoneRealtimeKlineChart
+            symbol={activeSymbol}
+            interval="1d"
+            limit={30}
+            refreshMs={30_000}
+            height="100%"
+          />
           <PhoneAvatarSlot
             trader={selectedTrader}
             sizePx={Math.max(96, Math.min(sizePx - 54, 170))}

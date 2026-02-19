@@ -24,6 +24,7 @@ export default function Expert2MobileBroadcastPage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
@@ -54,7 +55,13 @@ export default function Expert2MobileBroadcastPage(
     <div className="h-[100dvh] w-screen overflow-hidden bg-[#111116] text-white">
       <div className="relative mx-auto h-full w-full max-w-[480px] overflow-hidden border-x border-white/5">
         <div className="relative" style={{ height: '56vh' }}>
-          <PhoneRealtimeKlineChart symbol={focusedSymbol} interval="1m" height="100%" />
+          <PhoneRealtimeKlineChart
+            symbol={focusedSymbol}
+            interval="1d"
+            limit={30}
+            refreshMs={30_000}
+            height="100%"
+          />
 
           <div className="absolute left-0 right-0 top-0 z-20 bg-gradient-to-b from-black/85 to-transparent px-3 pb-4 pt-[max(10px,env(safe-area-inset-top,0px))]">
             <div className="flex items-center justify-between">
@@ -67,6 +74,12 @@ export default function Expert2MobileBroadcastPage(
               </span>
             </div>
             <div className="mt-2 text-[10px] font-mono text-white/75">focus: {focusedSymbol}</div>
+            {marketBreadth.advancers != null && marketBreadth.decliners != null && (
+              <div className="mt-1 text-[10px] font-mono text-white/75">
+                R {marketBreadth.advancers} / B {marketBreadth.decliners}
+                {marketBreadth.redBlueRatio != null && ` · ${marketBreadth.redBlueRatio.toFixed(2)}`}
+              </div>
+            )}
           </div>
 
           <PhoneAvatarSlot

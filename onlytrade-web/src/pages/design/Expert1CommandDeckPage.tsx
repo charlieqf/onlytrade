@@ -25,6 +25,7 @@ export default function Expert1CommandDeckPage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
@@ -49,7 +50,13 @@ export default function Expert1CommandDeckPage(
           className="relative border-b border-white/10"
           style={{ height: 'clamp(280px, 44vh, 420px)' }}
         >
-          <PhoneRealtimeKlineChart symbol={activeSymbol} interval="1m" height="100%" />
+          <PhoneRealtimeKlineChart
+            symbol={activeSymbol}
+            interval="1d"
+            limit={30}
+            refreshMs={30_000}
+            height="100%"
+          />
 
           <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5">
             <span className="rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[10px] font-black">
@@ -66,6 +73,13 @@ export default function Expert1CommandDeckPage(
           <div className="absolute left-2 top-2 z-20 rounded bg-black/50 px-2 py-1 text-[10px] font-mono text-white/90">
             {selectedTrader.trader_name} · {activeSymbol}
           </div>
+
+          {marketBreadth.advancers != null && marketBreadth.decliners != null && (
+            <div className="absolute left-2 top-10 z-20 rounded bg-black/55 px-2 py-1 text-[10px] font-mono text-white/90">
+              R {marketBreadth.advancers} / B {marketBreadth.decliners}
+              {marketBreadth.redBlueRatio != null && ` · ${marketBreadth.redBlueRatio.toFixed(2)}`}
+            </div>
+          )}
 
           <PhoneAvatarSlot
             trader={selectedTrader}

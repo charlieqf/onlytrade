@@ -32,6 +32,16 @@ export type DecisionViewItem = {
   reasoning: string
 }
 
+export type MarketBreadthView = {
+  advancers: number | null
+  decliners: number | null
+  unchanged: number | null
+  total: number | null
+  advancerRatio: number | null
+  redBlueRatio: number | null
+  summary: string
+}
+
 function toNum(value: unknown): number {
   const n = Number(value)
   return Number.isFinite(n) ? n : 0
@@ -205,6 +215,24 @@ export function usePhoneStreamData({
         ? 'warm'
         : 'stale'
 
+  const breadthRaw = (streamPacket as any)?.market_breadth?.breadth
+    || (streamPacket as any)?.room_context?.market_breadth
+    || null
+  const breadthSummary = String(
+    (streamPacket as any)?.market_breadth?.summary
+    || (streamPacket as any)?.room_context?.market_breadth_summary
+    || ''
+  ).trim()
+  const marketBreadth: MarketBreadthView = {
+    advancers: Number.isFinite(Number(breadthRaw?.advancers)) ? Number(breadthRaw.advancers) : null,
+    decliners: Number.isFinite(Number(breadthRaw?.decliners)) ? Number(breadthRaw.decliners) : null,
+    unchanged: Number.isFinite(Number(breadthRaw?.unchanged)) ? Number(breadthRaw.unchanged) : null,
+    total: Number.isFinite(Number(breadthRaw?.total)) ? Number(breadthRaw.total) : null,
+    advancerRatio: Number.isFinite(Number(breadthRaw?.advancer_ratio)) ? Number(breadthRaw.advancer_ratio) : null,
+    redBlueRatio: Number.isFinite(Number(breadthRaw?.red_blue_ratio)) ? Number(breadthRaw.red_blue_ratio) : null,
+    summary: breadthSummary,
+  }
+
   return {
     selectedTrader,
     language,
@@ -215,6 +243,7 @@ export function usePhoneStreamData({
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    marketBreadth,
     sseStatus: roomSseState?.status || 'connecting',
     packetTs,
   }

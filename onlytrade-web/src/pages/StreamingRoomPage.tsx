@@ -1512,6 +1512,19 @@ export function StreamingRoomPage({
       ? streamPacket.news_digest.status.stale
       : null
   )
+  const breadthFreshness = freshnessBadge(
+    typeof (streamPacket as any)?.market_breadth?.status?.stale === 'boolean'
+      ? Boolean((streamPacket as any).market_breadth.status.stale)
+      : null
+  )
+  const breadth = ((streamPacket as any)?.market_breadth?.breadth
+    || (streamPacket as any)?.room_context?.market_breadth
+    || null) as any
+  const breadthSummary = String(
+    (streamPacket as any)?.market_breadth?.summary
+    || (streamPacket as any)?.room_context?.market_breadth_summary
+    || ''
+  ).trim()
 
   const recentChatPerMinute = useMemo(() => {
     if (!publicMessages.length) return 0
@@ -1812,7 +1825,7 @@ export function StreamingRoomPage({
                   />
                 </div>
 
-                <div className="hidden lg:grid gap-3 md:grid-cols-2">
+                <div className="hidden lg:grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[11px] font-mono text-nofx-text-muted">
@@ -1848,6 +1861,31 @@ export function StreamingRoomPage({
                     ) : (
                       <div className="mt-2 text-sm text-nofx-text-muted opacity-70">
                         {language === 'zh' ? '暂无摘要。' : 'No digest.'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-mono text-nofx-text-muted">
+                        {language === 'zh' ? '红蓝家数' : 'market breadth'}
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${breadthFreshness.cls}`}>
+                        {breadthFreshness.label}
+                      </span>
+                    </div>
+                    {Number.isFinite(Number(breadth?.advancers)) && Number.isFinite(Number(breadth?.decliners)) ? (
+                      <div className="mt-2 text-sm text-nofx-text-main leading-relaxed opacity-95">
+                        <div className="font-mono">
+                          R {Number(breadth.advancers).toLocaleString()} / B {Number(breadth.decliners).toLocaleString()}
+                        </div>
+                        <div className="text-xs text-nofx-text-muted mt-1">
+                          {breadthSummary || (language === 'zh' ? '红盘/蓝盘统计' : 'Advancers / decliners snapshot')}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-sm text-nofx-text-muted opacity-70">
+                        {language === 'zh' ? '暂无红蓝数据。' : 'No breadth data yet.'}
                       </div>
                     )}
                   </div>

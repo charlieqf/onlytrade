@@ -67,6 +67,9 @@ Commands:
   market-overview-cn-if-open       Build CN-A market_overview.cn-a.json if market open
   news-digest-us-run-once          Build US news_digest.us.json once (best-effort)
   news-digest-cn-run-once          Build CN-A news_digest.cn-a.json once (best-effort)
+  red-blue-cn-run-once             Build CN-A market_breadth.cn-a.json once
+  red-blue-cn-if-open              Build CN-A market_breadth.cn-a.json if market open
+  red-blue-replay-build            Build replay market_breadth.1m.json from replay frames
   overview-status                  Show overview + digest file statuses
   chat-status <room_id> [user_session_id]
                                   Show chat file status for room/private
@@ -337,6 +340,32 @@ news_digest_cn_run_once() {
     return
   fi
   python "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+}
+
+red_blue_cn_run_once() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_red_blue_cycle.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+    return
+  fi
+  python "$REPO_ROOT/scripts/akshare/run_red_blue_cycle.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+}
+
+red_blue_cn_if_open() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/akshare/run_red_blue_if_market_open.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+    return
+  fi
+  python "$REPO_ROOT/scripts/akshare/run_red_blue_if_market_open.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+}
+
+red_blue_replay_build() {
+  local frames_path="${1:-onlytrade-web/public/replay/cn-a/latest/frames.1m.json}"
+  local output_path="${2:-onlytrade-web/public/replay/cn-a/latest/market_breadth.1m.json}"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
+    return
+  fi
+  python "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
 }
 
 chat_public_file() {
@@ -631,6 +660,33 @@ main() {
       ;;
     news-digest-cn-run-once)
       news_digest_cn_run_once
+      ;;
+    red-blue-cn-run-once)
+      red_blue_cn_run_once
+      ;;
+    red-blue-cn-if-open)
+      red_blue_cn_if_open
+      ;;
+    red-blue-replay-build)
+      local frames_path=""
+      local output_path=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --frames-path)
+            frames_path="$2"
+            shift 2
+            ;;
+          --output-path)
+            output_path="$2"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown red-blue-replay-build option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      red_blue_replay_build "$frames_path" "$output_path"
       ;;
     overview-status)
       overview_status

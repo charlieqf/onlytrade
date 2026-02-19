@@ -156,8 +156,11 @@ export function PhoneRealtimeKlineChart({
     const safeSymbol = String(symbol || '').trim()
     if (!safeSymbol) return
 
-    const safeLimit = Math.max(80, Math.min(Number(limit) || 240, 800))
     const safeInterval = String(interval || '1m')
+    const minLimit = safeInterval === '1d' ? 20 : 80
+    const maxLimit = safeInterval === '1d' ? 365 : 800
+    const fallbackLimit = safeInterval === '1d' ? 30 : 240
+    const safeLimit = Math.max(minLimit, Math.min(Number(limit) || fallbackLimit, maxLimit))
     try {
       setStatus((prev) => (prev === 'ready' ? prev : 'loading'))
 

@@ -186,10 +186,25 @@ const NEWS_DIGEST_PATH_US = path.resolve(
 const NEWS_DIGEST_REFRESH_MS = Math.max(2_000, Number(process.env.NEWS_DIGEST_REFRESH_MS || 60_000))
 const NEWS_DIGEST_STALE_MS = Math.max(60_000, Number(process.env.NEWS_DIGEST_STALE_MS || 12 * 60 * 60 * 1000))
 
+const MARKET_BREADTH_PATH_CN = path.resolve(
+  ROOT_DIR,
+  process.env.MARKET_BREADTH_PATH_CN || path.join('data', 'live', 'onlytrade', 'market_breadth.cn-a.json')
+)
+const MARKET_BREADTH_PATH_US = path.resolve(
+  ROOT_DIR,
+  process.env.MARKET_BREADTH_PATH_US || path.join('data', 'live', 'onlytrade', 'market_breadth.us.json')
+)
+const MARKET_BREADTH_REFRESH_MS = Math.max(2_000, Number(process.env.MARKET_BREADTH_REFRESH_MS || 15_000))
+const MARKET_BREADTH_STALE_MS = Math.max(30_000, Number(process.env.MARKET_BREADTH_STALE_MS || 180_000))
+
 const DATA_READINESS_MIN_INTRADAY_FRAMES = Math.max(10, Number(process.env.DATA_READINESS_MIN_INTRADAY_FRAMES || 21))
 const DATA_READINESS_MIN_DAILY_FRAMES = Math.max(20, Number(process.env.DATA_READINESS_MIN_DAILY_FRAMES || 61))
 const DATA_READINESS_FRESH_WARN_MS = Math.max(10_000, Number(process.env.DATA_READINESS_FRESH_WARN_MS || 150_000))
 const DATA_READINESS_FRESH_ERROR_MS = Math.max(20_000, Number(process.env.DATA_READINESS_FRESH_ERROR_MS || 330_000))
+const DATA_READINESS_OPENING_PHASE_ENABLED = String(process.env.DATA_READINESS_OPENING_PHASE_ENABLED || 'true').trim().toLowerCase() !== 'false'
+const DATA_READINESS_OPENING_MIN_INTRADAY_FRAMES = Math.max(1, Number(process.env.DATA_READINESS_OPENING_MIN_INTRADAY_FRAMES || 2))
+const OPENING_PHASE_MAX_LOTS = Math.max(1, Math.min(3, Number(process.env.OPENING_PHASE_MAX_LOTS || 1)))
+const OPENING_PHASE_MAX_CONFIDENCE = Math.max(0.51, Math.min(0.95, Number(process.env.OPENING_PHASE_MAX_CONFIDENCE || 0.72)))
 
 const REPLAY_PATH = path.join(
   ROOT_DIR,
@@ -199,6 +214,10 @@ const REPLAY_PATH = path.join(
   'cn-a',
   'latest',
   'frames.1m.json'
+)
+const REPLAY_BREADTH_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.REPLAY_BREADTH_PATH || path.join(path.dirname(REPLAY_PATH), 'market_breadth.1m.json')
 )
 
 const LIVE_FRAMES_PATH_CN = path.resolve(
@@ -548,9 +567,34 @@ function computeDailyReturnPctForTrader(traderId) {
 function normalizeBetsLedgerShape(value) {
   const raw = value && typeof value === 'object' ? value : {}
   const days = raw.days && typeof raw.days === 'object' ? raw.days : {}
+  const creditsBySessionRaw = raw.credits_by_session && typeof raw.credits_by_session === 'object'
+    ? raw.credits_by_session
+    : {}
+  const creditsBySession = {}
+
+  for (const [sessionId, row] of Object.entries(creditsBySessionRaw)) {
+    const safeSessionId = String(sessionId || '').trim()
+    if (!safeSessionId) continue
+    const record = row && typeof row === 'object' ? row : {}
+    const safeNickname = sanitizeUserNickname(record.user_nickname)
+      || createDefaultUserNickname(safeSessionId)
+    const updatedTs = Number(record.updated_ts_ms)
+    const lastAwardTs = Number(record.last_award_ts_ms)
+    creditsBySession[safeSessionId] = {
+      user_session_id: safeSessionId,
+      user_nickname: safeNickname,
+      credit_points: Math.max(0, Math.floor(Number(record.credit_points || 0))),
+      settled_bets: Math.max(0, Math.floor(Number(record.settled_bets || 0))),
+      win_count: Math.max(0, Math.floor(Number(record.win_count || 0))),
+      last_award_ts_ms: Number.isFinite(lastAwardTs) ? lastAwardTs : null,
+      updated_ts_ms: Number.isFinite(updatedTs) ? updatedTs : Date.now(),
+    }
+  }
+
   return {
-    schema_version: 'bets.ledger.v1',
+    schema_version: 'bets.ledger.v2',
     days,
+    credits_by_session: creditsBySession,
   }
 }
 
@@ -567,6 +611,9 @@ function ensureBetDayState({ market, dayKey }) {
       user_bets: {},
       freeze_returns_by_trader: null,
       freeze_ts_ms: null,
+      settlement_status: 'pending',
+      settled_ts_ms: null,
+      settlement: null,
     }
   } else {
     const dayState = betsLedgerState.days[stateId]
@@ -581,6 +628,9 @@ function ensureBetDayState({ market, dayKey }) {
         user_bets: {},
         freeze_returns_by_trader: null,
         freeze_ts_ms: null,
+        settlement_status: 'pending',
+        settled_ts_ms: null,
+        settlement: null,
       }
     } else {
       dayState.state_id = String(dayState.state_id || stateId)
@@ -607,9 +657,48 @@ function ensureBetDayState({ market, dayKey }) {
       if (!Number.isFinite(Number(dayState.freeze_ts_ms))) {
         dayState.freeze_ts_ms = null
       }
+      if (dayState.settlement_status !== 'settled') {
+        dayState.settlement_status = 'pending'
+      }
+      if (!Number.isFinite(Number(dayState.settled_ts_ms))) {
+        dayState.settled_ts_ms = null
+      }
+      if (dayState.settlement != null && typeof dayState.settlement !== 'object') {
+        dayState.settlement = null
+      }
     }
   }
   return betsLedgerState.days[stateId]
+}
+
+function ensureViewerCreditPointsRecord(userSessionId, userNickname = '') {
+  const safeUserSessionId = String(userSessionId || '').trim()
+  if (!safeUserSessionId) return null
+
+  if (!betsLedgerState.credits_by_session || typeof betsLedgerState.credits_by_session !== 'object') {
+    betsLedgerState.credits_by_session = {}
+  }
+
+  const existing = betsLedgerState.credits_by_session[safeUserSessionId]
+  const nickname = sanitizeUserNickname(userNickname)
+    || sanitizeUserNickname(existing?.user_nickname)
+    || createDefaultUserNickname(safeUserSessionId)
+  const updatedTsMs = Date.now()
+
+  const next = {
+    user_session_id: safeUserSessionId,
+    user_nickname: nickname,
+    credit_points: Math.max(0, Math.floor(Number(existing?.credit_points || 0))),
+    settled_bets: Math.max(0, Math.floor(Number(existing?.settled_bets || 0))),
+    win_count: Math.max(0, Math.floor(Number(existing?.win_count || 0))),
+    last_award_ts_ms: Number.isFinite(Number(existing?.last_award_ts_ms))
+      ? Number(existing.last_award_ts_ms)
+      : null,
+    updated_ts_ms: updatedTsMs,
+  }
+
+  betsLedgerState.credits_by_session[safeUserSessionId] = next
+  return next
 }
 
 function marketNowSnapshot(market, fallbackNowMs = Date.now()) {
@@ -634,6 +723,7 @@ function marketNowSnapshot(market, fallbackNowMs = Date.now()) {
     betting_open: !weekend && beforeCutoff,
     odds_update_active: !weekend && beforeCutoff,
     after_cutoff: !weekend && afterCutoff,
+    after_close: !weekend && hasMinute && minute >= closeMinute,
   }
 }
 
@@ -686,6 +776,90 @@ function computeMarketOddsEntries({ market, returnsByTrader, poolsByTrader, trad
     })
 }
 
+function settleBetDayStateIfNeeded({ dayState, entries, tsMs }) {
+  if (!dayState || typeof dayState !== 'object') return false
+  if (dayState.settlement_status === 'settled') return false
+
+  const safeEntries = Array.isArray(entries) ? entries : []
+  const activeStakeEntries = safeEntries.filter((entry) => Number(entry?.total_stake || 0) > 0)
+  const scoringEntries = activeStakeEntries.length > 0 ? activeStakeEntries : safeEntries
+
+  let winningReturnPct = null
+  let winningTraderIds = []
+  if (scoringEntries.length > 0) {
+    winningReturnPct = Math.max(
+      ...scoringEntries.map((entry) => Number(entry?.daily_return_pct || 0))
+    )
+    winningTraderIds = scoringEntries
+      .filter((entry) => Number(entry?.daily_return_pct || 0) === winningReturnPct)
+      .map((entry) => String(entry?.trader_id || '').trim())
+      .filter(Boolean)
+  }
+  const winningSet = new Set(winningTraderIds)
+
+  const settledEntryByTraderId = new Map(
+    safeEntries.map((entry) => [String(entry?.trader_id || '').trim(), entry])
+  )
+  const payoutBySession = {}
+  const userBets = dayState.user_bets && typeof dayState.user_bets === 'object'
+    ? dayState.user_bets
+    : {}
+
+  for (const [sessionIdRaw, row] of Object.entries(userBets)) {
+    const safeSessionId = String(sessionIdRaw || '').trim()
+    if (!safeSessionId || !row || typeof row !== 'object') continue
+
+    const traderId = String(row.trader_id || '').trim()
+    const stakeAmount = Number(row.stake_amount || 0)
+    const safeStake = Number.isFinite(stakeAmount) ? Math.max(0, stakeAmount) : 0
+    const settledEntry = settledEntryByTraderId.get(traderId)
+    const settledOdds = Number(settledEntry?.odds || 0)
+    const isWinner = winningSet.has(traderId)
+    const awardedPoints = isWinner
+      ? Math.max(1, Math.round(safeStake * Math.max(1, settledOdds)))
+      : 0
+
+    const creditRecord = ensureViewerCreditPointsRecord(
+      safeSessionId,
+      String(row.user_nickname || '')
+    )
+    if (creditRecord) {
+      creditRecord.settled_bets = Math.max(0, Math.floor(Number(creditRecord.settled_bets || 0))) + 1
+      if (awardedPoints > 0) {
+        creditRecord.credit_points = Math.max(0, Math.floor(Number(creditRecord.credit_points || 0))) + awardedPoints
+        creditRecord.win_count = Math.max(0, Math.floor(Number(creditRecord.win_count || 0))) + 1
+        creditRecord.last_award_ts_ms = Number.isFinite(Number(tsMs)) ? Number(tsMs) : Date.now()
+      }
+      creditRecord.updated_ts_ms = Date.now()
+    }
+
+    payoutBySession[safeSessionId] = {
+      user_session_id: safeSessionId,
+      user_nickname: String(row.user_nickname || ''),
+      trader_id: traderId,
+      stake_amount: Number(safeStake.toFixed(2)),
+      settled_odds: settledOdds > 0 ? Number(settledOdds.toFixed(4)) : null,
+      is_winner: isWinner,
+      credit_points_awarded: awardedPoints,
+      settled_ts_ms: Number.isFinite(Number(tsMs)) ? Number(tsMs) : Date.now(),
+    }
+  }
+
+  dayState.settlement_status = 'settled'
+  dayState.settled_ts_ms = Number.isFinite(Number(tsMs)) ? Number(tsMs) : Date.now()
+  dayState.settlement = {
+    schema_version: 'bets.settlement.v1',
+    settled_ts_ms: dayState.settled_ts_ms,
+    winning_trader_ids: winningTraderIds,
+    winning_return_pct: Number.isFinite(Number(winningReturnPct))
+      ? Number(Number(winningReturnPct).toFixed(4))
+      : null,
+    payouts_by_session: payoutBySession,
+  }
+  dayState.updated_ts_ms = Date.now()
+  return true
+}
+
 async function persistBetsLedgerState() {
   const dir = path.dirname(BETS_LEDGER_PATH)
   await mkdir(dir, { recursive: true })
@@ -704,7 +878,7 @@ async function loadBetsLedgerState() {
   }
 }
 
-function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
+async function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
   const safeMarket = String(market || 'CN-A').toUpperCase() === 'US' ? 'US' : 'CN-A'
   const spec = getMarketSpecForExchange(safeMarket === 'US' ? 'sim-us' : 'sim-cn')
   const clock = marketNowSnapshot(safeMarket, Date.now())
@@ -721,22 +895,50 @@ function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
     liveReturnsByTrader[trader.trader_id] = computeDailyReturnPctForTrader(trader.trader_id)
   }
 
+  let ledgerUpdated = false
   if (clock.after_cutoff && !dayState.freeze_returns_by_trader) {
     dayState.freeze_returns_by_trader = { ...liveReturnsByTrader }
     dayState.freeze_ts_ms = clock.ts_ms
     dayState.updated_ts_ms = Date.now()
+    ledgerUpdated = true
   }
 
   const returnsByTrader = clock.after_cutoff && dayState.freeze_returns_by_trader
     ? dayState.freeze_returns_by_trader
     : liveReturnsByTrader
 
-  const entries = computeMarketOddsEntries({
+  const entriesForDisplay = computeMarketOddsEntries({
     market: safeMarket,
     returnsByTrader,
     poolsByTrader: dayState.pools || {},
     traders: candidateTraders,
   })
+
+  const entriesForSettlement = computeMarketOddsEntries({
+    market: safeMarket,
+    returnsByTrader: liveReturnsByTrader,
+    poolsByTrader: dayState.pools || {},
+    traders: candidateTraders,
+  })
+
+  if (clock.after_close) {
+    const settled = settleBetDayStateIfNeeded({
+      dayState,
+      entries: entriesForSettlement,
+      tsMs: clock.ts_ms,
+    })
+    if (settled) {
+      ledgerUpdated = true
+    }
+  }
+
+  if (ledgerUpdated) {
+    await persistBetsLedgerState()
+  }
+
+  const entries = dayState.settlement_status === 'settled' && dayState.settlement
+    ? entriesForSettlement
+    : entriesForDisplay
 
   const totalStake = entries.reduce((sum, item) => sum + Number(item.total_stake || 0), 0)
   const totalTickets = entries.reduce((sum, item) => sum + Number(item.ticket_count || 0), 0)
@@ -752,12 +954,39 @@ function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
       const odds = Number(entry?.odds || 0)
       const stake = Number(myBet.stake_amount || 0)
       const estPayout = odds > 0 ? Number((odds * stake).toFixed(2)) : null
+      const settlementPayout = dayState.settlement
+        && typeof dayState.settlement === 'object'
+        && dayState.settlement.payouts_by_session
+        && typeof dayState.settlement.payouts_by_session === 'object'
+        ? dayState.settlement.payouts_by_session[safeUserSessionId] || null
+        : null
+
       return {
         ...myBet,
         estimated_odds: odds || null,
         estimated_payout: estPayout,
+        settlement_status: dayState.settlement_status === 'settled' ? 'settled' : 'pending',
+        settled_is_winner: !!settlementPayout?.is_winner,
+        settled_credit_points: Number(settlementPayout?.credit_points_awarded || 0),
       }
     })()
+    : null
+
+  const myCredits = safeUserSessionId
+    ? (betsLedgerState.credits_by_session?.[safeUserSessionId] || null)
+    : null
+
+  const settlement = dayState.settlement_status === 'settled' && dayState.settlement
+    ? {
+      schema_version: String(dayState.settlement.schema_version || 'bets.settlement.v1'),
+      settled_ts_ms: Number(dayState.settlement.settled_ts_ms || dayState.settled_ts_ms || 0) || null,
+      winning_trader_ids: Array.isArray(dayState.settlement.winning_trader_ids)
+        ? dayState.settlement.winning_trader_ids.map((id) => String(id || '')).filter(Boolean)
+        : [],
+      winning_return_pct: Number.isFinite(Number(dayState.settlement.winning_return_pct))
+        ? Number(dayState.settlement.winning_return_pct)
+        : null,
+    }
     : null
 
   return {
@@ -778,6 +1007,14 @@ function buildBetsMarketPayload({ market = 'CN-A', userSessionId = '' } = {}) {
     },
     entries,
     my_bet: myBetWithEstimate,
+    my_credits: myCredits
+      ? {
+        credit_points: Math.max(0, Math.floor(Number(myCredits.credit_points || 0))),
+        settled_bets: Math.max(0, Math.floor(Number(myCredits.settled_bets || 0))),
+        win_count: Math.max(0, Math.floor(Number(myCredits.win_count || 0))),
+      }
+      : null,
+    settlement,
     freeze_ts_ms: dayState.freeze_ts_ms || null,
   }
 }
@@ -836,10 +1073,14 @@ async function placeViewerBet({ userSessionId, userNickname, traderId, stakeAmou
     market,
     day_key: dayKey,
   }
+  ensureViewerCreditPointsRecord(
+    safeUserSessionId,
+    String(dayState.user_bets[safeUserSessionId]?.user_nickname || userNickname || '')
+  )
   dayState.updated_ts_ms = Date.now()
 
   await persistBetsLedgerState()
-  return buildBetsMarketPayload({ market, userSessionId: safeUserSessionId })
+  return await buildBetsMarketPayload({ market, userSessionId: safeUserSessionId })
 }
 
 function getTraderById(traderId) {
@@ -1193,8 +1434,10 @@ function ensureRoomStreamPacketBuildState(roomId) {
     last_error: null,
     packet_overview_fetch_count: 0,
     packet_digest_fetch_count: 0,
+    packet_breadth_fetch_count: 0,
     context_overview_fetch_count: 0,
     context_digest_fetch_count: 0,
+    context_breadth_fetch_count: 0,
     caller_started_counts: {
       timer: 0,
       sse_initial: 0,
@@ -1267,8 +1510,10 @@ function getRoomStreamPacketBuildStats(roomId) {
     last_error: state?.last_error || null,
     packet_overview_fetch_count: Number(state?.packet_overview_fetch_count || 0),
     packet_digest_fetch_count: Number(state?.packet_digest_fetch_count || 0),
+    packet_breadth_fetch_count: Number(state?.packet_breadth_fetch_count || 0),
     context_overview_fetch_count: Number(state?.context_overview_fetch_count || 0),
     context_digest_fetch_count: Number(state?.context_digest_fetch_count || 0),
+    context_breadth_fetch_count: Number(state?.context_breadth_fetch_count || 0),
     caller_started_counts: {
       timer: Number(state?.caller_started_counts?.timer || 0),
       sse_initial: Number(state?.caller_started_counts?.sse_initial || 0),
@@ -2281,6 +2526,15 @@ function getPositionHistory(traderId, limit = 100) {
 }
 
 let replayBatch = null
+let replayBreadthSeries = []
+let replayBreadthTimeline = []
+let replayBreadthByTs = new Map()
+let replayBreadthStatus = {
+  file_path: REPLAY_BREADTH_PATH,
+  last_load_ts_ms: null,
+  last_error: null,
+  source_kind: 'empty',
+}
 let dailyHistoryBatch = null
 let agentRuntime = null
 let replayEngine = null
@@ -2318,8 +2572,9 @@ const chatStore = createChatFileStore({
   baseDir: path.join(ROOT_DIR, 'data', 'chat'),
 })
 let betsLedgerState = {
-  schema_version: 'bets.ledger.v1',
+  schema_version: 'bets.ledger.v2',
   days: {},
+  credits_by_session: {},
 }
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
@@ -2354,6 +2609,16 @@ const newsDigestProviderUs = createLiveJsonFileProvider({
   filePath: NEWS_DIGEST_PATH_US,
   refreshMs: NEWS_DIGEST_REFRESH_MS,
   staleAfterMs: NEWS_DIGEST_STALE_MS,
+})
+const marketBreadthProviderCn = createLiveJsonFileProvider({
+  filePath: MARKET_BREADTH_PATH_CN,
+  refreshMs: MARKET_BREADTH_REFRESH_MS,
+  staleAfterMs: MARKET_BREADTH_STALE_MS,
+})
+const marketBreadthProviderUs = createLiveJsonFileProvider({
+  filePath: MARKET_BREADTH_PATH_US,
+  refreshMs: MARKET_BREADTH_REFRESH_MS,
+  staleAfterMs: MARKET_BREADTH_STALE_MS,
 })
 const chatNarrationStateByRoom = new Map()
 const decisionLogStore = createDecisionLogStore({
@@ -2516,6 +2781,202 @@ function extractNewsTitles(payload) {
   return titles
 }
 
+function normalizeMarketBreadth(payload) {
+  const row = payload && typeof payload === 'object'
+    ? (payload.breadth && typeof payload.breadth === 'object' ? payload.breadth : payload)
+    : null
+  if (!row) {
+    return {
+      advancers: null,
+      decliners: null,
+      unchanged: null,
+      total: null,
+      advancer_ratio: null,
+      red_blue_ratio: null,
+    }
+  }
+
+  const advancers = Number(row.advancers)
+  const decliners = Number(row.decliners)
+  const unchanged = Number(row.unchanged)
+  const totalRaw = Number(row.total)
+  const total = Number.isFinite(totalRaw)
+    ? totalRaw
+    : ([advancers, decliners, unchanged].every(Number.isFinite)
+      ? (advancers + decliners + unchanged)
+      : NaN)
+
+  const advRatioRaw = Number(row.advancer_ratio)
+  const redBlueRaw = Number(row.red_blue_ratio)
+  const advancer_ratio = Number.isFinite(advRatioRaw)
+    ? round(advRatioRaw, 6)
+    : (Number.isFinite(total) && total > 0 && Number.isFinite(advancers)
+      ? round(advancers / total, 6)
+      : null)
+  const red_blue_ratio = Number.isFinite(redBlueRaw)
+    ? round(redBlueRaw, 6)
+    : (Number.isFinite(advancers) && Number.isFinite(decliners) && decliners > 0
+      ? round(advancers / decliners, 6)
+      : null)
+
+  return {
+    advancers: Number.isFinite(advancers) ? Math.max(0, Math.floor(advancers)) : null,
+    decliners: Number.isFinite(decliners) ? Math.max(0, Math.floor(decliners)) : null,
+    unchanged: Number.isFinite(unchanged) ? Math.max(0, Math.floor(unchanged)) : null,
+    total: Number.isFinite(total) ? Math.max(0, Math.floor(total)) : null,
+    advancer_ratio,
+    red_blue_ratio,
+  }
+}
+
+function summarizeMarketBreadth(breadth, marketId) {
+  const adv = Number(breadth?.advancers)
+  const dec = Number(breadth?.decliners)
+  const unc = Number(breadth?.unchanged)
+  if (!Number.isFinite(adv) || !Number.isFinite(dec)) return ''
+  const ratio = Number(breadth?.red_blue_ratio)
+  const ratioText = Number.isFinite(ratio) ? `，红蓝比${ratio.toFixed(2)}` : ''
+  const flatText = Number.isFinite(unc) ? `，平${Math.floor(unc)}` : ''
+  const prefix = marketId === 'US' ? '美股' : 'A股'
+  return `${prefix}红${Math.floor(adv)} 蓝${Math.floor(dec)}${flatText}${ratioText}`
+}
+
+function classifyChange(currentClose, prevClose) {
+  const curr = Number(currentClose)
+  const prev = Number(prevClose)
+  if (!Number.isFinite(curr) || !Number.isFinite(prev)) return 0
+  if (curr > prev) return 1
+  if (curr < prev) return -1
+  return 0
+}
+
+function upperBoundSortedNumbers(sortedRows, target) {
+  let left = 0
+  let right = sortedRows.length
+  while (left < right) {
+    const mid = Math.floor((left + right) / 2)
+    if (sortedRows[mid] <= target) {
+      left = mid + 1
+    } else {
+      right = mid
+    }
+  }
+  return left
+}
+
+function buildReplayBreadthFromFrames(batch) {
+  const frames = Array.isArray(batch?.frames) ? batch.frames : []
+  if (!frames.length) return []
+
+  const bySymbol = new Map()
+  for (const frame of frames) {
+    if (String(frame?.interval || '') !== '1m') continue
+    const symbol = String(frame?.instrument?.symbol || frame?.symbol || '').trim().toUpperCase()
+    const startTs = Number(frame?.window?.start_ts_ms)
+    if (!symbol || !Number.isFinite(startTs)) continue
+    if (!bySymbol.has(symbol)) bySymbol.set(symbol, [])
+    bySymbol.get(symbol).push(frame)
+  }
+
+  const countsByTs = new Map()
+  for (const list of bySymbol.values()) {
+    list.sort((a, b) => Number(a?.window?.start_ts_ms || 0) - Number(b?.window?.start_ts_ms || 0))
+    let prevClose = null
+    for (const frame of list) {
+      const ts = Number(frame?.window?.start_ts_ms)
+      const close = Number(frame?.bar?.close)
+      if (!Number.isFinite(ts) || !Number.isFinite(close)) continue
+
+      const change = prevClose == null ? 0 : classifyChange(close, prevClose)
+      const row = countsByTs.get(ts) || {
+        ts_ms: ts,
+        trading_day: String(frame?.window?.trading_day || ''),
+        advancers: 0,
+        decliners: 0,
+        unchanged: 0,
+      }
+      if (change > 0) row.advancers += 1
+      else if (change < 0) row.decliners += 1
+      else row.unchanged += 1
+      countsByTs.set(ts, row)
+      prevClose = close
+    }
+  }
+
+  const timeline = Array.from(countsByTs.keys()).sort((a, b) => a - b)
+  return timeline.map((ts) => {
+    const row = countsByTs.get(ts)
+    const adv = Number(row?.advancers || 0)
+    const dec = Number(row?.decliners || 0)
+    const unc = Number(row?.unchanged || 0)
+    const total = adv + dec + unc
+    return {
+      ts_ms: ts,
+      trading_day: String(row?.trading_day || ''),
+      breadth: {
+        advancers: adv,
+        decliners: dec,
+        unchanged: unc,
+        total,
+        advancer_ratio: total > 0 ? round(adv / total, 6) : null,
+        red_blue_ratio: dec > 0 ? round(adv / dec, 6) : null,
+      },
+    }
+  })
+}
+
+function installReplayBreadthSeries(series, sourceKind, loadTsMs = Date.now(), error = null) {
+  const safeSeries = Array.isArray(series) ? series : []
+  replayBreadthSeries = safeSeries
+  replayBreadthTimeline = safeSeries
+    .map((item) => Number(item?.ts_ms))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b)
+  const nextMap = new Map()
+  for (const item of safeSeries) {
+    const ts = Number(item?.ts_ms)
+    if (!Number.isFinite(ts)) continue
+    nextMap.set(ts, normalizeMarketBreadth(item?.breadth || null))
+  }
+  replayBreadthByTs = nextMap
+  replayBreadthStatus = {
+    file_path: REPLAY_BREADTH_PATH,
+    last_load_ts_ms: Number.isFinite(Number(loadTsMs)) ? Number(loadTsMs) : null,
+    last_error: error ? String(error) : null,
+    source_kind: sourceKind || 'empty',
+  }
+}
+
+async function loadReplayBreadthBatch() {
+  try {
+    const content = await readFile(REPLAY_BREADTH_PATH, 'utf8')
+    const parsed = JSON.parse(content)
+    const series = Array.isArray(parsed?.series) ? parsed.series : []
+    installReplayBreadthSeries(series, 'replay_file')
+    return series
+  } catch {
+    const derived = buildReplayBreadthFromFrames(replayBatch)
+    installReplayBreadthSeries(
+      derived,
+      derived.length ? 'replay_derived' : 'empty',
+      Date.now(),
+      derived.length ? null : 'replay_breadth_file_missing'
+    )
+    return derived
+  }
+}
+
+function replayBreadthAtTs(tsMs) {
+  const ts = Number(tsMs)
+  if (!Number.isFinite(ts) || replayBreadthTimeline.length === 0) return null
+  const direct = replayBreadthByTs.get(ts)
+  if (direct) return direct
+  const ub = upperBoundSortedNumbers(replayBreadthTimeline, ts)
+  if (ub <= 0) return null
+  const nearest = replayBreadthTimeline[ub - 1]
+  return replayBreadthByTs.get(nearest) || null
+}
+
 const proxyOverviewCacheByMarket = new Map()
 const proxyOverviewInFlightByMarket = new Map()
 
@@ -2621,6 +3082,40 @@ async function getNewsDigestSnapshot(marketId) {
   }
 }
 
+async function getMarketBreadthSnapshot(marketId) {
+  const market = marketId === 'US' ? 'US' : 'CN-A'
+
+  if (market === 'CN-A' && RUNTIME_DATA_MODE === 'replay') {
+    const replayTs = Number(replayEngine?.getStatus?.()?.current_ts_ms)
+    const replayBreadth = replayBreadthAtTs(replayTs)
+    if (replayBreadth) {
+      return {
+        source_kind: replayBreadthStatus?.source_kind || 'replay_derived',
+        market,
+        breadth: replayBreadth,
+        status: {
+          ...replayBreadthStatus,
+          stale: false,
+        },
+        summary: summarizeMarketBreadth(replayBreadth, market),
+      }
+    }
+  }
+
+  const provider = market === 'US' ? marketBreadthProviderUs : marketBreadthProviderCn
+  const payload = await provider.getPayload({ forceRefresh: false })
+  const status = provider.getStatus()
+  const breadth = normalizeMarketBreadth(payload)
+
+  return {
+    source_kind: payload ? 'breadth_file' : 'empty',
+    market,
+    breadth,
+    status,
+    summary: summarizeMarketBreadth(breadth, market),
+  }
+}
+
 function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) {
   const exchangeId = String(trader?.exchange_id || '').trim().toLowerCase()
   const market = exchangeId.includes('sim-us') ? 'US' : 'CN-A'
@@ -2656,6 +3151,7 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
 async function buildRoomChatContext(roomId, {
   overview = null,
   digest = null,
+  breadth = null,
   latestDecision = null,
   nowMs = Date.now(),
 } = {}) {
@@ -2680,12 +3176,15 @@ async function buildRoomChatContext(roomId, {
 
   let effectiveOverview = overview
   let effectiveDigest = digest
+  let effectiveBreadth = breadth
   const needOverview = !effectiveOverview
   const needDigest = !effectiveDigest
-  if (needOverview || needDigest) {
-    const [fetchedOverview, fetchedDigest] = await Promise.all([
+  const needBreadth = !effectiveBreadth
+  if (needOverview || needDigest || needBreadth) {
+    const [fetchedOverview, fetchedDigest, fetchedBreadth] = await Promise.all([
       needOverview ? getMarketOverviewSnapshot(market) : Promise.resolve(null),
       needDigest ? getNewsDigestSnapshot(market) : Promise.resolve(null),
+      needBreadth ? getMarketBreadthSnapshot(market) : Promise.resolve(null),
     ])
     if (fetchedOverview) {
       effectiveOverview = fetchedOverview
@@ -2694,6 +3193,10 @@ async function buildRoomChatContext(roomId, {
     if (fetchedDigest) {
       effectiveDigest = fetchedDigest
       incrementRoomStreamPacketBuildStat(safeRoomId, 'context_digest_fetch_count')
+    }
+    if (fetchedBreadth) {
+      effectiveBreadth = fetchedBreadth
+      incrementRoomStreamPacketBuildStat(safeRoomId, 'context_breadth_fetch_count')
     }
   }
 
@@ -2712,6 +3215,8 @@ async function buildRoomChatContext(roomId, {
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
+    market_breadth_summary: effectiveBreadth?.summary || '',
+    market_breadth: effectiveBreadth?.breadth || null,
     symbol_brief: symbolBrief,
   }
 }
@@ -2767,6 +3272,7 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   const readiness = String(roomContext?.data_readiness?.level || '').toUpperCase() || ''
   const symbolBrief = roomContext?.symbol_brief || null
   const marketBrief = String(roomContext?.market_overview_brief || '').trim()
+  const breadthSummary = String(roomContext?.market_breadth_summary || '').trim()
   const newsTitles = Array.isArray(roomContext?.news_digest_titles)
     ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 2)
     : []
@@ -2789,6 +3295,9 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   }
   if (marketBrief) {
     bits.push(`盘面${marketBrief.slice(0, 40)}`)
+  }
+  if (breadthSummary) {
+    bits.push(`红蓝${breadthSummary.slice(0, 24)}`)
   }
   if (newsTitles.length) {
     bits.push(`消息${newsTitles.join('；').slice(0, 46)}`)
@@ -3395,10 +3904,12 @@ async function loadReplayBatch() {
     const parsed = JSON.parse(content)
     if (!parsed || !Array.isArray(parsed.frames)) return null
     replayBatch = parsed
+    await loadReplayBreadthBatch()
     resetReplayEngine()
     return replayBatch
   } catch {
     replayBatch = null
+    installReplayBreadthSeries([], 'empty', Date.now(), 'replay_frames_file_missing')
     resetReplayEngine()
     return null
   }
@@ -3573,8 +4084,17 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     minDailyFrames: DATA_READINESS_MIN_DAILY_FRAMES,
     freshnessWarnMs: DATA_READINESS_FRESH_WARN_MS,
     freshnessErrorMs: DATA_READINESS_FRESH_ERROR_MS,
+    openingPhaseEnabled: DATA_READINESS_OPENING_PHASE_ENABLED,
+    openingPhaseMinIntradayFrames: DATA_READINESS_OPENING_MIN_INTRADAY_FRAMES,
   })
   context.data_readiness = readiness
+  const openingPhaseActive = readiness?.opening_phase_active === true
+
+  if (openingPhaseActive) {
+    context.runtime_config.opening_phase_mode = 'true'
+    context.runtime_config.opening_phase_max_lots = OPENING_PHASE_MAX_LOTS
+    context.runtime_config.opening_phase_max_confidence = OPENING_PHASE_MAX_CONFIDENCE
+  }
 
   const readinessError = readiness?.level === 'ERROR'
   if (readinessError) {
@@ -3594,9 +4114,10 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
   }
 
   try {
-    const [overview, digest] = await Promise.all([
+    const [overview, digest, breadth] = await Promise.all([
       getMarketOverviewSnapshot(context.market),
       getNewsDigestSnapshot(context.market),
+      getMarketBreadthSnapshot(context.market),
     ])
 
     context.market_overview = {
@@ -3607,6 +4128,7 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       source_kind: digest?.source_kind || null,
       titles: Array.isArray(digest?.titles) ? digest.titles : [],
     }
+    context.market_breadth = breadth?.breadth || null
     const sessionNowMs = effectiveSessionNowMs({
       fallbackNowMs: Date.now(),
       contextAsOfTsMs: context?.as_of_ts_ms,
@@ -3787,9 +4309,12 @@ app.post('/api/chat/session/bootstrap', (req, res) => {
     updated_ts_ms: Date.now(),
   })
 
+  const creditRecord = ensureViewerCreditPointsRecord(userSessionId, userNickname)
+
   res.json(ok({
     user_session_id: userSessionId,
     user_nickname: userNickname,
+    credit_points: Number(creditRecord?.credit_points || 0),
   }))
 })
 
@@ -3880,13 +4405,16 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
   const market = getMarketSpecForExchange(trader.exchange_id).market
   incrementRoomStreamPacketBuildStat(safeRoomId, 'packet_overview_fetch_count')
   incrementRoomStreamPacketBuildStat(safeRoomId, 'packet_digest_fetch_count')
-  const [overview, digest] = await Promise.all([
+  incrementRoomStreamPacketBuildStat(safeRoomId, 'packet_breadth_fetch_count')
+  const [overview, digest, breadth] = await Promise.all([
     getMarketOverviewSnapshot(market),
     getNewsDigestSnapshot(market),
+    getMarketBreadthSnapshot(market),
   ])
   const roomContext = await buildRoomChatContext(safeRoomId, {
     overview,
     digest,
+    breadth,
     nowMs: tsMs,
   })
 
@@ -3924,6 +4452,7 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
     data_readiness: effectiveMeta?.data_readiness || null,
     session_gate: effectiveMeta?.session_gate || null,
     market_overview: effectiveMeta?.market_overview || null,
+    market_breadth: effectiveMeta?.market_breadth || null,
     news_digest: effectiveMeta?.news_digest || null,
   } : null
 
@@ -3942,6 +4471,12 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
       source_kind: overview?.source_kind || null,
       brief: overview?.brief || '',
       status: overview?.status || null,
+    },
+    market_breadth: {
+      source_kind: breadth?.source_kind || null,
+      summary: breadth?.summary || '',
+      breadth: breadth?.breadth || null,
+      status: breadth?.status || null,
     },
     news_digest: {
       source_kind: digest?.source_kind || null,
@@ -3967,6 +4502,10 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
       news_digest: {
         cn_a: newsDigestProviderCn.getStatus(),
         us: newsDigestProviderUs.getStatus(),
+      },
+      market_breadth: {
+        cn_a: marketBreadthProviderCn.getStatus(),
+        us: marketBreadthProviderUs.getStatus(),
       },
     },
   }
@@ -4205,7 +4744,7 @@ app.get('/api/bets/market', async (req, res) => {
       market = traderMarket === 'US' ? 'US' : 'CN-A'
     }
 
-    const payload = buildBetsMarketPayload({ market, userSessionId })
+    const payload = await buildBetsMarketPayload({ market, userSessionId })
     res.json(ok(payload))
   } catch (error) {
     res.status(500).json({ success: false, error: error?.code || error?.message || 'bets_market_failed' })
@@ -4230,6 +4769,41 @@ app.post('/api/bets/place', async (req, res) => {
   } catch (error) {
     const status = Number.isFinite(Number(error?.status)) ? Number(error.status) : 500
     res.status(status).json({ success: false, error: error?.code || error?.message || 'bets_place_failed' })
+  }
+})
+
+app.get('/api/bets/credits', async (req, res) => {
+  try {
+    const userSessionId = String(req.query.user_session_id || '').trim()
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 20) || 20, 200))
+    const records = Object.values(betsLedgerState.credits_by_session || {})
+      .filter((row) => row && typeof row === 'object')
+      .map((row) => ({
+        user_session_id: String(row.user_session_id || ''),
+        user_nickname: String(row.user_nickname || ''),
+        credit_points: Math.max(0, Math.floor(Number(row.credit_points || 0))),
+        settled_bets: Math.max(0, Math.floor(Number(row.settled_bets || 0))),
+        win_count: Math.max(0, Math.floor(Number(row.win_count || 0))),
+        updated_ts_ms: Number(row.updated_ts_ms || 0) || null,
+      }))
+      .sort((a, b) => {
+        if (b.credit_points !== a.credit_points) return b.credit_points - a.credit_points
+        if (b.win_count !== a.win_count) return b.win_count - a.win_count
+        return Number(b.updated_ts_ms || 0) - Number(a.updated_ts_ms || 0)
+      })
+
+    const myCredits = userSessionId
+      ? records.find((row) => row.user_session_id === userSessionId) || null
+      : null
+
+    res.json(ok({
+      schema_version: 'bets.credits.v1',
+      count: records.length,
+      leaderboard: records.slice(0, limit),
+      my_credits: myCredits,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.code || error?.message || 'bets_credits_failed' })
   }
 })
 
@@ -4369,6 +4943,10 @@ app.get('/api/agent/runtime/status', (_req, res) => {
     news_digest_files: {
       cn_a: newsDigestProviderCn.getStatus(),
       us: newsDigestProviderUs.getStatus(),
+    },
+    market_breadth_files: {
+      cn_a: marketBreadthProviderCn.getStatus(),
+      us: marketBreadthProviderUs.getStatus(),
     },
     chat_streaming: {
       proactive_interval_ms: Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000)),
@@ -4907,6 +5485,7 @@ agentRuntime = createInMemoryAgentRuntime({
         data_readiness: context?.data_readiness || null,
         session_gate: context?.session_gate || null,
         market_overview: context?.market_overview || null,
+        market_breadth: context?.market_breadth || null,
         news_digest: context?.news_digest || null,
       })
     } catch {
@@ -4970,6 +5549,7 @@ agentRuntime = createInMemoryAgentRuntime({
           data_readiness: context?.data_readiness || null,
           session_gate: context?.session_gate || null,
           market_overview: context?.market_overview || null,
+          market_breadth: context?.market_breadth || null,
           news_digest: context?.news_digest || null,
           live_files: {
             cn_a: publicLiveFileStatus(liveFileFrameProviderCn?.getStatus?.() || null),

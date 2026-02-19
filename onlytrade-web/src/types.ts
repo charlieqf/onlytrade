@@ -184,6 +184,15 @@ export interface RoomStreamPacket {
     data_readiness?: any
     market_overview_brief?: string
     news_digest_titles?: string[]
+    market_breadth_summary?: string
+    market_breadth?: {
+      advancers?: number | null
+      decliners?: number | null
+      unchanged?: number | null
+      total?: number | null
+      advancer_ratio?: number | null
+      red_blue_ratio?: number | null
+    } | null
     symbol_brief?: any
   }
   status: SystemStatus
@@ -196,6 +205,19 @@ export interface RoomStreamPacket {
   market_overview?: {
     source_kind: string | null
     brief: string
+    status: any
+  }
+  market_breadth?: {
+    source_kind: string | null
+    summary: string
+    breadth: {
+      advancers?: number | null
+      decliners?: number | null
+      unchanged?: number | null
+      total?: number | null
+      advancer_ratio?: number | null
+      red_blue_ratio?: number | null
+    } | null
     status: any
   }
   news_digest?: {

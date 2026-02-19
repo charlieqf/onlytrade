@@ -250,8 +250,20 @@ export function TraderDashboardPage({
     const newsSource = (streamPacket as any)?.news_digest?.source_kind || null
     const newsStatus = (streamPacket as any)?.news_digest?.status || null
 
+    const breadth = (streamPacket as any)?.market_breadth?.breadth
+      || (streamPacket as any)?.room_context?.market_breadth
+      || null
+    const breadthSummary = String(
+      (streamPacket as any)?.market_breadth?.summary
+      || (streamPacket as any)?.room_context?.market_breadth_summary
+      || ''
+    ).trim()
+    const breadthSource = (streamPacket as any)?.market_breadth?.source_kind || null
+    const breadthStatus = (streamPacket as any)?.market_breadth?.status || null
+
     const staleOverview = !!overviewStatus?.stale
     const staleNews = !!newsStatus?.stale
+    const staleBreadth = !!breadthStatus?.stale
 
     return {
       level,
@@ -268,6 +280,11 @@ export function TraderDashboardPage({
       newsSource,
       newsStatus,
       staleNews,
+      breadth,
+      breadthSummary,
+      breadthSource,
+      breadthStatus,
+      staleBreadth,
     }
   })()
 
@@ -1393,6 +1410,14 @@ export function TraderDashboardPage({
                     {String((fuel.newsStatus as any)?.last_error || '') ||
                       'none'}
                   </div>
+                  <div className="opacity-80">
+                    breadth_file:{' '}
+                    {String((fuel.breadthStatus as any)?.file_path || '--')} |
+                    last_load=
+                    {formatTs((fuel.breadthStatus as any)?.last_load_ts_ms)} | err=
+                    {String((fuel.breadthStatus as any)?.last_error || '') ||
+                      'none'}
+                  </div>
 
                   <div className="mt-2 flex items-center justify-between gap-3">
                     <div className="opacity-70">file_status</div>
@@ -1401,8 +1426,9 @@ export function TraderDashboardPage({
                       onClick={() => {
                         const overviewLine = `overview_file: ${String((fuel.overviewStatus as any)?.file_path || '--')} | last_load=${formatTs((fuel.overviewStatus as any)?.last_load_ts_ms)} | err=${String((fuel.overviewStatus as any)?.last_error || '') || 'none'}`
                         const newsLine = `news_file: ${String((fuel.newsStatus as any)?.file_path || '--')} | last_load=${formatTs((fuel.newsStatus as any)?.last_load_ts_ms)} | err=${String((fuel.newsStatus as any)?.last_error || '') || 'none'}`
+                        const breadthLine = `breadth_file: ${String((fuel.breadthStatus as any)?.file_path || '--')} | last_load=${formatTs((fuel.breadthStatus as any)?.last_load_ts_ms)} | err=${String((fuel.breadthStatus as any)?.last_error || '') || 'none'}`
                         copyToClipboard(
-                          `${overviewLine}\n${newsLine}`,
+                          `${overviewLine}\n${newsLine}\n${breadthLine}`,
                           'fuel.files'
                         )
                       }}
@@ -1537,6 +1563,35 @@ export function TraderDashboardPage({
                       {language === 'zh'
                         ? '暂无新闻摘要。'
                         : 'No digest available.'}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-xs text-nofx-text-muted mb-1">
+                    {language === 'zh' ? '红蓝家数' : 'Market Breadth'}
+                    {fuel.breadthSource && (
+                      <span className="ml-2 text-[10px] font-mono opacity-70">
+                        src={String(fuel.breadthSource)}
+                        {fuel.staleBreadth ? ':stale' : ''}
+                      </span>
+                    )}
+                  </div>
+                  {Number.isFinite(Number((fuel.breadth as any)?.advancers)) && Number.isFinite(Number((fuel.breadth as any)?.decliners)) ? (
+                    <div className="text-sm text-nofx-text-main leading-snug space-y-1">
+                      <div className="font-mono">
+                        R {Number((fuel.breadth as any)?.advancers || 0).toLocaleString()} / B {Number((fuel.breadth as any)?.decliners || 0).toLocaleString()}
+                        {Number.isFinite(Number((fuel.breadth as any)?.red_blue_ratio)) && (
+                          <span className="text-nofx-text-muted">{' '}· ratio {Number((fuel.breadth as any).red_blue_ratio).toFixed(2)}</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-nofx-text-muted opacity-80">
+                        {fuel.breadthSummary || (language === 'zh' ? '实时红盘/蓝盘快照。' : 'Realtime advancers/decliners snapshot.')}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-nofx-text-muted opacity-70">
+                      {language === 'zh' ? '暂无红蓝数据。' : 'No breadth data available.'}
                     </div>
                   )}
                 </div>

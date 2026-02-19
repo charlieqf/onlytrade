@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Expert1CommandDeckPage from './pages/design/Expert1CommandDeckPage'
+import Expert2MobileBroadcastPage from './pages/design/Expert2MobileBroadcastPage'
+import Expert3StudioTimelinePage from './pages/design/Expert3StudioTimelinePage'
+
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
 import { api } from './lib/api'
@@ -39,6 +43,9 @@ type Page =
   | 'leaderboard'
   | 'login'
   | 'register'
+  | 'expert1'
+  | 'expert2'
+  | 'expert3'
 
 function App() {
   const { language, setLanguage } = useLanguage()
@@ -60,6 +67,12 @@ function App() {
     if (path === '/stream' || path === '/streaming-room') return 'stream'
     if (path === '/stream-only' || path === '/stream-standalone')
       return 'streamOnly'
+    if (path === '/design/expert-1' || path === '/stream/command-deck')
+      return 'expert1'
+    if (path === '/design/expert-2' || path === '/stream/mobile-broadcast')
+      return 'expert2'
+    if (path === '/design/expert-3' || path === '/stream/studio-timeline')
+      return 'expert3'
     return 'lobby'
   }
 
@@ -82,6 +95,9 @@ function App() {
       leaderboard: '/leaderboard',
       login: '/login',
       register: '/register',
+      expert1: '/stream/command-deck',
+      expert2: '/stream/mobile-broadcast',
+      expert3: '/stream/studio-timeline',
     }
     const path = pathMap[page]
     if (path) {
@@ -152,6 +168,21 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/design/expert-1' || path === '/stream/command-deck') {
+        setCurrentPage('expert1')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/design/expert-2' || path === '/stream/mobile-broadcast') {
+        setCurrentPage('expert2')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/design/expert-3' || path === '/stream/studio-timeline') {
+        setCurrentPage('expert3')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       }
       setRoute(path)
     }
@@ -199,7 +230,10 @@ function App() {
     useSWR<RoomStreamPacket>(
       (currentPage === 'room' ||
         currentPage === 'stream' ||
-        currentPage === 'streamOnly') &&
+        currentPage === 'streamOnly' ||
+        currentPage === 'expert1' ||
+        currentPage === 'expert2' ||
+        currentPage === 'expert3') &&
         selectedTraderId
         ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
         : null,
@@ -215,7 +249,10 @@ function App() {
   const roomSseEnabled =
     (currentPage === 'room' ||
       currentPage === 'stream' ||
-      currentPage === 'streamOnly') &&
+      currentPage === 'streamOnly' ||
+      currentPage === 'expert1' ||
+      currentPage === 'expert2' ||
+      currentPage === 'expert3') &&
     !!selectedTraderId
   const lastRoomStreamPacketEventTsRef = useRef<number>(0)
 
@@ -294,6 +331,9 @@ function App() {
         || currentPage === 'room'
         || currentPage === 'stream'
         || currentPage === 'streamOnly'
+        || currentPage === 'expert1'
+        || currentPage === 'expert2'
+        || currentPage === 'expert3'
         ? 'replay-runtime-status'
         : null,
       api.getReplayRuntimeStatus,
@@ -394,6 +434,12 @@ function App() {
       setCurrentPage('stream')
     } else if (route === '/stream-only' || route === '/stream-standalone') {
       setCurrentPage('streamOnly')
+    } else if (route === '/design/expert-1' || route === '/stream/command-deck') {
+      setCurrentPage('expert1')
+    } else if (route === '/design/expert-2' || route === '/stream/mobile-broadcast') {
+      setCurrentPage('expert2')
+    } else if (route === '/design/expert-3' || route === '/stream/studio-timeline') {
+      setCurrentPage('expert3')
     }
   }, [route])
 
@@ -425,6 +471,68 @@ function App() {
   }
   if (route === '/reset-password') {
     return <ResetPasswordPage />
+  }
+
+  // Expert stream pages render standalone (phone-first, shell-free)
+  if (currentPage === 'expert1') {
+    return selectedTrader ? (
+      <Expert1CommandDeckPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'expert2') {
+    return selectedTrader ? (
+      <Expert2MobileBroadcastPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'expert3') {
+    return selectedTrader ? (
+      <Expert3StudioTimelinePage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
   }
 
   if (currentPage === 'streamOnly') {

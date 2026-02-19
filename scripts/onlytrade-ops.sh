@@ -70,6 +70,7 @@ Commands:
   red-blue-cn-run-once             Build CN-A market_breadth.cn-a.json once
   red-blue-cn-if-open              Build CN-A market_breadth.cn-a.json if market open
   red-blue-replay-build            Build replay market_breadth.1m.json from replay frames
+                                  Options: --frames-path --output-path --day-key YYYY-MM-DD
   overview-status                  Show overview + digest file statuses
   chat-status <room_id> [user_session_id]
                                   Show chat file status for room/private
@@ -361,11 +362,20 @@ red_blue_cn_if_open() {
 red_blue_replay_build() {
   local frames_path="${1:-onlytrade-web/public/replay/cn-a/latest/frames.1m.json}"
   local output_path="${2:-onlytrade-web/public/replay/cn-a/latest/market_breadth.1m.json}"
+  local day_key="${3:-}"
   if command -v python3 >/dev/null 2>&1; then
-    python3 "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
+    if [ -n "$day_key" ]; then
+      python3 "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path" --day-key "$day_key"
+    else
+      python3 "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
+    fi
     return
   fi
-  python "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
+  if [ -n "$day_key" ]; then
+    python "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path" --day-key "$day_key"
+  else
+    python "$REPO_ROOT/scripts/replay/build_market_breadth_replay.py" --frames-path "$frames_path" --output-path "$output_path"
+  fi
 }
 
 chat_public_file() {
@@ -670,6 +680,7 @@ main() {
     red-blue-replay-build)
       local frames_path=""
       local output_path=""
+      local day_key=""
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --frames-path)
@@ -680,13 +691,17 @@ main() {
             output_path="$2"
             shift 2
             ;;
+          --day-key)
+            day_key="$2"
+            shift 2
+            ;;
           *)
             echo "[ops] ERROR: unknown red-blue-replay-build option $1" >&2
             exit 1
             ;;
         esac
       done
-      red_blue_replay_build "$frames_path" "$output_path"
+      red_blue_replay_build "$frames_path" "$output_path" "$day_key"
       ;;
     overview-status)
       overview_status

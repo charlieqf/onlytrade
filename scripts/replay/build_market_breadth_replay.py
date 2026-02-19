@@ -121,6 +121,11 @@ def main() -> int:
         "--output-path",
         default="onlytrade-web/public/replay/cn-a/latest/market_breadth.1m.json",
     )
+    parser.add_argument(
+        "--day-key",
+        default="",
+        help="Optional trading_day filter (YYYY-MM-DD)",
+    )
     args = parser.parse_args()
 
     frames_path = Path(args.frames_path)
@@ -129,15 +134,22 @@ def main() -> int:
         raise FileNotFoundError(f"frames file not found: {frames_path}")
 
     frames = _load_frames(frames_path)
+    day_key = str(args.day_key or "").strip()
+    if day_key:
+        frames = [
+            f
+            for f in frames
+            if str((f.get("window") or {}).get("trading_day") or "") == day_key
+        ]
     series = _build_series(frames)
 
     market = "CN-A"
     if frames:
         market = str(frames[0].get("market") or "CN-A")
 
-    day_key = ""
-    if series:
-        day_key = str(series[-1].get("trading_day") or "")
+    out_day_key = day_key
+    if not out_day_key and series:
+        out_day_key = str(series[-1].get("trading_day") or "")
 
     payload = {
         "schema_version": "market.breadth.replay.v1",
@@ -145,7 +157,7 @@ def main() -> int:
         "mode": "replay",
         "provider": "derived_from_frames",
         "source_frames_path": str(frames_path),
-        "day_key": day_key,
+        "day_key": out_day_key,
         "point_count": len(series),
         "generated_at_ts_ms": time.time_ns() // 1_000_000,
         "series": series,
@@ -161,7 +173,7 @@ def main() -> int:
                 "frames_path": str(frames_path),
                 "output_path": str(output_path),
                 "point_count": len(series),
-                "day_key": day_key,
+                "day_key": out_day_key,
             },
             ensure_ascii=False,
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+import re
 from typing import Any
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
@@ -14,7 +15,7 @@ DEFAULT_TIMEOUT_SEC = 8
 CATEGORY_QUERIES = [
     {
         "category": "ai",
-        "query": "人工智能 大模型 AI OpenAI Anthropic DeepMind NVIDIA",
+        "query": "AI OpenAI NVIDIA",
         "keywords": [
             "AI",
             "人工智能",
@@ -23,22 +24,70 @@ CATEGORY_QUERIES = [
             "Anthropic",
             "DeepMind",
             "NVIDIA",
+            "artificial intelligence",
+            "LLM",
+            "model",
+            "chip",
         ],
     },
     {
         "category": "geopolitics",
-        "query": "地缘政治 美中 俄乌 中东 台海 制裁 外交",
-        "keywords": ["地缘", "俄乌", "中东", "台海", "制裁", "外交", "美国", "中国"],
+        "query": "geopolitics US China Ukraine Russia Middle East sanctions diplomacy",
+        "keywords": [
+            "geopolitics",
+            "ukraine",
+            "russia",
+            "middle east",
+            "taiwan",
+            "sanctions",
+            "diplomacy",
+            "us",
+            "china",
+            "俄乌",
+            "中东",
+            "台海",
+            "制裁",
+            "外交",
+            "美国",
+            "中国",
+        ],
     },
     {
         "category": "global_macro",
-        "query": "全球 宏观 美联储 利率 通胀 就业 财政",
-        "keywords": ["美联储", "利率", "通胀", "就业", "央行", "债券", "美元"],
+        "query": "global macro fed rates inflation jobs central bank treasury",
+        "keywords": [
+            "fed",
+            "rate",
+            "inflation",
+            "jobs",
+            "central bank",
+            "treasury",
+            "美联储",
+            "利率",
+            "通胀",
+            "就业",
+            "央行",
+            "债券",
+            "美元",
+        ],
     },
     {
         "category": "tech",
-        "query": "科技 芯片 半导体 云计算 软件",
-        "keywords": ["芯片", "半导体", "GPU", "云", "软件", "算力"],
+        "query": "technology chips semiconductor cloud software datacenter",
+        "keywords": [
+            "technology",
+            "chip",
+            "semiconductor",
+            "gpu",
+            "cloud",
+            "software",
+            "datacenter",
+            "芯片",
+            "半导体",
+            "云",
+            "软件",
+            "算力",
+        ],
     },
     {
         "category": "markets_cn",
@@ -57,7 +106,22 @@ CATEGORY_LABEL_ZH = {
 }
 
 
-MAX_AGE_HOURS = 96
+MAX_AGE_HOURS = 36
+
+BANNED_TITLE_SUBSTRINGS = [
+    "十月之声",
+    "月度视频",
+    "2024年度",
+    "2025年度",
+]
+
+CATEGORY_PRIORITY = {
+    "ai": 5,
+    "geopolitics": 4,
+    "global_macro": 3,
+    "tech": 2,
+    "markets_cn": 1,
+}
 
 
 def _safe_text(value: Any, max_len: int = 220) -> str:
@@ -72,7 +136,8 @@ def _rss_urls_for_query(query: str) -> list[str]:
     if not q:
         return []
     return [
-        f"https://news.google.com/rss/search?q={q}+when:3d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        f"https://news.google.com/rss/search?q={q}+when:1d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+        f"https://news.google.com/rss/search?q={q}+when:1d&hl=en-US&gl=US&ceid=US:en",
         f"https://www.bing.com/news/search?q={q}&format=RSS&setlang=zh-cn",
     ]
 
@@ -112,6 +177,17 @@ def _keyword_score(title: str, keywords: list[str]) -> int:
     return score
 
 
+def _looks_stale_by_title_year(title: str, now_ts_ms: int) -> bool:
+    years = re.findall(r"\b(20\d{2})\b", str(title or ""))
+    if not years:
+        return False
+    try:
+        current_year = datetime.utcfromtimestamp(now_ts_ms / 1000).year
+    except Exception:
+        return False
+    return any(int(y) < current_year for y in years)
+
+
 def _parse_rss_items(
     xml_text: str,
     limit: int,
@@ -133,6 +209,9 @@ def _parse_rss_items(
         title = _normalize_title(item.findtext("title") or "")
         if not title:
             continue
+        lower_title = title.lower()
+        if any(token in title for token in BANNED_TITLE_SUBSTRINGS):
+            continue
         link = _safe_text(item.findtext("link"), 320) or None
         pub_date = _safe_text(item.findtext("pubDate"), 64) or None
         source = _safe_text(item.findtext("source"), 80) or None
@@ -141,10 +220,11 @@ def _parse_rss_items(
             age_hours = (now_ts_ms - pub_ts_ms) / 3_600_000
             if age_hours > MAX_AGE_HOURS:
                 continue
+            if age_hours > 12 and _looks_stale_by_title_year(title, now_ts_ms):
+                continue
         score = _keyword_score(title, keywords)
-        if score == 0 and category in {"ai", "geopolitics"}:
+        if keywords and score <= 0:
             continue
-
         out.append(
             {
                 "title": title,
@@ -159,16 +239,14 @@ def _parse_rss_items(
 
     out.sort(
         key=lambda row: (
+            int(CATEGORY_PRIORITY.get(str(row.get("category") or ""), 0)),
             int(row.get("score") or 0),
             int(row.get("published_ts_ms") or 0),
         ),
         reverse=True,
     )
 
-    trimmed = out[: max(1, int(limit))]
-    for row in trimmed:
-        row.pop("score", None)
-    return trimmed
+    return out[: max(1, int(limit))]
 
 
 def _fetch_category_items(

@@ -8,6 +8,7 @@ import type { RoomSseState } from '../../hooks/useRoomSse'
 import type {
   ChatMessage,
   DecisionRecord,
+  DecisionAuditRecord,
   Position,
   ReplayRuntimeStatus,
   RoomStreamPacket,
@@ -83,6 +84,32 @@ function decisionToViewItem(row: DecisionRecord, index: number): DecisionViewIte
   }
 }
 
+function auditToViewItem(row: DecisionAuditRecord, index: number): DecisionViewItem {
+  const rawAction = String(row.action || 'hold')
+  const rawSymbol = String(row.symbol || '--')
+  const confidenceRaw = (row as any)?.confidence
+  const confidenceNum = Number(confidenceRaw)
+  const confidence = Number.isFinite(confidenceNum)
+    ? confidenceNum > 1
+      ? Math.max(0, Math.min(confidenceNum / 100, 1))
+      : Math.max(0, Math.min(confidenceNum, 1))
+    : null
+
+  const reasoning = clipText(
+    String((row as any)?.reasoning || (row as any)?.summary || (row as any)?.decision_source || ''),
+    84
+  )
+
+  return {
+    id: `${String(row.timestamp || 'audit-ts')}-${Number(row.cycle_number || index)}`,
+    timestamp: formatTimeLabel(String(row.timestamp || '')),
+    action: normalizeAction(rawAction),
+    symbol: rawSymbol,
+    confidence,
+    reasoning,
+  }
+}
+
 function pickPositionSymbol(positions: Position[]): string | undefined {
   if (!positions.length) return undefined
   const ranked = [...positions].sort(
@@ -125,20 +152,12 @@ export function usePhoneStreamData({
     }
   )
 
-  const { data: fallbackDecisions = [] } = useSWR<DecisionRecord[]>(
-    roomId ? ['design-latest-decisions', roomId] : null,
-    () => api.getLatestDecisions(roomId, 8),
-    {
-      refreshInterval: 12000,
-      revalidateOnFocus: false,
-      dedupingInterval: 1800,
-    }
-  )
-
-  const decisions =
-    Array.isArray(streamPacket?.decisions_latest) && streamPacket.decisions_latest.length
-      ? streamPacket.decisions_latest
-      : fallbackDecisions
+  const decisions = Array.isArray(streamPacket?.decisions_latest)
+    ? streamPacket.decisions_latest
+    : []
+  const auditFallback = Array.isArray((streamPacket as any)?.decision_audit_preview?.records)
+    ? ((streamPacket as any).decision_audit_preview.records as DecisionAuditRecord[])
+    : []
 
   const positions = useMemo(
     () =>
@@ -148,13 +167,19 @@ export function usePhoneStreamData({
     [streamPacket?.positions]
   )
 
-  const decisionItems = useMemo(
-    () => decisions.slice(0, 8).map((row, idx) => decisionToViewItem(row, idx)),
-    [decisions]
-  )
+  const decisionItems = useMemo(() => {
+    if (decisions.length > 0) {
+      return decisions.slice(0, 8).map((row, idx) => decisionToViewItem(row, idx))
+    }
+    return auditFallback.slice(0, 8).map((row, idx) => auditToViewItem(row, idx))
+  }, [decisions, auditFallback])
 
-  const latestDecisionSymbol = String(decisionItems[0]?.symbol || '').trim()
-  const latestDecisionTs = String(decisions[0]?.timestamp || '')
+  const latestDecisionSymbol = String(
+    decisions[0]?.decisions?.[0]?.symbol || decisionItems[0]?.symbol || ''
+  ).trim()
+  const latestDecisionTs = String(
+    decisions[0]?.timestamp || streamPacket?.decision_latest?.timestamp || ''
+  )
   const latestDecisionAgeMs = latestDecisionTs
     ? Date.now() - new Date(latestDecisionTs).getTime()
     : Number.POSITIVE_INFINITY

@@ -4366,6 +4366,12 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
   const selectedCandidate = validCandidates.find((item) => item.symbol === selectedSymbol) || validCandidates[0]
   const symbol = selectedCandidate?.symbol || selectedSymbol
   const latestEventTs = selectedCandidate?.latestEventTs
+  const selectedIntradayFrames = Array.isArray(selectedCandidate?.intradayBatch?.frames)
+    ? selectedCandidate.intradayBatch.frames
+    : []
+  const selectedDailyFrames = Array.isArray(selectedCandidate?.dailyBatch?.frames)
+    ? selectedCandidate.dailyBatch.frames
+    : []
   const context = selectedCandidate?.context || buildAgentMarketContext({
     symbol,
     asOfTsMs: Date.now(),
@@ -4421,8 +4427,8 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
 
   const readiness = evaluateDataReadiness({
     context,
-    intradayFrames,
-    dailyFrames: Array.isArray(dailyBatch?.frames) ? dailyBatch.frames : [],
+    intradayFrames: selectedIntradayFrames,
+    dailyFrames: selectedDailyFrames,
     nowMs: (RUNTIME_DATA_MODE === 'live_file'
       ? Date.now()
       : (Number.isFinite(Number(context?.as_of_ts_ms)) ? Number(context.as_of_ts_ms) : Date.now())),

@@ -379,6 +379,35 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     50,
     85
   )
+  const conservativeProbeEnabled = String(
+    context?.runtime_config?.conservative_probe_enabled
+    ?? process.env.AGENT_CONSERVATIVE_PROBE_ENABLED
+    ?? 'true'
+  ).toLowerCase() !== 'false'
+  const conservativeProbeMinCycles = Math.max(1, Math.floor(toSafeNumber(
+    context?.runtime_config?.conservative_probe_min_cycles,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_MIN_CYCLES, 8)
+  )))
+  const conservativeProbeMaxRsi = clamp(
+    toSafeNumber(
+      context?.runtime_config?.conservative_probe_max_rsi,
+      toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_MAX_RSI, 62)
+    ),
+    35,
+    72
+  )
+  const conservativeProbeRet5Max = toSafeNumber(
+    context?.runtime_config?.conservative_probe_ret5_max,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_RET5_MAX, -0.003)
+  )
+  const conservativeProbeRet20Max = toSafeNumber(
+    context?.runtime_config?.conservative_probe_ret20_max,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_RET20_MAX, -0.006)
+  )
+  const conservativeProbeLots = Math.max(1, Math.floor(toSafeNumber(
+    context?.runtime_config?.conservative_probe_lots,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_LOTS, 1)
+  )))
   const openingPhaseMode = String(context?.runtime_config?.opening_phase_mode || '').trim().toLowerCase() === 'true'
   const openingPhaseMaxLots = Math.max(1, Math.floor(toSafeNumber(context?.runtime_config?.opening_phase_max_lots, 1)))
   const openingPhaseMaxConfidence = clamp(
@@ -398,10 +427,14 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     symbolSharesInMemory,
   )
   const hasSymbolShares = symbolShares > 0
+  const ret5 = toSafeNumber(decisionContext?.intraday?.feature_snapshot?.ret_5, 0)
+  const ret20 = toSafeNumber(decisionContext?.intraday?.feature_snapshot?.ret_20, 0)
   const rsi14 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.rsi_14, 50)
   const sma20 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.sma_20, 0)
   const sma60 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.sma_60, 0)
   const bearishTrend = sma20 > 0 && sma60 > 0 && sma20 < sma60
+  const style = String(traderProfile?.tradingStyle || 'balanced').trim().toLowerCase()
+  const risk = String(traderProfile?.riskProfile || 'balanced').trim().toLowerCase()
 
   const originalAction = String(llmDecision?.action || decideAction(decisionContext, traderProfile)).toLowerCase()
   let action = originalAction
@@ -428,6 +461,23 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     action = 'buy'
   }
 
+  const conservativeProbeEntry = (
+    conservativeProbeEnabled
+    && isFlat
+    && action === 'hold'
+    && style === 'mean_reversion'
+    && risk === 'conservative'
+    && Number.isFinite(Number(cycleNumber))
+    && Number(cycleNumber) >= conservativeProbeMinCycles
+    && !bearishTrend
+    && rsi14 <= conservativeProbeMaxRsi
+    && (ret5 <= conservativeProbeRet5Max || ret20 <= conservativeProbeRet20Max)
+  )
+
+  if (conservativeProbeEntry) {
+    action = 'buy'
+  }
+
   let confidence = Number.isFinite(Number(llmDecision?.confidence))
     ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
     : confidenceFromContext(decisionContext, action, traderProfile)
@@ -437,12 +487,15 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const quantity = Number.isFinite(Number(llmDecision?.quantity))
     ? Math.max(0, Math.floor(Number(llmDecision.quantity)))
     : baseQuantityFromProfile(action, lotSize, confidence, traderProfile)
+  const conservativeProbeQuantity = conservativeProbeEntry
+    ? lotSize * conservativeProbeLots
+    : null
   const forcedFlatEntryQuantity = action === 'buy' && isFlat && flatEntryEnabled && Number(cycleNumber) >= flatEntryMinCycles
     ? lotSize * flatEntryLots
     : null
   let requestedQuantity = action === 'hold'
     ? 0
-    : toLotQuantity(forcedFlatEntryQuantity ?? quantity, lotSize)
+    : toLotQuantity(conservativeProbeQuantity ?? forcedFlatEntryQuantity ?? quantity, lotSize)
   if (openingPhaseMode && action !== 'hold' && requestedQuantity > 0) {
     const maxOpeningQuantity = lotSize * openingPhaseMaxLots
     requestedQuantity = Math.min(requestedQuantity, maxOpeningQuantity)
@@ -616,6 +669,8 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   }
   if (buyGuardedInsufficientCash) {
     reasoning = `guardrail: skip buy on ${symbol}, insufficient cash for one lot (lot=${lotSize}, cash=${cashCny.toFixed(2)}, price=${price.toFixed(2)}). ${reasoning}`
+  } else if (conservativeProbeEntry) {
+    reasoning = `conservative probe-entry -> starter buy ${lotSize * conservativeProbeLots} shares on pullback (ret5=${ret5.toFixed(4)}, ret20=${ret20.toFixed(4)}, rsi=${rsi14.toFixed(1)}). ${reasoning}`
   } else if (forcedFlatEntry) {
     reasoning = `flat-entry (in cash too long) -> starter buy ${lotSize * flatEntryLots} shares. ${reasoning}`
   } else if (originalAction === 'sell' && action === 'hold' && sellGuardedWithoutSymbolShares) {

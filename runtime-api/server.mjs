@@ -159,6 +159,14 @@ const CHAT_DECISION_NARRATION_MIN_INTERVAL_MS = Math.max(
   5_000,
   Number(process.env.CHAT_DECISION_NARRATION_MIN_INTERVAL_MS || 60_000)
 )
+const CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS || 25_000)
+)
+const CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS = Math.max(
+  5_000,
+  Number(process.env.CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS || 20_000)
+)
 const CHAT_LLM_ENABLED = String(process.env.CHAT_LLM_ENABLED || String(AGENT_LLM_ENABLED)).toLowerCase() !== 'false'
 const CHAT_LLM_TIMEOUT_MS = Math.max(1000, Number(process.env.CHAT_LLM_TIMEOUT_MS || AGENT_LLM_TIMEOUT_MS))
 const CHAT_LLM_MAX_OUTPUT_TOKENS = Math.max(80, Number(process.env.CHAT_LLM_MAX_OUTPUT_TOKENS || 140))
@@ -3410,6 +3418,7 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   const conf = Number.isFinite(Number(symbolBrief?.confidence ?? head?.confidence))
     ? Number(symbolBrief?.confidence ?? head?.confidence).toFixed(2)
     : ''
+  const thinking = String(symbolBrief?.reasoning || head?.reasoning || '').trim()
 
   const bits = []
   if (symbol && action) {
@@ -3417,6 +3426,9 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   }
   if (conf) {
     bits.push(`置信度${conf}`)
+  }
+  if (thinking) {
+    bits.push(`思路${thinking.slice(0, 38)}`)
   }
   if (readiness) {
     bits.push(`数据就绪${readiness}`)
@@ -3612,14 +3624,28 @@ function narrationTextFromReasoningSteps(steps) {
   const rows = Array.isArray(steps) ? steps.map(stripStepPrefix).filter(Boolean) : []
   if (!rows.length) return ''
 
-  const action = rows.find((line) => line.includes('动作：')) || rows[rows.length - 1]
-  const signal = rows.find((line) => line.includes('信号快照：'))
+  const actionLine = rows.find((line) => line.includes('动作：')) || rows[rows.length - 1]
+  const signalLine = rows.find((line) => line.includes('信号快照：'))
     || rows.find((line) => line.includes('市场概览：') || line.includes('消息面：'))
     || rows[0]
 
-  let text = action
-  if (signal && signal !== action) {
-    text = `${action}；${signal}`
+  const actionPlain = String(actionLine || '').replace(/^动作：/, '').trim()
+  const signalPlain = String(signalLine || '')
+    .replace(/^信号快照：/, '')
+    .replace(/^市场概览：/, '')
+    .replace(/^消息面：/, '')
+    .trim()
+  const isHold = /\bhold\b|观望|继续观察|不交易|先看/.test(actionPlain.toLowerCase()) || /观望|继续观察|不交易|先看/.test(actionPlain)
+
+  let text = ''
+  if (isHold) {
+    text = signalPlain
+      ? `我的思路：${signalPlain}，所以这一轮先观望。`
+      : `我的思路：${actionPlain}。`
+  } else {
+    text = signalPlain && signalPlain !== actionPlain
+      ? `我的决策：${actionPlain}；依据：${signalPlain}`
+      : `我的决策：${actionPlain}`
   }
 
   if (!/[。！？!?]$/.test(text)) {
@@ -3658,7 +3684,15 @@ async function maybeEmitDecisionNarration({ trader, decision, context }) {
     last_decision_ts: '',
     last_cycle: 0,
   }
-  if (now - Number(previous.last_emit_ms || 0) < CHAT_DECISION_NARRATION_MIN_INTERVAL_MS) {
+  const latestAction = String(decision?.decisions?.[0]?.action || '').trim().toLowerCase()
+  const riskProfile = String(trader?.risk_profile || '').trim().toLowerCase()
+  const narrationMinIntervalMs = latestAction === 'hold'
+    ? (riskProfile === 'conservative'
+      ? CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS
+      : CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS)
+    : CHAT_DECISION_NARRATION_MIN_INTERVAL_MS
+
+  if (now - Number(previous.last_emit_ms || 0) < narrationMinIntervalMs) {
     return
   }
 
@@ -5335,6 +5369,8 @@ app.get('/api/agent/runtime/status', (_req, res) => {
       decision_narration_enabled: CHAT_DECISION_NARRATION_ENABLED,
       decision_narration_use_llm: CHAT_DECISION_NARRATION_USE_LLM,
       decision_narration_min_interval_ms: CHAT_DECISION_NARRATION_MIN_INTERVAL_MS,
+      decision_narration_hold_interval_ms: CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS,
+      decision_narration_conservative_hold_interval_ms: CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS,
     },
     kill_switch: killSwitchPublicState(),
     llm: {

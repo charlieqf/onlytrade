@@ -46,6 +46,9 @@ function buildSystemPrompt({ roomAgent, kind }) {
   const positionRule = (kind === 'proactive' || kind === 'narration')
     ? 'If room_context.symbol_brief.position_shares_on_symbol is 0, do not claim you are currently holding that symbol; describe it as no-position/watchlist instead.'
     : ''
+  const holdReasonRule = (kind === 'proactive' || kind === 'narration')
+    ? 'When latest_decision.action is hold, explain your thinking process briefly (signal + risk), not only "hold".'
+    : ''
   const style = styleHint(roomAgent)
 
   return [
@@ -56,6 +59,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     contextRule,
     topicRule,
     positionRule,
+    holdReasonRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
 }

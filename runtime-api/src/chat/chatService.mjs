@@ -4,6 +4,7 @@ import {
   shouldAgentReply as defaultShouldAgentReply,
 } from './chatAgentResponder.mjs'
 import { validateMessageType } from './chatContract.mjs'
+import { resolveProactiveCadence } from './newsBurst.mjs'
 
 const MENTION_TOKEN_RE = /@([a-zA-Z0-9_]+)/g
 
@@ -146,6 +147,10 @@ export function createChatService({
   rateLimitPerMin = Number(process.env.CHAT_RATE_LIMIT_PER_MIN || 20),
   publicPlainReplyRate = Number(process.env.CHAT_PUBLIC_PLAIN_REPLY_RATE || 0.05),
   proactivePublicIntervalMs = Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000),
+  proactiveNewsBurstEnabled = String(process.env.CHAT_PROACTIVE_NEWS_BURST_ENABLED || 'true').toLowerCase() !== 'false',
+  proactiveNewsBurstIntervalMs = Number(process.env.CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS || 9_000),
+  proactiveNewsBurstDurationMs = Number(process.env.CHAT_PROACTIVE_NEWS_BURST_DURATION_MS || 120_000),
+  proactiveNewsBurstCooldownMs = Number(process.env.CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS || 480_000),
   chatContextTimeZone = process.env.CHAT_CONTEXT_TIMEZONE || 'Asia/Shanghai',
   shouldAgentReply = defaultShouldAgentReply,
   generateAgentMessageText = null,
@@ -167,8 +172,13 @@ export function createChatService({
     ? Math.max(0, Math.min(Number(publicPlainReplyRate), 1))
     : 0.05
   const safeProactivePublicIntervalMs = Math.max(10_000, Number(proactivePublicIntervalMs) || 90_000)
+  const safeProactiveNewsBurstIntervalMs = Math.max(3_000, Number(proactiveNewsBurstIntervalMs) || 9_000)
+  const safeProactiveNewsBurstDurationMs = Math.max(0, Number(proactiveNewsBurstDurationMs) || 120_000)
+  const safeProactiveNewsBurstCooldownMs = Math.max(0, Number(proactiveNewsBurstCooldownMs) || 480_000)
+  const safeProactiveNewsBurstEnabled = Boolean(proactiveNewsBurstEnabled)
   const proactiveStateByRoom = new Map()
   const proactiveInFlightByRoom = new Map()
+  const proactiveBurstStateByRoom = new Map()
 
   function emitPublicAppendBestEffort(roomId, payload) {
     if (typeof onPublicAppend !== 'function') return
@@ -239,9 +249,45 @@ export function createChatService({
     }
 
     const now = nowMs()
+    let roomContext = null
+    let cadence = resolveProactiveCadence({
+      nowMs: now,
+      defaultIntervalMs: safeProactivePublicIntervalMs,
+      burstIntervalMs: safeProactiveNewsBurstIntervalMs,
+      burstDurationMs: safeProactiveNewsBurstDurationMs,
+      cooldownMs: safeProactiveNewsBurstCooldownMs,
+      previousState: proactiveBurstStateByRoom.get(roomId) || null,
+      burstSignal: null,
+    })
+    let cadenceIntervalMs = cadence.intervalMs
+
     const lastProactiveTs = Number(proactiveStateByRoom.get(roomId) || 0)
-    if (now - lastProactiveTs < safeProactivePublicIntervalMs) {
-      return
+    const elapsedSinceProactive = now - lastProactiveTs
+    if (elapsedSinceProactive < cadenceIntervalMs) {
+      const baseWindowCheck = elapsedSinceProactive < safeProactivePublicIntervalMs
+      if (!safeProactiveNewsBurstEnabled || !baseWindowCheck) {
+        proactiveBurstStateByRoom.set(roomId, cadence.state)
+        return
+      }
+
+      roomContext = await resolveRoomContextSafe(roomId)
+      cadence = resolveProactiveCadence({
+        nowMs: now,
+        defaultIntervalMs: safeProactivePublicIntervalMs,
+        burstIntervalMs: safeProactiveNewsBurstIntervalMs,
+        burstDurationMs: safeProactiveNewsBurstDurationMs,
+        cooldownMs: safeProactiveNewsBurstCooldownMs,
+        previousState: cadence.state,
+        burstSignal: roomContext?.news_burst_signal || null,
+      })
+      cadenceIntervalMs = cadence.intervalMs
+      proactiveBurstStateByRoom.set(roomId, cadence.state)
+
+      if (elapsedSinceProactive < cadenceIntervalMs) {
+        return
+      }
+    } else {
+      proactiveBurstStateByRoom.set(roomId, cadence.state)
     }
 
     proactiveInFlightByRoom.set(roomId, true)
@@ -251,15 +297,45 @@ export function createChatService({
       const lastMessage = todayMessages[todayMessages.length - 1]
       const lastMessageTs = Number(lastMessage?.created_ts_ms)
 
-      if (Number.isFinite(lastMessageTs) && now - lastMessageTs < safeProactivePublicIntervalMs) {
-        return
+      if (Number.isFinite(lastMessageTs)) {
+        const elapsedSinceLastMessage = now - lastMessageTs
+        if (elapsedSinceLastMessage < cadenceIntervalMs) {
+          const baseWindowCheck = elapsedSinceLastMessage < safeProactivePublicIntervalMs
+          if (!safeProactiveNewsBurstEnabled || !baseWindowCheck) {
+            return
+          }
+
+          if (!roomContext) {
+            roomContext = await resolveRoomContextSafe(roomId)
+          }
+
+          cadence = resolveProactiveCadence({
+            nowMs: now,
+            defaultIntervalMs: safeProactivePublicIntervalMs,
+            burstIntervalMs: safeProactiveNewsBurstIntervalMs,
+            burstDurationMs: safeProactiveNewsBurstDurationMs,
+            cooldownMs: safeProactiveNewsBurstCooldownMs,
+            previousState: proactiveBurstStateByRoom.get(roomId) || cadence.state,
+            burstSignal: roomContext?.news_burst_signal || null,
+          })
+          cadenceIntervalMs = cadence.intervalMs
+          proactiveBurstStateByRoom.set(roomId, cadence.state)
+
+          if (elapsedSinceLastMessage < cadenceIntervalMs) {
+            return
+          }
+        }
+      }
+
+      if (!roomContext) {
+        roomContext = await resolveRoomContextSafe(roomId)
       }
 
       const generatedText = await generateAgentText({
         kind: 'proactive',
         roomAgent,
         roomId,
-        roomContext: await resolveRoomContextSafe(roomId),
+        roomContext,
         latestDecision: resolveLatestDecision(roomId),
         historyContext: todayMessages,
         nowMs: now,

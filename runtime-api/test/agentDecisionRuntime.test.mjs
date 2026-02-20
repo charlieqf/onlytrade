@@ -149,6 +149,9 @@ test('createDecisionFromContext reasoning includes market overview and news dige
 test('createDecisionFromContext guards unaffordable buy to hold without failure', () => {
   const context = makeContext({ ret5: 0.005, rsi14: 55, sma20: 106, sma60: 100, price: 2000 })
   context.position_state.cash_cny = 100_000
+  context.runtime_config = {
+    max_symbol_concentration_pct: 1,
+  }
 
   const decision = createDecisionFromContext({
     trader,
@@ -190,6 +193,149 @@ test('createDecisionFromContext applies opening-phase quantity and confidence ca
   assert.equal(decision.decisions[0].requested_quantity, 100)
   assert.equal(decision.decisions[0].confidence, 0.62)
   assert.match(decision.decisions[0].reasoning, /opening-phase cap/)
+})
+
+test('createDecisionFromContext executes llm-selected symbol from candidate set', () => {
+  const context = makeContext({ ret5: 0.001, rsi14: 56, sma20: 106, sma60: 100, price: 108 })
+  context.candidate_set = {
+    symbols: ['600519.SH', '300750.SZ'],
+    selected_symbol: '600519.SH',
+    items: [
+      { symbol: '600519.SH', latest_price: 108, ret_5: 0.001, ret_20: 0.002, rank_score: 2 },
+      { symbol: '300750.SZ', latest_price: 220, ret_5: -0.004, ret_20: -0.008, rank_score: 1 },
+    ],
+  }
+  context.memory_state = {
+    holdings: [
+      {
+        symbol: '300750.SZ',
+        shares: 200,
+        avg_cost: 230,
+        mark_price: 220,
+      },
+    ],
+  }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'sell',
+    symbol: '300750.SZ',
+    confidence: 0.77,
+    quantity: 100,
+    reasoning: '候选股走弱，优先减仓。',
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 17,
+    context,
+    timestampIso: '2026-02-12T00:04:00.000Z',
+  })
+
+  assert.equal(decision.decisions[0].symbol, '300750.SZ')
+  assert.equal(decision.decisions[0].action, 'sell')
+  assert.equal(decision.decisions[0].quantity, 100)
+  assert.deepEqual(decision.candidate_coins, ['600519.SH', '300750.SZ'])
+})
+
+test('createDecisionFromContext blocks new buy when max position count reached', () => {
+  const context = makeContext({ ret5: 0.003, rsi14: 55, sma20: 106, sma60: 100, price: 108 })
+  context.symbol = '600519.SH'
+  context.memory_state = {
+    holdings: [
+      { symbol: '000001.SZ', shares: 100, avg_cost: 10, mark_price: 10 },
+      { symbol: '300750.SZ', shares: 100, avg_cost: 220, mark_price: 220 },
+      { symbol: '601318.SH', shares: 100, avg_cost: 50, mark_price: 50 },
+    ],
+  }
+  context.runtime_config = {
+    max_position_count: 3,
+  }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'buy',
+    symbol: '600519.SH',
+    confidence: 0.8,
+    quantity: 300,
+    reasoning: '尝试开新仓。',
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 18,
+    context,
+    timestampIso: '2026-02-12T00:04:30.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'hold')
+  assert.match(decision.decisions[0].reasoning, /max position count/i)
+})
+
+test('createDecisionFromContext clips quantity by concentration and reserve guardrails', () => {
+  const context = makeContext({ ret5: 0.004, rsi14: 58, sma20: 106, sma60: 100, price: 100 })
+  context.position_state.shares = 0
+  context.position_state.cash_cny = 100_000
+  context.memory_state = {
+    holdings: [],
+  }
+  context.runtime_config = {
+    max_symbol_concentration_pct: 0.2,
+    min_cash_reserve_pct: 0.5,
+    turnover_throttle_pct: 1,
+  }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'buy',
+    symbol: '600519.SH',
+    confidence: 0.82,
+    quantity: 1000,
+    reasoning: '放量突破，计划加仓。',
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 19,
+    context,
+    timestampIso: '2026-02-12T00:05:00.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'buy')
+  assert.equal(decision.decisions[0].requested_quantity, 200)
+  assert.equal(decision.decisions[0].quantity, 200)
+  assert.match(decision.decisions[0].reasoning, /concentration|cash reserve/i)
+})
+
+test('createDecisionFromContext clips turnover for oversized sell orders', () => {
+  const context = makeContext({ ret5: -0.004, rsi14: 74, sma20: 99, sma60: 101, price: 100 })
+  context.position_state.shares = 1000
+  context.position_state.cash_cny = 0
+  context.memory_state = {
+    holdings: [
+      { symbol: '600519.SH', shares: 1000, avg_cost: 95, mark_price: 100 },
+    ],
+  }
+  context.runtime_config = {
+    turnover_throttle_pct: 0.1,
+  }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'sell',
+    symbol: '600519.SH',
+    confidence: 0.84,
+    quantity: 800,
+    reasoning: '风险上升，计划快速降仓。',
+  }
+
+  const decision = createDecisionFromContext({
+    trader,
+    cycleNumber: 20,
+    context,
+    timestampIso: '2026-02-12T00:05:30.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'sell')
+  assert.equal(decision.decisions[0].requested_quantity, 100)
+  assert.equal(decision.decisions[0].quantity, 100)
+  assert.match(decision.decisions[0].reasoning, /turnover throttle/i)
 })
 
 test('in-memory runtime stores per-trader latest decisions and metrics', async () => {

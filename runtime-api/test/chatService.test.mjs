@@ -274,3 +274,54 @@ test('does not send agent messages when room agent is stopped', async () => {
   const agentWrites = fake.calls.publicWrites.filter((m) => m.sender_type === 'agent')
   assert.equal(agentWrites.length, 0)
 })
+
+test('proactive cadence accelerates during news burst window', async () => {
+  let nowValue = 40_000
+  const fake = createPersistentFakeStore([
+    {
+      id: 'm1',
+      room_id: 't_001',
+      user_session_id: 'usr_sess_1',
+      sender_type: 'user',
+      sender_name: 'TraderFox',
+      visibility: 'public',
+      message_type: 'public_plain',
+      text: 'hello',
+      created_ts_ms: 0,
+    },
+  ])
+
+  const svc = createChatService({
+    store: fake.store,
+    resolveRoomAgent: () => ({
+      roomId: 't_001',
+      agentId: 't_001',
+      agentHandle: 'hs300_momentum',
+      agentName: 'HS300 Momentum',
+      isRunning: true,
+    }),
+    resolveRoomContext: () => ({
+      news_burst_signal: {
+        key: 'geopolitics|1',
+        category: 'geopolitics',
+        priority: 4,
+        title: '地缘风险抬升',
+        published_ts_ms: nowValue - 5_000,
+      },
+    }),
+    nowMs: () => nowValue,
+    proactivePublicIntervalMs: 18_000,
+    proactiveNewsBurstEnabled: true,
+    proactiveNewsBurstIntervalMs: 9_000,
+    proactiveNewsBurstDurationMs: 120_000,
+    proactiveNewsBurstCooldownMs: 480_000,
+    generateAgentMessageText: async ({ nowMs }) => `LLM burst ping ${nowMs}`,
+  })
+
+  const first = await svc.getPublicMessages('t_001', { limit: 20 })
+  assert.equal(first.filter((item) => item.sender_type === 'agent').length, 1)
+
+  nowValue = 50_000
+  const second = await svc.getPublicMessages('t_001', { limit: 20 })
+  assert.equal(second.filter((item) => item.sender_type === 'agent').length, 2)
+})

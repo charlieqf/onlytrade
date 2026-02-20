@@ -38,7 +38,10 @@ function buildSystemPrompt({ roomAgent, kind }) {
       ? 'You are narrating your latest trading decision to the room like a livestream host.'
       : 'You are writing a direct reply to a user message in the room.')
   const contextRule = (kind === 'proactive' || kind === 'narration')
-    ? 'If room_context contains market_overview_brief or news_digest_titles, explicitly reference them in your message.'
+    ? 'If room_context contains market_overview_brief, news_digest_titles, news_commentary, or news_categories, explicitly reference one concise market/news point.'
+    : ''
+  const topicRule = kind === 'proactive'
+    ? 'Prioritize topic rotation around tech, macro economy, and geopolitics when those signals exist.'
     : ''
   const positionRule = (kind === 'proactive' || kind === 'narration')
     ? 'If room_context.symbol_brief.position_shares_on_symbol is 0, do not claim you are currently holding that symbol; describe it as no-position/watchlist instead.'
@@ -51,6 +54,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON.',
     'Do not claim you executed real broker orders.',
     contextRule,
+    topicRule,
     positionRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
@@ -93,6 +97,30 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
         news_digest_titles: Array.isArray(ctx.news_digest_titles)
           ? ctx.news_digest_titles.map((t) => String(t || '').slice(0, 80)).filter(Boolean).slice(0, 6)
           : [],
+        news_commentary: Array.isArray(ctx.news_commentary)
+          ? ctx.news_commentary.map((t) => String(t || '').slice(0, 100)).filter(Boolean).slice(0, 3)
+          : [],
+        news_categories: Array.isArray(ctx.news_categories)
+          ? ctx.news_categories
+            .map((item) => {
+              const row = toSafeObject(item)
+              if (!row) return null
+              return {
+                category: String(row.category || '').slice(0, 24) || null,
+                label: String(row.label || '').slice(0, 24) || null,
+                count: Math.max(0, Math.floor(toNumber(row.count, 0))),
+              }
+            })
+            .filter(Boolean)
+            .slice(0, 5)
+          : [],
+        news_burst_signal: toSafeObject(ctx.news_burst_signal)
+          ? {
+            category: String(ctx.news_burst_signal.category || '').slice(0, 24) || null,
+            title: String(ctx.news_burst_signal.title || '').slice(0, 100) || null,
+            priority: toNumber(ctx.news_burst_signal.priority, null),
+          }
+          : null,
         symbol_brief: toSafeObject(ctx.symbol_brief)
           ? {
             symbol: ctx.symbol_brief.symbol || null,

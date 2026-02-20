@@ -34,6 +34,71 @@ function recentHoldStreak(context, maxLookback = 8) {
   return streak
 }
 
+function summarizeCandidateSet(context, { tokenSaver = false } = {}) {
+  const raw = context?.candidate_set
+  const rawItems = Array.isArray(raw?.items) ? raw.items : []
+  const symbols = Array.isArray(raw?.symbols)
+    ? raw.symbols.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+
+  const normalizedItems = rawItems
+    .map((item) => ({
+      symbol: String(item?.symbol || '').trim(),
+      latest_price: toNumber(item?.latest_price, 0),
+      ret_5: toNumber(item?.ret_5, 0),
+      ret_20: toNumber(item?.ret_20, 0),
+      vol_ratio_20: toNumber(item?.vol_ratio_20, 0),
+      rsi_14: toNumber(item?.rsi_14, 50),
+      rank_score: toNumber(item?.rank_score, 0),
+      position_shares: toNumber(item?.position_shares, 0),
+    }))
+    .filter((item) => item.symbol)
+
+  const fallbackSymbol = String(context?.symbol || '').trim() || '600519.SH'
+  const mergedSymbols = symbols.length
+    ? symbols
+    : (normalizedItems.length
+      ? normalizedItems.map((item) => item.symbol)
+      : [fallbackSymbol])
+
+  const selected = String(raw?.selected_symbol || mergedSymbols[0] || fallbackSymbol).trim() || fallbackSymbol
+  const selectedIndex = mergedSymbols.indexOf(selected)
+  if (selectedIndex > 0) {
+    mergedSymbols.splice(selectedIndex, 1)
+    mergedSymbols.unshift(selected)
+  } else if (selectedIndex < 0) {
+    mergedSymbols.unshift(selected)
+  }
+
+  if (tokenSaver) {
+    return {
+      symbols: mergedSymbols.slice(0, 8),
+      selected_symbol: selected,
+      top: normalizedItems
+        .sort((a, b) => a.rank_score - b.rank_score)
+        .slice(0, 5)
+        .map((row) => ({
+          s: row.symbol,
+          p: row.latest_price,
+          r5: row.ret_5,
+          r20: row.ret_20,
+          v: row.vol_ratio_20,
+          rsi: row.rsi_14,
+          rk: row.rank_score,
+          sh: row.position_shares,
+        })),
+    }
+  }
+
+  return {
+    symbols: mergedSymbols.slice(0, 12),
+    selected_symbol: selected,
+    items: normalizedItems
+      .sort((a, b) => a.rank_score - b.rank_score)
+      .slice(0, 12),
+  }
+}
+
 function summarizeContext(context) {
   const intraday = context?.intraday?.feature_snapshot || {}
   const daily = context?.daily?.feature_snapshot || {}
@@ -45,9 +110,10 @@ function summarizeContext(context) {
   const memoryReplay = context?.memory_state?.replay || {}
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
   const holdStreak = recentHoldStreak(context)
+  const candidateSet = summarizeCandidateSet(context)
 
   return {
-    symbol: context?.symbol || '600519.SH',
+    symbol: candidateSet?.selected_symbol || context?.symbol || '600519.SH',
     market: context?.market || 'CN-A',
     lot_size: toNumber(context?.constraints?.lot_size, 100) || 100,
     intraday: {
@@ -99,6 +165,7 @@ function summarizeContext(context) {
         ? newsDigest.titles.map((item) => String(item || '').slice(0, 96)).filter(Boolean).slice(0, 3)
         : [],
     },
+    candidate_set: candidateSet,
   }
 }
 
@@ -112,9 +179,10 @@ function summarizeContextLite(context) {
   const memoryStats = context?.memory_state?.stats || {}
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
   const holdStreak = recentHoldStreak(context)
+  const candidateSet = summarizeCandidateSet(context, { tokenSaver: true })
 
   return {
-    symbol: context?.symbol || '600519.SH',
+    symbol: candidateSet?.selected_symbol || context?.symbol || '600519.SH',
     lot_size: toNumber(context?.constraints?.lot_size, 100) || 100,
     intraday: {
       ret_5: toNumber(intraday.ret_5, 0),
@@ -152,6 +220,7 @@ function summarizeContextLite(context) {
         ? newsDigest.titles.map((item) => String(item || '').slice(0, 64)).filter(Boolean).slice(0, 2)
         : [],
     },
+    cands: candidateSet,
   }
 }
 
@@ -244,11 +313,10 @@ function universalInstruction({ tokenSaver = false } = {}) {
   if (tokenSaver) {
     return [
       'You are an A-share replay trading agent.',
-      'Goal: stable risk-adjusted returns across days.',
+      'Goal: maximize competition score: return first, then drawdown control, then Sharpe, with turnover/cost discipline.',
       'Do not overreact to one bar.',
-      'Avoid repetitive HOLD streaks when data readiness is OK.',
-      'If hold_streak>=3 and risk is not extreme, prefer a small-lot decisive buy/sell aligned with trend/context.',
-      'Use market overview + news digest in context for tie-break decisions.',
+      'HOLD is valid when edge is weak or signals conflict.',
+      'Use market overview + news digest only as tie-break context, not as direct trade trigger without confirming signals.',
       'Respect lot size and constraints.',
       'Return only JSON in required schema.',
     ].join(' ')
@@ -256,17 +324,49 @@ function universalInstruction({ tokenSaver = false } = {}) {
 
   return [
     'You are an A-share virtual trading agent in a replay simulation.',
-    'Primary objective: risk-adjusted consistency over multi-day competition with healthy room engagement.',
+    'Primary objective: maximize multi-day competition score: return first, then max-drawdown control, then Sharpe, while avoiding unnecessary turnover and fee drag.',
     'Respect constraints: 100-share lot size, no leverage, no hidden assumptions.',
     'Avoid overreaction to single bars; prioritize regime + context + memory consistency.',
-    'Avoid long repetitive HOLD streaks when data_readiness is OK.',
-    'If hold_streak>=3 and there is no strong risk-off evidence, break inertia with a small-lot buy/sell aligned to trend and market/news context.',
-    'Use market overview and news digest as a tie-breaker when technical signals are mixed.',
+    'HOLD is a valid outcome whenever edge is weak, uncertainty is high, or signals are mixed.',
+    'Use market overview and news digest as tie-break context when technical signals are mixed; do not force trades for engagement.',
     'Return JSON only with keys: action, confidence, quantity_shares, reasoning.',
     'action must be buy|sell|hold.',
     'quantity_shares must be 0 for hold and multiples of 100 otherwise.',
     'reasoning should be concise and non-sensitive, max 2 sentences.',
   ].join(' ')
+}
+
+function riskInstructionForProfile(riskProfile, { tokenSaver = false } = {}) {
+  const risk = String(riskProfile || 'balanced').trim().toLowerCase() || 'balanced'
+
+  const compactByRisk = {
+    conservative: 'Risk mode conservative: prefer fewer trades, higher confirmation, usually 1 lot.',
+    balanced: 'Risk mode balanced: require aligned signals before trading, avoid churn.',
+    aggressive: 'Risk mode aggressive: act faster on strong edge, but keep losses controlled and avoid random overtrading.',
+  }
+
+  const detailedByRisk = {
+    conservative: [
+      'Risk mode: conservative.',
+      'Prefer capital preservation, tighter selectivity, and lower turnover.',
+      'Use smaller sizing unless edge is very strong and conditions are clean.',
+    ].join(' '),
+    balanced: [
+      'Risk mode: balanced.',
+      'Trade when multiple signals align; avoid noise and overtrading.',
+      'Maintain consistent sizing and discipline.',
+    ].join(' '),
+    aggressive: [
+      'Risk mode: aggressive.',
+      'React faster when signal quality is high, but cut exposure quickly when edge degrades.',
+      'Higher activity is allowed only with clear evidence, not impulse.',
+    ].join(' '),
+  }
+
+  if (tokenSaver) {
+    return compactByRisk[risk] || compactByRisk.balanced
+  }
+  return detailedByRisk[risk] || detailedByRisk.balanced
 }
 
 function styleInstructionForTrader(trader, { tokenSaver = false } = {}) {
@@ -276,20 +376,64 @@ function styleInstructionForTrader(trader, { tokenSaver = false } = {}) {
   const stylePromptCn = String(trader?.style_prompt_cn || '').trim()
   const strategyName = String(trader?.strategy_name || '').trim()
 
-  const styleBriefByKey = {
-    momentum_trend: 'Style: momentum trend-following; avoid counter-trend entries and cut quickly on momentum loss.',
-    mean_reversion: 'Style: mean-reversion/value rebound; buy weakness selectively and avoid breakout chasing.',
-    event_driven: 'Style: event/regime-shift; respond to volatility spikes and de-risk fast under uncertainty.',
-    macro_swing: 'Style: macro swing; prefer slower directional entries with disciplined risk and lower churn.',
+  const stylePlaybookByKey = {
+    momentum_trend: {
+      compact: [
+        'Style momentum_trend: follow continuation, avoid counter-trend bottom-fishing.',
+        'Buy bias on positive ret_5/ret_20 with healthy trend structure; exit fast on momentum failure.',
+      ].join(' '),
+      detailed: [
+        'Style: momentum trend-following.',
+        'Entry bias: prefer continuation when ret_5 and ret_20 are positive and trend structure is healthy; avoid late chasing after obvious exhaustion.',
+        'Exit bias: de-risk quickly when momentum weakens, ret_5 flips against position, or trend quality deteriorates.',
+      ].join(' '),
+    },
+    mean_reversion: {
+      compact: [
+        'Style mean_reversion: buy controlled weakness near oversold context; avoid breakout chasing.',
+        'Take profits earlier and reduce risk if rebound fails to confirm.',
+      ].join(' '),
+      detailed: [
+        'Style: mean-reversion/value rebound.',
+        'Entry bias: look for controlled pullbacks and oversold-rebound setups; avoid entering when downside momentum is still accelerating.',
+        'Exit bias: harvest rebounds earlier, and cut quickly if bounce quality is poor or risk-off signals dominate.',
+      ].join(' '),
+    },
+    event_driven: {
+      compact: [
+        'Style event_driven: react to volatility/volume regime shifts, confirm with price action.',
+        'Scale down quickly when uncertainty or whipsaw risk rises.',
+      ].join(' '),
+      detailed: [
+        'Style: event-driven/regime-shift.',
+        'Entry bias: prioritize setups where volatility and participation clearly expand in the direction of edge.',
+        'Exit bias: de-risk fast under uncertainty, headline whipsaw, or failed follow-through after event impulse.',
+      ].join(' '),
+    },
+    macro_swing: {
+      compact: [
+        'Style macro_swing: align with broader trend/regime, lower churn and fewer low-quality flips.',
+        'Prefer patience and cleaner swing entries over short noisy trades.',
+      ].join(' '),
+      detailed: [
+        'Style: macro swing.',
+        'Entry bias: align with broader regime and smoother trend structure; prefer patience over micro-noise reactions.',
+        'Exit bias: protect capital when macro/trend backdrop weakens; avoid frequent flip-flop trading.',
+      ].join(' '),
+    },
   }
 
-  const fallbackBrief = 'Style: balanced systematic discretionary; trade only when signals align.'
-  const styleBrief = styleBriefByKey[tradingStyle] || fallbackBrief
+  const fallbackPlaybook = {
+    compact: 'Style balanced: trade only when multiple signals align.',
+    detailed: 'Style: balanced systematic discretionary; trade only when signals align and avoid overtrading.',
+  }
+  const stylePlaybook = stylePlaybookByKey[tradingStyle] || fallbackPlaybook
+  const riskInstruction = riskInstructionForProfile(riskProfile, { tokenSaver })
 
   if (tokenSaver) {
     const compact = [
-      styleBrief,
-      `risk=${riskProfile}`,
+      stylePlaybook.compact,
+      riskInstruction,
       strategyName ? `strategy=${strategyName}` : '',
       personality ? `personality=${personality}` : '',
       stylePromptCn ? `style_prompt_cn=${stylePromptCn}` : '',
@@ -299,9 +443,9 @@ function styleInstructionForTrader(trader, { tokenSaver = false } = {}) {
   }
 
   return [
-    styleBrief,
+    stylePlaybook.detailed,
     strategyName ? `Strategy name: ${strategyName}.` : '',
-    `Risk profile: ${riskProfile}.`,
+    riskInstruction,
     personality ? `Personality: ${personality}.` : '',
     stylePromptCn ? `CN style instruction: ${stylePromptCn}.` : '',
   ].filter(Boolean).join(' ')
@@ -331,7 +475,13 @@ export function createOpenAIAgentDecider({
       'Do not include markdown fences.',
     ].join(' ')
 
-    const allowedSymbol = payload?.symbol || context?.symbol || '600519.SH'
+    const candidateSymbols = Array.isArray(payload?.candidate_set?.symbols)
+      ? payload.candidate_set.symbols
+      : (Array.isArray(payload?.cands?.symbols) ? payload.cands.symbols : [])
+    const allowedSymbols = candidateSymbols.length
+      ? candidateSymbols
+      : [payload?.symbol || context?.symbol || '600519.SH']
+    const primarySymbol = allowedSymbols[0] || '600519.SH'
     const reasoningMaxChars = devTokenSaver ? 160 : 320
     const userPayload = devTokenSaver
       ? {
@@ -374,7 +524,7 @@ export function createOpenAIAgentDecider({
                 },
                 symbol: {
                   type: 'string',
-                  enum: [allowedSymbol],
+                  enum: allowedSymbols,
                 },
                 confidence: {
                   type: 'number',
@@ -440,7 +590,7 @@ export function createOpenAIAgentDecider({
       if (!rawDecision) {
         throw new Error('openai_invalid_json_content')
       }
-      const extracted = extractRawDecision(rawDecision, allowedSymbol)
+      const extracted = extractRawDecision(rawDecision, primarySymbol)
       if (!extracted || !isValidRawDecisionShape(extracted)) {
         throw new Error('openai_invalid_decision_shape')
       }

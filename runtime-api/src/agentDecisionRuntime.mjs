@@ -104,7 +104,37 @@ function baseQuantityFromProfile(action, lotSize, confidence, traderProfile = {}
   return Math.max(1, Math.floor(toSafeNumber(lotSize, 100))) * Math.max(1, lots)
 }
 
-function latestPrice(context) {
+function candidateItems(context) {
+  const raw = Array.isArray(context?.candidate_set?.items) ? context.candidate_set.items : []
+  return raw
+    .map((row) => ({
+      symbol: String(row?.symbol || '').trim(),
+      latest_price: toSafeNumber(row?.latest_price, 0),
+      ret_5: row?.ret_5,
+      ret_20: row?.ret_20,
+      vol_ratio_20: row?.vol_ratio_20,
+      atr_14: row?.atr_14,
+      rsi_14: row?.rsi_14,
+      sma_20: row?.sma_20,
+      sma_60: row?.sma_60,
+      range_20d_pct: row?.range_20d_pct,
+      position_shares: row?.position_shares,
+    }))
+    .filter((row) => row.symbol)
+}
+
+function candidateItemBySymbol(context, symbol) {
+  const target = String(symbol || '').trim()
+  if (!target) return null
+  const rows = candidateItems(context)
+  return rows.find((row) => row.symbol === target) || null
+}
+
+function latestPrice(context, symbol = '') {
+  const fromCandidate = candidateItemBySymbol(context, symbol)
+  const candidatePrice = toSafeNumber(fromCandidate?.latest_price, 0)
+  if (candidatePrice > 0) return candidatePrice
+
   const frames = context?.intraday?.frames || []
   const latest = frames[frames.length - 1]
   const close = toSafeNumber(latest?.bar?.close, 0)
@@ -209,6 +239,61 @@ function buildReasoning(action, context, traderProfile = {}) {
   return `${style} no strong edge (ret5=${ret5.toFixed(4)}, RSI=${rsi14.toFixed(1)}, risk=${risk}), hold.${macroSuffix}`
 }
 
+function contextForSymbol(context, symbol, fallbackPrice) {
+  const snapshot = candidateItemBySymbol(context, symbol)
+  if (!snapshot) return context
+
+  const next = {
+    ...context,
+    symbol,
+    intraday: {
+      ...(context?.intraday || {}),
+      feature_snapshot: {
+        ...(context?.intraday?.feature_snapshot || {}),
+      },
+    },
+    daily: {
+      ...(context?.daily || {}),
+      feature_snapshot: {
+        ...(context?.daily?.feature_snapshot || {}),
+      },
+    },
+    position_state: {
+      ...(context?.position_state || {}),
+    },
+  }
+
+  const intradaySnapshot = next.intraday.feature_snapshot
+  const dailySnapshot = next.daily.feature_snapshot
+  if (snapshot.ret_5 != null) intradaySnapshot.ret_5 = toSafeNumber(snapshot.ret_5, intradaySnapshot.ret_5)
+  if (snapshot.ret_20 != null) intradaySnapshot.ret_20 = toSafeNumber(snapshot.ret_20, intradaySnapshot.ret_20)
+  if (snapshot.atr_14 != null) intradaySnapshot.atr_14 = toSafeNumber(snapshot.atr_14, intradaySnapshot.atr_14)
+  if (snapshot.vol_ratio_20 != null) intradaySnapshot.vol_ratio_20 = toSafeNumber(snapshot.vol_ratio_20, intradaySnapshot.vol_ratio_20)
+  if (snapshot.rsi_14 != null) dailySnapshot.rsi_14 = toSafeNumber(snapshot.rsi_14, dailySnapshot.rsi_14)
+  if (snapshot.sma_20 != null) dailySnapshot.sma_20 = toSafeNumber(snapshot.sma_20, dailySnapshot.sma_20)
+  if (snapshot.sma_60 != null) dailySnapshot.sma_60 = toSafeNumber(snapshot.sma_60, dailySnapshot.sma_60)
+  if (snapshot.range_20d_pct != null) dailySnapshot.range_20d_pct = toSafeNumber(snapshot.range_20d_pct, dailySnapshot.range_20d_pct)
+
+  if (snapshot.position_shares != null) {
+    next.position_state.shares = toSafeNumber(snapshot.position_shares, next.position_state.shares)
+  }
+  next.position_state.mark_price = toSafeNumber(snapshot.latest_price, fallbackPrice)
+
+  return next
+}
+
+function candidateSymbolsFromContext(context) {
+  const explicit = Array.isArray(context?.candidate_set?.symbols)
+    ? context.candidate_set.symbols.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+  if (explicit.length) return explicit
+
+  const fromItems = candidateItems(context).map((item) => item.symbol)
+  if (fromItems.length) return fromItems
+
+  return [String(context?.symbol || '600519.SH').trim() || '600519.SH']
+}
+
 function buildDecisionInputPrompt(context, symbol, cycleNumber) {
   const payload = {
     cycle_number: cycleNumber,
@@ -269,8 +354,13 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     riskProfile: normalizeRiskProfile(trader),
   }
 
-  const symbol = context?.symbol || '600519.SH'
-  const price = latestPrice(context)
+  const candidateSymbols = candidateSymbolsFromContext(context)
+  const requestedSymbolRaw = String(llmDecision?.symbol || context?.symbol || candidateSymbols[0] || '600519.SH').trim()
+  const symbol = candidateSymbols.includes(requestedSymbolRaw)
+    ? requestedSymbolRaw
+    : (candidateSymbols[0] || '600519.SH')
+  const price = latestPrice(context, symbol)
+  const decisionContext = contextForSymbol(context, symbol, price)
   const lotSize = Math.max(1, Math.floor(toSafeNumber(context?.constraints?.lot_size, 100)))
 
   const flatEntryEnabled = String(context?.runtime_config?.flat_entry_enabled || '').trim()
@@ -308,12 +398,12 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     symbolSharesInMemory,
   )
   const hasSymbolShares = symbolShares > 0
-  const rsi14 = toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50)
-  const sma20 = toSafeNumber(context?.daily?.feature_snapshot?.sma_20, 0)
-  const sma60 = toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0)
+  const rsi14 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.rsi_14, 50)
+  const sma20 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.sma_20, 0)
+  const sma60 = toSafeNumber(decisionContext?.daily?.feature_snapshot?.sma_60, 0)
   const bearishTrend = sma20 > 0 && sma60 > 0 && sma20 < sma60
 
-  const originalAction = String(llmDecision?.action || decideAction(context, traderProfile)).toLowerCase()
+  const originalAction = String(llmDecision?.action || decideAction(decisionContext, traderProfile)).toLowerCase()
   let action = originalAction
   let sellGuardedWithoutSymbolShares = false
   // Guardrail: never attempt to sell when flat in this virtual long-only market.
@@ -340,7 +430,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
 
   let confidence = Number.isFinite(Number(llmDecision?.confidence))
     ? Number(clamp(Number(llmDecision.confidence), 0.51, 0.95).toFixed(2))
-    : confidenceFromContext(context, action, traderProfile)
+    : confidenceFromContext(decisionContext, action, traderProfile)
   if (openingPhaseMode) {
     confidence = Number(Math.min(confidence, openingPhaseMaxConfidence).toFixed(2))
   }
@@ -358,6 +448,22 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     requestedQuantity = Math.min(requestedQuantity, maxOpeningQuantity)
   }
   const commissionRate = Math.max(0, toSafeNumber(context?.runtime_config?.commission_rate, 0.0003))
+  const maxPositionCount = Math.max(1, Math.floor(toSafeNumber(context?.runtime_config?.max_position_count, 4)))
+  const maxSymbolConcentrationPct = clamp(
+    toSafeNumber(context?.runtime_config?.max_symbol_concentration_pct, 0.45),
+    0.1,
+    1,
+  )
+  const minCashReservePct = clamp(
+    toSafeNumber(context?.runtime_config?.min_cash_reserve_pct, 0.08),
+    0,
+    0.9,
+  )
+  const turnoverThrottlePct = clamp(
+    toSafeNumber(context?.runtime_config?.turnover_throttle_pct, 1),
+    0.01,
+    1,
+  )
 
   let cashCny = Math.max(0, toSafeNumber(context?.position_state?.cash_cny, 0))
   const holdingsMap = buildPortfolioFromContext(context, symbol, price)
@@ -374,7 +480,74 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const symbolHolding = holdingsMap.get(symbol)
   symbolHolding.mark_price = round(price, 4)
 
+  const portfolioBefore = portfolioPositions(holdingsMap)
+  const marketValueBefore = portfolioBefore.reduce((acc, position) => acc + position.mark_price * position.quantity, 0)
+  const totalBalanceBefore = round(cashCny + marketValueBefore, 2)
+  const currentSymbolValue = round(symbolHolding.shares * price, 2)
+  const openingNewPosition = action === 'buy' && symbolHolding.shares <= 0
+  const guardrailNotes = []
   let buyGuardedInsufficientCash = false
+
+  if (action === 'buy' && requestedQuantity > 0) {
+    const maxAffordableSharesPreview = Math.floor(cashCny / (price * (1 + commissionRate)))
+    const affordableQuantityPreview = toLotQuantity(maxAffordableSharesPreview, lotSize)
+    if (affordableQuantityPreview <= 0) {
+      action = 'hold'
+      requestedQuantity = 0
+      buyGuardedInsufficientCash = true
+    }
+  }
+
+  if (action !== 'hold' && requestedQuantity > 0) {
+    const maxNotionalPerCycle = Math.max(0, totalBalanceBefore * turnoverThrottlePct)
+    const maxTurnoverQty = toLotQuantity(maxNotionalPerCycle / Math.max(price, 0.0001), lotSize)
+    if (maxTurnoverQty <= 0) {
+      action = 'hold'
+      requestedQuantity = 0
+      guardrailNotes.push(`turnover throttle disabled order (max_notional=${maxNotionalPerCycle.toFixed(2)})`)
+    } else if (requestedQuantity > maxTurnoverQty) {
+      requestedQuantity = maxTurnoverQty
+      guardrailNotes.push(`turnover throttle clipped quantity to ${requestedQuantity}`)
+    }
+  }
+
+  if (action === 'buy' && requestedQuantity > 0 && openingNewPosition && portfolioBefore.length >= maxPositionCount) {
+    action = 'hold'
+    requestedQuantity = 0
+    guardrailNotes.push(`max position count reached (${portfolioBefore.length}/${maxPositionCount})`)
+  }
+
+  if (action === 'buy' && requestedQuantity > 0) {
+    const maxSymbolValue = Math.max(0, totalBalanceBefore * maxSymbolConcentrationPct)
+    const maxAdditionalByConcentration = Math.max(0, maxSymbolValue - currentSymbolValue)
+    const maxQtyByConcentration = toLotQuantity(maxAdditionalByConcentration / Math.max(price, 0.0001), lotSize)
+    if (maxQtyByConcentration <= 0) {
+      action = 'hold'
+      requestedQuantity = 0
+      guardrailNotes.push(`symbol concentration limit reached (${maxSymbolConcentrationPct.toFixed(2)})`)
+    } else if (requestedQuantity > maxQtyByConcentration) {
+      requestedQuantity = maxQtyByConcentration
+      guardrailNotes.push(`concentration clipped quantity to ${requestedQuantity}`)
+    }
+  }
+
+  if (action === 'buy' && requestedQuantity > 0) {
+    const reserveTargetCash = Math.max(0, totalBalanceBefore * minCashReservePct)
+    const reserveBudget = Math.max(0, cashCny - reserveTargetCash)
+    const maxQtyByReserve = toLotQuantity(
+      reserveBudget / Math.max(price * (1 + commissionRate), 0.0001),
+      lotSize,
+    )
+    if (maxQtyByReserve <= 0) {
+      action = 'hold'
+      requestedQuantity = 0
+      guardrailNotes.push(`min cash reserve prevents entry (${minCashReservePct.toFixed(2)})`)
+    } else if (requestedQuantity > maxQtyByReserve) {
+      requestedQuantity = maxQtyByReserve
+      guardrailNotes.push(`cash reserve clipped quantity to ${requestedQuantity}`)
+    }
+  }
+
   if (action === 'buy' && requestedQuantity > 0) {
     const maxAffordableSharesPreview = Math.floor(cashCny / (price * (1 + commissionRate)))
     const affordableQuantityPreview = toLotQuantity(maxAffordableSharesPreview, lotSize)
@@ -437,7 +610,10 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const totalUnrealizedProfit = portfolio.reduce((acc, position) => acc + position.unrealized_pnl, 0)
   const totalBalance = round(cashCny + marketValue, 2)
 
-  let reasoning = llmDecision?.reasoning || buildReasoning(action, context, traderProfile)
+  let reasoning = llmDecision?.reasoning || buildReasoning(action, decisionContext, traderProfile)
+  if (guardrailNotes.length) {
+    reasoning = `guardrail: ${guardrailNotes.join('; ')}. ${reasoning}`
+  }
   if (buyGuardedInsufficientCash) {
     reasoning = `guardrail: skip buy on ${symbol}, insufficient cash for one lot (lot=${lotSize}, cash=${cashCny.toFixed(2)}, price=${price.toFixed(2)}). ${reasoning}`
   } else if (forcedFlatEntry) {
@@ -454,7 +630,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
   const systemPrompt = llmDecision?.system_prompt
     || (llmDecision?.model ? `agent.market_context.v1+${llmDecision.model}` : 'agent.market_context.rule_engine.v1')
   const inputPrompt = llmDecision?.input_prompt || buildDecisionInputPrompt(context, symbol, cycleNumber)
-  const cotTrace = llmDecision?.cot_trace || buildHeuristicTrace(action, reasoning, context, traderProfile)
+  const cotTrace = llmDecision?.cot_trace || buildHeuristicTrace(action, reasoning, decisionContext, traderProfile)
   const actionSuccess = action === 'hold' ? true : executed
   const decisionSuccess = actionSuccess
   const executionLog = action === 'hold'
@@ -486,7 +662,7 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
       margin_used_pct: 0,
     },
     positions: portfolio,
-    candidate_coins: [symbol],
+    candidate_coins: candidateSymbols,
     decisions: [
       {
         action,

@@ -26,6 +26,7 @@ import { createChatFileStore } from './src/chat/chatFileStore.mjs'
 import { createChatService } from './src/chat/chatService.mjs'
 import { createOpenAIChatResponder } from './src/chat/chatLlmResponder.mjs'
 import { buildNarrationAgentMessage, buildProactiveAgentMessage } from './src/chat/chatAgentResponder.mjs'
+import { normalizeDigestHeadlines, resolveProactiveCadence, selectNewsBurstSignal } from './src/chat/newsBurst.mjs'
 import { createLiveJsonFileProvider } from './src/liveJsonFileProvider.mjs'
 import { evaluateDataReadiness } from './src/dataReadiness.mjs'
 import { readJsonlRecordsStreaming } from './src/jsonlReader.mjs'
@@ -122,6 +123,20 @@ const AGENT_LLM_ENABLED = String(process.env.AGENT_LLM_ENABLED || 'true').toLowe
 const AGENT_LLM_DEV_TOKEN_SAVER = String(process.env.AGENT_LLM_DEV_TOKEN_SAVER || 'true').toLowerCase() !== 'false'
 const AGENT_LLM_MAX_OUTPUT_TOKENS = Math.max(80, Number(process.env.AGENT_LLM_MAX_OUTPUT_TOKENS || 180))
 const AGENT_COMMISSION_RATE = Math.max(0, Number(process.env.AGENT_COMMISSION_RATE || 0.0003))
+const AGENT_PORTFOLIO_MAX_POSITION_COUNT = Math.max(1, Number(process.env.AGENT_PORTFOLIO_MAX_POSITION_COUNT || 4))
+const AGENT_PORTFOLIO_MAX_SYMBOL_CONCENTRATION_PCT = Math.max(
+  0.1,
+  Math.min(1, Number(process.env.AGENT_PORTFOLIO_MAX_SYMBOL_CONCENTRATION_PCT || 0.45))
+)
+const AGENT_PORTFOLIO_MIN_CASH_RESERVE_PCT = Math.max(
+  0,
+  Math.min(0.9, Number(process.env.AGENT_PORTFOLIO_MIN_CASH_RESERVE_PCT || 0.08))
+)
+const AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT = Math.max(
+  0.01,
+  Math.min(1, Number(process.env.AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT || 0.35))
+)
+const AGENT_CANDIDATE_SYMBOL_LIMIT = Math.max(1, Math.min(20, Number(process.env.AGENT_CANDIDATE_SYMBOL_LIMIT || 12)))
 const CONTROL_API_TOKEN = process.env.CONTROL_API_TOKEN || ''
 const RESET_AGENT_MEMORY_ON_BOOT = String(process.env.RESET_AGENT_MEMORY_ON_BOOT || 'false').toLowerCase() === 'true'
 const MARKET_DAILY_HISTORY_DAYS = (() => {
@@ -162,6 +177,29 @@ const CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS = Math.max(
 const CHAT_PROACTIVE_LLM_MAX_CONCURRENCY = Math.max(
   0,
   Math.min(10, Number(process.env.CHAT_PROACTIVE_LLM_MAX_CONCURRENCY || 2))
+)
+const CHAT_PROACTIVE_NEWS_BURST_ENABLED = String(
+  process.env.CHAT_PROACTIVE_NEWS_BURST_ENABLED || 'true'
+).toLowerCase() !== 'false'
+const CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS = Math.max(
+  3_000,
+  Number(process.env.CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS || 9_000)
+)
+const CHAT_PROACTIVE_NEWS_BURST_DURATION_MS = Math.max(
+  0,
+  Number(process.env.CHAT_PROACTIVE_NEWS_BURST_DURATION_MS || 120_000)
+)
+const CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS = Math.max(
+  0,
+  Number(process.env.CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS || 480_000)
+)
+const CHAT_PROACTIVE_NEWS_BURST_FRESH_MS = Math.max(
+  10_000,
+  Number(process.env.CHAT_PROACTIVE_NEWS_BURST_FRESH_MS || 20 * 60_000)
+)
+const CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY = Math.max(
+  1,
+  Math.min(5, Number(process.env.CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY || 3))
 )
 
 const MARKET_OVERVIEW_PATH_CN = path.resolve(
@@ -2587,6 +2625,7 @@ const roomStreamPacketTimerByRoom = new Map()
 const roomStreamPacketBuildStateByRoom = new Map()
 const roomStreamPacketBuildGlobalStatsByRoom = new Map()
 const proactiveEmitInFlightByRoom = new Map()
+const proactiveBurstStateByRoom = new Map()
 let proactiveLlmInFlight = 0
 const proactiveViewerTickStateByRoom = new Map()
 let proactiveViewerTickCursor = 0
@@ -2779,6 +2818,63 @@ function extractNewsTitles(payload) {
     if (titles.length >= 6) break
   }
   return titles
+}
+
+function extractNewsCommentary(payload) {
+  if (!payload || typeof payload !== 'object') return []
+  const lines = Array.isArray(payload.commentary) ? payload.commentary : []
+  return lines
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 6)
+}
+
+function newsCategoryLabel(category) {
+  const key = String(category || '').trim().toLowerCase()
+  if (key === 'ai') return 'AI'
+  if (key === 'geopolitics') return '地缘'
+  if (key === 'global_macro') return '宏观'
+  if (key === 'tech') return '科技'
+  if (key === 'markets_cn') return '市场'
+  return key || '其他'
+}
+
+function extractNewsCategorySummary(payload, normalizedHeadlines) {
+  const categories = payload && typeof payload === 'object' && payload.categories && typeof payload.categories === 'object'
+    ? payload.categories
+    : null
+
+  if (categories) {
+    return Object.entries(categories)
+      .map(([key, value]) => ({
+        category: String(key || '').trim().toLowerCase(),
+        count: Array.isArray(value) ? value.length : 0,
+      }))
+      .filter((item) => item.category)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+      .map((item) => ({
+        category: item.category,
+        label: newsCategoryLabel(item.category),
+        count: item.count,
+      }))
+  }
+
+  const counts = new Map()
+  for (const item of Array.isArray(normalizedHeadlines) ? normalizedHeadlines : []) {
+    const category = String(item?.category || '').trim().toLowerCase()
+    if (!category) continue
+    counts.set(category, Number(counts.get(category) || 0) + 1)
+  }
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([category, count]) => ({
+      category,
+      label: newsCategoryLabel(category),
+      count,
+    }))
 }
 
 function normalizeMarketBreadth(payload) {
@@ -3073,11 +3169,31 @@ async function getNewsDigestSnapshot(marketId) {
   const payload = await provider.getPayload({ forceRefresh: false })
   const status = provider.getStatus()
   const titles = extractNewsTitles(payload)
+  const headlines = normalizeDigestHeadlines(
+    payload && typeof payload === 'object'
+      ? (Array.isArray(payload.headlines)
+        ? payload.headlines
+        : (Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.news) ? payload.news : [])))
+      : []
+  )
+  const commentary = extractNewsCommentary(payload)
+  const categories = extractNewsCategorySummary(payload, headlines)
+  const burstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
+    ? selectNewsBurstSignal({
+      headlines,
+      nowMs: Date.now(),
+      freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
+      minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
+    })
+    : null
 
   return {
     source_kind: payload ? 'digest_file' : 'empty',
     market,
     titles,
+    commentary,
+    categories,
+    burst_signal: burstSignal,
     status,
   }
 }
@@ -3149,9 +3265,9 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
 }
 
 async function buildRoomChatContext(roomId, {
-  overview = null,
-  digest = null,
-  breadth = null,
+  overview = undefined,
+  digest = undefined,
+  breadth = undefined,
   latestDecision = null,
   nowMs = Date.now(),
 } = {}) {
@@ -3177,9 +3293,9 @@ async function buildRoomChatContext(roomId, {
   let effectiveOverview = overview
   let effectiveDigest = digest
   let effectiveBreadth = breadth
-  const needOverview = !effectiveOverview
-  const needDigest = !effectiveDigest
-  const needBreadth = !effectiveBreadth
+  const needOverview = typeof effectiveOverview === 'undefined'
+  const needDigest = typeof effectiveDigest === 'undefined'
+  const needBreadth = typeof effectiveBreadth === 'undefined'
   if (needOverview || needDigest || needBreadth) {
     const [fetchedOverview, fetchedDigest, fetchedBreadth] = await Promise.all([
       needOverview ? getMarketOverviewSnapshot(market) : Promise.resolve(null),
@@ -3215,6 +3331,9 @@ async function buildRoomChatContext(roomId, {
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
+    news_commentary: Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : [],
+    news_categories: Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : [],
+    news_burst_signal: effectiveDigest?.burst_signal || null,
     market_breadth_summary: effectiveBreadth?.summary || '',
     market_breadth: effectiveBreadth?.breadth || null,
     symbol_brief: symbolBrief,
@@ -3232,6 +3351,11 @@ chatService = createChatService({
   maxTextLen: CHAT_MAX_TEXT_LEN,
   rateLimitPerMin: CHAT_RATE_LIMIT_PER_MIN,
   publicPlainReplyRate: CHAT_PUBLIC_PLAIN_REPLY_RATE,
+  proactivePublicIntervalMs: Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000)),
+  proactiveNewsBurstEnabled: CHAT_PROACTIVE_NEWS_BURST_ENABLED,
+  proactiveNewsBurstIntervalMs: CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS,
+  proactiveNewsBurstDurationMs: CHAT_PROACTIVE_NEWS_BURST_DURATION_MS,
+  proactiveNewsBurstCooldownMs: CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS,
   generateAgentMessageText: chatLlmResponder,
   enableProactiveOnRead: !CHAT_PROACTIVE_VIEWER_TICK_ENABLED,
   onPublicAppend: (roomId, payload) => {
@@ -3273,8 +3397,12 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   const symbolBrief = roomContext?.symbol_brief || null
   const marketBrief = String(roomContext?.market_overview_brief || '').trim()
   const breadthSummary = String(roomContext?.market_breadth_summary || '').trim()
+  const burstSignal = roomContext?.news_burst_signal || null
   const newsTitles = Array.isArray(roomContext?.news_digest_titles)
     ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 2)
+    : []
+  const newsCommentary = Array.isArray(roomContext?.news_commentary)
+    ? roomContext.news_commentary.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 1)
     : []
   const head = latestDecision?.decisions?.[0] || null
   const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
@@ -3302,6 +3430,13 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
   if (newsTitles.length) {
     bits.push(`消息${newsTitles.join('；').slice(0, 46)}`)
   }
+  if (newsCommentary.length) {
+    bits.push(`热点${newsCommentary[0].slice(0, 32)}`)
+  }
+  if (burstSignal?.title) {
+    const label = newsCategoryLabel(burstSignal.category)
+    bits.push(`快讯[${label}]${String(burstSignal.title).slice(0, 24)}`)
+  }
   if (bits.length === 0) {
     return '房间已连接，等待下一轮信号。'
   }
@@ -3324,23 +3459,35 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
 
   try {
     const now = Date.now()
-    const intervalMs = Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000))
+    const defaultIntervalMs = Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000))
 
     const previous = roomPublicChatActivityByRoom.get(safeRoomId) || {
       last_public_append_ms: 0,
       last_proactive_emit_ms: 0,
       recent_proactive_keys: [],
     }
-    const lastActivity = Math.max(Number(previous.last_public_append_ms || 0), Number(previous.last_proactive_emit_ms || 0))
-    if (now - lastActivity < intervalMs) return false
-
-    if (CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0 && proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
-      return false
-    }
 
     const latest = agentRuntime?.getLatestDecisions?.(safeRoomId, 1) || []
     const latestDecision = latest[0] || null
     const roomContext = await buildRoomChatContext(safeRoomId)
+
+    const cadence = resolveProactiveCadence({
+      nowMs: now,
+      defaultIntervalMs,
+      burstIntervalMs: CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS,
+      burstDurationMs: CHAT_PROACTIVE_NEWS_BURST_DURATION_MS,
+      cooldownMs: CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS,
+      previousState: proactiveBurstStateByRoom.get(safeRoomId) || null,
+      burstSignal: CHAT_PROACTIVE_NEWS_BURST_ENABLED ? (roomContext?.news_burst_signal || null) : null,
+    })
+    proactiveBurstStateByRoom.set(safeRoomId, cadence.state)
+
+    const lastActivity = Math.max(Number(previous.last_public_append_ms || 0), Number(previous.last_proactive_emit_ms || 0))
+    if (now - lastActivity < cadence.intervalMs) return false
+
+    if (CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0 && proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
+      return false
+    }
 
     let text = ''
     if (chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0) {
@@ -3419,6 +3566,9 @@ function tickChatProactiveForRoomsWithViewers() {
     const active = new Set(roomIds)
     for (const key of Array.from(proactiveViewerTickStateByRoom.keys())) {
       if (!active.has(key)) proactiveViewerTickStateByRoom.delete(key)
+    }
+    for (const key of Array.from(proactiveBurstStateByRoom.keys())) {
+      if (!active.has(key)) proactiveBurstStateByRoom.delete(key)
     }
   }
 
@@ -4013,54 +4163,250 @@ function pickTraderSymbol(trader, cycleNumber = 1) {
   return symbols[idx]
 }
 
+function normalizeTraderStyleForRanking(trader) {
+  const explicit = String(trader?.trading_style || '').trim().toLowerCase()
+  if (explicit) return explicit
+  const strategy = String(trader?.strategy_name || '').trim().toLowerCase()
+  if (strategy.includes('momentum')) return 'momentum_trend'
+  if (strategy.includes('reversion') || strategy.includes('value')) return 'mean_reversion'
+  if (strategy.includes('event')) return 'event_driven'
+  if (strategy.includes('macro')) return 'macro_swing'
+  return 'balanced'
+}
+
+function rankCandidateRows(candidateRows, trader) {
+  const style = normalizeTraderStyleForRanking(trader)
+  const scored = candidateRows
+    .map((row) => {
+      const ret5 = toSafeNumber(row?.ret_5, 0)
+      const ret20 = toSafeNumber(row?.ret_20, 0)
+      const vol = toSafeNumber(row?.vol_ratio_20, 1)
+      const rsi = toSafeNumber(row?.rsi_14, 50)
+      const sma20 = toSafeNumber(row?.sma_20, 0)
+      const sma60 = toSafeNumber(row?.sma_60, 0)
+      const trendUp = sma20 > 0 && sma60 > 0 && sma20 >= sma60
+      const trendDown = sma20 > 0 && sma60 > 0 && sma20 < sma60
+      const hasPosition = toSafeNumber(row?.position_shares, 0) > 0
+
+      let score = 0
+      if (style === 'mean_reversion') {
+        score = (-ret5 * 1.0) + (-ret20 * 0.35)
+        if (rsi <= 45) score += 0.35
+        if (rsi >= 70) score -= 0.25
+        if (trendDown) score -= 0.12
+      } else if (style === 'event_driven') {
+        score = (ret5 * 0.8) + (ret20 * 0.6) + (Math.max(0, vol - 1) * 0.22)
+        if (trendUp) score += 0.12
+        if (trendDown) score -= 0.12
+      } else if (style === 'macro_swing') {
+        score = (ret20 * 1.3) + (ret5 * 0.35)
+        if (trendUp) score += 0.24
+        if (trendDown) score -= 0.22
+      } else {
+        score = (ret20 * 1.0) + (ret5 * 0.8) + (Math.max(0, vol - 1) * 0.12)
+        if (trendUp) score += 0.2
+        if (trendDown) score -= 0.18
+      }
+
+      if (hasPosition) score += 0.05
+
+      return {
+        ...row,
+        score: round(score, 6),
+        trend: trendUp ? 'up' : (trendDown ? 'down' : 'flat'),
+      }
+    })
+    .sort((a, b) => toSafeNumber(b.score, 0) - toSafeNumber(a.score, 0))
+
+  const ret5Sorted = [...scored]
+    .sort((a, b) => toSafeNumber(b.ret_5, 0) - toSafeNumber(a.ret_5, 0))
+    .map((item) => item.symbol)
+  const ret20Sorted = [...scored]
+    .sort((a, b) => toSafeNumber(b.ret_20, 0) - toSafeNumber(a.ret_20, 0))
+    .map((item) => item.symbol)
+
+  return scored.map((item, index) => ({
+    ...item,
+    rank_score: index + 1,
+    rank_ret_5: ret5Sorted.indexOf(item.symbol) + 1,
+    rank_ret_20: ret20Sorted.indexOf(item.symbol) + 1,
+  }))
+}
+
 async function evaluateTraderContext(trader, { cycleNumber }) {
-  const symbol = pickTraderSymbol(trader, cycleNumber)
-  if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE) {
-    const provider = liveFileProviderForSymbol(symbol)
-    const liveStatus = provider?.getStatus?.() || null
-    if (liveStatus?.stale) {
-      const error = new Error('live_file_stale')
-      error.code = 'live_file_stale'
-      throw error
-    }
-    if (liveStatus?.last_error) {
-      const error = new Error('live_file_error')
-      error.code = 'live_file_error'
-      throw error
-    }
-  }
-  const [intradayBatch, dailyBatch] = await Promise.all([
-    marketDataService.getFrames({
-      symbol,
-      interval: '1m',
-      limit: 180,
-    }),
-    marketDataService.getFrames({
-      symbol,
-      interval: '1d',
-      limit: 90,
-    }),
-  ])
+  const traderPool = normalizeStockPool(trader?.stock_pool, trader?.exchange_id)
+  const symbolPool = (traderPool.length
+    ? traderPool
+    : symbolList({ traderId: trader?.trader_id, exchangeId: trader?.exchange_id }).map((item) => item.symbol)
+  ).slice(0, AGENT_CANDIDATE_SYMBOL_LIMIT)
+  const fallbackSymbol = pickTraderSymbol(trader, cycleNumber)
+  const candidateSymbols = symbolPool.length ? symbolPool : [fallbackSymbol]
 
   const account = getAccount(trader.trader_id)
   const positions = getPositions(trader.trader_id)
   const marketSpec = getMarketSpecForExchange(trader.exchange_id)
-  const positionState = buildPositionState({ symbol, account, positions })
-  const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
-  const latestEventTs = intradayFrames[intradayFrames.length - 1]?.event_ts_ms
-  const context = buildAgentMarketContext({
+  const candidateErrors = []
+  const candidateContexts = await Promise.all(candidateSymbols.map(async (symbol) => {
+    try {
+      if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE) {
+        const provider = liveFileProviderForSymbol(symbol)
+        const liveStatus = provider?.getStatus?.() || null
+        if (liveStatus?.last_error) {
+          candidateErrors.push('live_file_error')
+          return null
+        }
+        if (liveStatus?.stale) {
+          candidateErrors.push('live_file_stale')
+          return null
+        }
+      }
+
+      const [intradayBatch, dailyBatch] = await Promise.all([
+        marketDataService.getFrames({
+          symbol,
+          interval: '1m',
+          limit: 180,
+        }),
+        marketDataService.getFrames({
+          symbol,
+          interval: '1d',
+          limit: 90,
+        }),
+      ])
+
+      const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
+      const latestEventTs = intradayFrames[intradayFrames.length - 1]?.event_ts_ms
+      const positionState = buildPositionState({ symbol, account, positions })
+      const context = buildAgentMarketContext({
+        symbol,
+        asOfTsMs: Number.isFinite(latestEventTs) ? latestEventTs : Date.now(),
+        intradayBatch,
+        dailyBatch,
+        positionState,
+        marketSpec,
+      })
+
+      return {
+        symbol,
+        intradayBatch,
+        dailyBatch,
+        context,
+        latestEventTs,
+      }
+    } catch {
+      candidateErrors.push('fetch_error')
+      return null
+    }
+  }))
+
+  const validCandidates = candidateContexts.filter(Boolean)
+  if (!validCandidates.length) {
+    if (RUNTIME_DATA_MODE === 'live_file' && STRICT_LIVE_MODE) {
+      const code = candidateErrors.includes('live_file_error') ? 'live_file_error' : 'live_file_stale'
+      const error = new Error(code)
+      error.code = code
+      throw error
+    }
+    const [intradayBatch, dailyBatch] = await Promise.all([
+      marketDataService.getFrames({
+        symbol: fallbackSymbol,
+        interval: '1m',
+        limit: 180,
+      }),
+      marketDataService.getFrames({
+        symbol: fallbackSymbol,
+        interval: '1d',
+        limit: 90,
+      }),
+    ])
+    const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
+    const fallbackLatestTs = intradayFrames[intradayFrames.length - 1]?.event_ts_ms
+    const fallbackContext = buildAgentMarketContext({
+      symbol: fallbackSymbol,
+      asOfTsMs: Number.isFinite(fallbackLatestTs) ? fallbackLatestTs : Date.now(),
+      intradayBatch,
+      dailyBatch,
+      positionState: buildPositionState({ symbol: fallbackSymbol, account, positions }),
+      marketSpec,
+    })
+    validCandidates.push({
+      symbol: fallbackSymbol,
+      intradayBatch,
+      dailyBatch,
+      context: fallbackContext,
+      latestEventTs: fallbackLatestTs,
+    })
+  }
+
+  const rankedCandidates = rankCandidateRows(validCandidates.map((item) => {
+    const rowContext = item.context || {}
+    const intraday = rowContext?.intraday?.feature_snapshot || {}
+    const daily = rowContext?.daily?.feature_snapshot || {}
+    const positionState = rowContext?.position_state || {}
+    const frames = Array.isArray(rowContext?.intraday?.frames) ? rowContext.intraday.frames : []
+    const latestFrame = frames[frames.length - 1]
+    const latestPrice = toSafeNumber(latestFrame?.bar?.close, 0)
+
+    return {
+      symbol: item.symbol,
+      latest_price: latestPrice,
+      ret_5: toSafeNumber(intraday.ret_5, 0),
+      ret_20: toSafeNumber(intraday.ret_20, 0),
+      atr_14: toSafeNumber(intraday.atr_14, 0),
+      vol_ratio_20: toSafeNumber(intraday.vol_ratio_20, 0),
+      rsi_14: toSafeNumber(daily.rsi_14, 50),
+      sma_20: toSafeNumber(daily.sma_20, 0),
+      sma_60: toSafeNumber(daily.sma_60, 0),
+      range_20d_pct: toSafeNumber(daily.range_20d_pct, 0),
+      position_shares: toSafeNumber(positionState.shares, 0),
+    }
+  }), trader)
+
+  const selectedSymbol = rankedCandidates[0]?.symbol || validCandidates[0]?.symbol || fallbackSymbol
+  const selectedCandidate = validCandidates.find((item) => item.symbol === selectedSymbol) || validCandidates[0]
+  const symbol = selectedCandidate?.symbol || selectedSymbol
+  const latestEventTs = selectedCandidate?.latestEventTs
+  const context = selectedCandidate?.context || buildAgentMarketContext({
     symbol,
-    asOfTsMs: Number.isFinite(latestEventTs) ? latestEventTs : Date.now(),
-    intradayBatch,
-    dailyBatch,
-    positionState,
+    asOfTsMs: Date.now(),
+    intradayBatch: { frames: [] },
+    dailyBatch: { frames: [] },
+    positionState: buildPositionState({ symbol, account, positions }),
     marketSpec,
   })
+
+  context.candidate_set = {
+    symbols: rankedCandidates.map((item) => item.symbol),
+    selected_symbol: symbol,
+    items: rankedCandidates.map((item) => ({
+      symbol: item.symbol,
+      latest_price: item.latest_price,
+      ret_5: item.ret_5,
+      ret_20: item.ret_20,
+      atr_14: item.atr_14,
+      vol_ratio_20: item.vol_ratio_20,
+      rsi_14: item.rsi_14,
+      sma_20: item.sma_20,
+      sma_60: item.sma_60,
+      range_20d_pct: item.range_20d_pct,
+      position_shares: item.position_shares,
+      score: item.score,
+      trend: item.trend,
+      rank_score: item.rank_score,
+      rank_ret_5: item.rank_ret_5,
+      rank_ret_20: item.rank_ret_20,
+    })),
+  }
+
   context.runtime_config = {
     commission_rate: AGENT_COMMISSION_RATE,
     lot_size: marketSpec.lot_size,
     t_plus_one: marketSpec.t_plus_one,
     currency: marketSpec.currency,
+    max_position_count: AGENT_PORTFOLIO_MAX_POSITION_COUNT,
+    max_symbol_concentration_pct: AGENT_PORTFOLIO_MAX_SYMBOL_CONCENTRATION_PCT,
+    min_cash_reserve_pct: AGENT_PORTFOLIO_MIN_CASH_RESERVE_PCT,
+    turnover_throttle_pct: AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT,
   }
 
   const memorySnapshot = memoryStore.getSnapshot(trader.trader_id)
@@ -4418,6 +4764,19 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
     nowMs: tsMs,
   })
 
+  let publicChatMessages = []
+  try {
+    publicChatMessages = await chatStore.readPublic(safeRoomId, 30, null)
+  } catch {
+    publicChatMessages = []
+  }
+  const safePublicChatMessages = Array.isArray(publicChatMessages)
+    ? publicChatMessages
+    : []
+  const latestPublicChatTsMs = Number(
+    safePublicChatMessages[safePublicChatMessages.length - 1]?.created_ts_ms || 0
+  )
+
   const runtimeDecisions = agentRuntime?.getLatestDecisions?.(safeRoomId, limit) || []
   let persisted = []
   try {
@@ -4488,6 +4847,15 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
     positions: getPositions(safeRoomId),
     decisions_latest: decisionsLatest,
     decision_latest: latestDecision,
+    public_chat_preview: {
+      room_id: safeRoomId,
+      visibility: 'public',
+      messages: safePublicChatMessages,
+      count: safePublicChatMessages.length,
+      last_ts_ms: Number.isFinite(latestPublicChatTsMs) && latestPublicChatTsMs > 0
+        ? latestPublicChatTsMs
+        : null,
+    },
     decision_audit_preview: decisionAuditPreview,
     decision_meta: effectiveMeta,
     runtime: {
@@ -4950,6 +5318,12 @@ app.get('/api/agent/runtime/status', (_req, res) => {
     },
     chat_streaming: {
       proactive_interval_ms: Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000)),
+      proactive_news_burst_enabled: CHAT_PROACTIVE_NEWS_BURST_ENABLED,
+      proactive_news_burst_interval_ms: CHAT_PROACTIVE_NEWS_BURST_INTERVAL_MS,
+      proactive_news_burst_duration_ms: CHAT_PROACTIVE_NEWS_BURST_DURATION_MS,
+      proactive_news_burst_cooldown_ms: CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS,
+      proactive_news_burst_fresh_ms: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
+      proactive_news_burst_min_priority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
       agent_max_chars: CHAT_AGENT_MAX_CHARS,
       agent_max_sentences: CHAT_AGENT_MAX_SENTENCES,
       decision_narration_enabled: CHAT_DECISION_NARRATION_ENABLED,
@@ -5481,6 +5855,12 @@ agentRuntime = createInMemoryAgentRuntime({
         saved_ts_ms: Date.now(),
         decision_ts: String(decision?.timestamp || ''),
         cycle_number: Number(decision?.cycle_number || 0),
+        thinking_symbol: String(
+          context?.symbol
+          || context?.symbol_brief?.symbol
+          || decision?.decisions?.[0]?.symbol
+          || ''
+        ).trim() || null,
         forced_hold: context?.llm_decision?.source === 'readiness_gate',
         data_readiness: context?.data_readiness || null,
         session_gate: context?.session_gate || null,

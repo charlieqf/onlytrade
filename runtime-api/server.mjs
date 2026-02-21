@@ -3494,8 +3494,8 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     })
     proactiveBurstStateByRoom.set(safeRoomId, cadence.state)
 
-    const lastActivity = Math.max(Number(previous.last_public_append_ms || 0), Number(previous.last_proactive_emit_ms || 0))
-    if (now - lastActivity < cadence.intervalMs) return false
+    const lastProactive = Number(previous.last_proactive_emit_ms || 0)
+    if (now - lastProactive < cadence.intervalMs) return false
 
     if (CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0 && proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
       return false

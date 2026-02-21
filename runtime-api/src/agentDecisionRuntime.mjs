@@ -404,6 +404,27 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     context?.runtime_config?.conservative_probe_ret20_max,
     toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_RET20_MAX, -0.006)
   )
+  const conservativeProbeAllowBearish = String(
+    context?.runtime_config?.conservative_probe_allow_bearish
+    ?? process.env.AGENT_CONSERVATIVE_PROBE_ALLOW_BEARISH
+    ?? 'true'
+  ).toLowerCase() !== 'false'
+  const conservativeProbeBearishMaxRsi = clamp(
+    toSafeNumber(
+      context?.runtime_config?.conservative_probe_bearish_max_rsi,
+      toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_BEARISH_MAX_RSI, 58)
+    ),
+    35,
+    70
+  )
+  const conservativeProbeBearishRet5Max = toSafeNumber(
+    context?.runtime_config?.conservative_probe_bearish_ret5_max,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_BEARISH_RET5_MAX, -0.006)
+  )
+  const conservativeProbeBearishRet20Max = toSafeNumber(
+    context?.runtime_config?.conservative_probe_bearish_ret20_max,
+    toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_BEARISH_RET20_MAX, -0.01)
+  )
   const conservativeProbeLots = Math.max(1, Math.floor(toSafeNumber(
     context?.runtime_config?.conservative_probe_lots,
     toSafeNumber(process.env.AGENT_CONSERVATIVE_PROBE_LOTS, 1)
@@ -469,9 +490,19 @@ export function createDecisionFromContext({ trader, cycleNumber, context, timest
     && risk === 'conservative'
     && Number.isFinite(Number(cycleNumber))
     && Number(cycleNumber) >= conservativeProbeMinCycles
-    && !bearishTrend
-    && rsi14 <= conservativeProbeMaxRsi
-    && (ret5 <= conservativeProbeRet5Max || ret20 <= conservativeProbeRet20Max)
+    && (
+      (
+        !bearishTrend
+        && rsi14 <= conservativeProbeMaxRsi
+        && (ret5 <= conservativeProbeRet5Max || ret20 <= conservativeProbeRet20Max)
+      )
+      || (
+        bearishTrend
+        && conservativeProbeAllowBearish
+        && rsi14 <= conservativeProbeBearishMaxRsi
+        && (ret5 <= conservativeProbeBearishRet5Max || ret20 <= conservativeProbeBearishRet20Max)
+      )
+    )
   )
 
   if (conservativeProbeEntry) {

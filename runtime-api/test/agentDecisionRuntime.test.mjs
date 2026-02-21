@@ -179,6 +179,39 @@ test('createDecisionFromContext allows conservative probe buy on controlled pull
   assert.match(decision.decisions[0].reasoning, /conservative probe-entry/)
 })
 
+test('createDecisionFromContext allows conservative probe buy in bearish trend only with deeper pullback', () => {
+  const context = makeContext({ ret5: -0.0075, rsi14: 56, sma20: 99, sma60: 103, price: 95 })
+  context.position_state.shares = 0
+  context.position_state.cash_cny = 100_000
+  context.memory_state = { holdings: [] }
+  context.llm_decision = {
+    source: 'openai',
+    action: 'hold',
+    symbol: '600519.SH',
+    confidence: 0.58,
+    quantity: 0,
+    reasoning: '下行趋势里先观望。',
+  }
+
+  const decision = createDecisionFromContext({
+    trader: {
+      trader_id: 'x_revert_cons_bear',
+      trader_name: 'Conservative Reversion Bear',
+      ai_model: 'deepseek',
+      trading_style: 'mean_reversion',
+      risk_profile: 'conservative',
+    },
+    cycleNumber: 12,
+    context,
+    timestampIso: '2026-02-12T00:02:50.000Z',
+  })
+
+  assert.equal(decision.decisions[0].action, 'buy')
+  assert.equal(decision.decisions[0].requested_quantity, 100)
+  assert.equal(decision.decisions[0].quantity, 100)
+  assert.match(decision.decisions[0].reasoning, /conservative probe-entry/)
+})
+
 test('createDecisionFromContext guards unaffordable buy to hold without failure', () => {
   const context = makeContext({ ret5: 0.005, rsi14: 55, sma20: 106, sma60: 100, price: 2000 })
   context.position_state.cash_cny = 100_000

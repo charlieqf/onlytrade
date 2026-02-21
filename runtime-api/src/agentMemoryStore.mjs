@@ -180,7 +180,56 @@ function normalizeEquityCurve(curveRaw, initialBalance, fallbackTs) {
 export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.0003 }) {
   const memoryDir = path.join(rootDir, 'data', 'agent-memory')
   const safeCommissionRate = Math.max(0, toNumber(commissionRate, 0.0003))
+  const traderById = new Map((traders || []).map((trader) => [String(trader?.trader_id || '').trim(), trader]))
   const snapshots = new Map((traders || []).map((trader) => [trader.trader_id, defaultSnapshot(trader, safeCommissionRate)]))
+
+  function resolveTrader(traderId) {
+    const wanted = String(traderId || '').trim()
+    if (!wanted) return null
+    return traderById.get(wanted) || null
+  }
+
+  function cloneSnapshot(snapshot) {
+    return JSON.parse(JSON.stringify(snapshot))
+  }
+
+  function resetStatsShape({ snapshot, initialBalance, totalBalance, availableBalance, unrealizedProfit, nowIso }) {
+    const safeInitial = Math.max(1, round(toNumber(initialBalance, 100000), 2))
+    const safeTotal = round(Math.max(0, toNumber(totalBalance, safeInitial)), 2)
+    const safeAvailable = round(Math.max(0, toNumber(availableBalance, safeTotal)), 2)
+    const safeUnrealized = round(toNumber(unrealizedProfit, 0), 2)
+    const pnl = round(safeTotal - safeInitial, 2)
+    const pnlPct = round((pnl / safeInitial) * 100, 4)
+
+    snapshot.stats = {
+      initial_balance: safeInitial,
+      latest_total_balance: safeTotal,
+      latest_available_balance: safeAvailable,
+      latest_unrealized_profit: safeUnrealized,
+      return_rate_pct: pnlPct,
+      peak_balance: safeTotal,
+      trough_balance: safeTotal,
+      decisions: 0,
+      wins: 0,
+      losses: 0,
+      holds: 0,
+      buy_trades: 0,
+      sell_trades: 0,
+      total_fees_paid: 0,
+    }
+    snapshot.daily_journal = []
+    snapshot.recent_actions = []
+    snapshot.equity_curve = [
+      {
+        timestamp: nowIso,
+        total_equity: safeTotal,
+        pnl,
+        pnl_pct: pnlPct,
+        total_pnl_pct: pnlPct,
+        cycle_number: 0,
+      },
+    ]
+  }
 
   function filePath(traderId) {
     return path.join(memoryDir, `${traderId}.json`)
@@ -238,6 +287,86 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
     if (!snapshot) return
     await mkdir(memoryDir, { recursive: true })
     await writeFile(filePath(traderId), JSON.stringify(snapshot, null, 2), 'utf8')
+  }
+
+  async function resetTrader(traderId, {
+    resetMemory = true,
+    resetPositions = true,
+    resetStats = true,
+    persistSnapshot = true,
+  } = {}) {
+    const trader = resolveTrader(traderId)
+    if (!trader) {
+      const error = new Error('memory_trader_not_found')
+      error.code = 'memory_trader_not_found'
+      throw error
+    }
+
+    const nowIso = new Date().toISOString()
+    const base = defaultSnapshot(trader, safeCommissionRate)
+    const current = snapshots.get(trader.trader_id) || base
+    let next
+
+    if (resetMemory) {
+      next = base
+    } else {
+      next = cloneSnapshot(current)
+
+      if (resetPositions) {
+        const totalBalance = Math.max(0, toNumber(next?.stats?.latest_total_balance, next?.stats?.initial_balance || 100000))
+        next.holdings = []
+        next.open_lots = []
+        next.closed_positions = []
+        next.trade_events = []
+        next.stats = {
+          ...(next.stats || {}),
+          latest_available_balance: round(totalBalance, 2),
+          latest_unrealized_profit: 0,
+        }
+      }
+
+      if (resetStats) {
+        const initialBalance = toNumber(next?.stats?.initial_balance, base.stats.initial_balance)
+        const totalBalance = resetPositions
+          ? toNumber(next?.stats?.latest_available_balance, initialBalance)
+          : toNumber(next?.stats?.latest_total_balance, initialBalance)
+        const availableBalance = resetPositions
+          ? totalBalance
+          : toNumber(next?.stats?.latest_available_balance, totalBalance)
+        const unrealizedProfit = resetPositions
+          ? 0
+          : toNumber(next?.stats?.latest_unrealized_profit, 0)
+
+        resetStatsShape({
+          snapshot: next,
+          initialBalance,
+          totalBalance,
+          availableBalance,
+          unrealizedProfit,
+          nowIso,
+        })
+      }
+
+      next.config = {
+        ...base.config,
+        ...(next.config || {}),
+        commission_rate: safeCommissionRate,
+      }
+      next.meta = {
+        ...base.meta,
+        ...(next.meta || {}),
+        updated_at: nowIso,
+      }
+      next.trader_id = trader.trader_id
+      next.trader_name = trader.trader_name
+      next.updated_at = nowIso
+    }
+
+    snapshots.set(trader.trader_id, next)
+    if (persistSnapshot) {
+      await persist(trader.trader_id)
+    }
+    return cloneSnapshot(next)
   }
 
   async function recordSnapshot({ trader, decision, account, positions, replayStatus }) {
@@ -533,6 +662,7 @@ export function createAgentMemoryStore({ rootDir, traders, commissionRate = 0.00
   return {
     hydrate,
     resetAll,
+    resetTrader,
     recordSnapshot,
     getSnapshot,
     getAllSnapshots,

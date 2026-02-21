@@ -71,7 +71,9 @@ MARKET_PROVIDER=real MARKET_UPSTREAM_URL=https://your-proxy.example/api/market/f
 - `GET /api/replay/runtime/status`
 - `POST /api/replay/runtime/control` (`pause` | `resume` | `step` | `set_speed` | `set_cursor`)
   - Supports `set_loop` with body `{ "action": "set_loop", "loop": false }` for single-run replay mode.
-- `POST /api/dev/factory-reset` (dev-only: pause runtimes, reset replay cursor, clear runtime metrics/history, reset memory JSON)
+- `GET /api/ops/live-preflight` (live-mode ops preflight checks)
+- `POST /api/dev/factory-reset` (dev-only; requires explicit `confirm: "RESET"`, supports `dry_run`)
+- `POST /api/dev/reset-agent` (scoped per-agent reset; requires `confirm: "<trader_id>"`, supports `dry_run`)
 
 Runtime control examples:
 
@@ -86,14 +88,23 @@ curl -X POST "http://localhost:8080/api/agent/runtime/kill-switch" -H "Content-T
 curl "http://localhost:8080/api/replay/runtime/status"
 curl -X POST "http://localhost:8080/api/replay/runtime/control" -H "Content-Type: application/json" -d '{"action":"step"}'
 curl -X POST "http://localhost:8080/api/replay/runtime/control" -H "Content-Type: application/json" -d '{"action":"set_speed","speed":60}'
-curl -X POST "http://localhost:8080/api/dev/factory-reset" -H "Content-Type: application/json" -d '{"cursor_index":0}'
+curl -X POST "http://localhost:8080/api/dev/factory-reset" -H "Content-Type: application/json" -d '{"cursor_index":0,"confirm":"RESET"}'
+curl -X POST "http://localhost:8080/api/dev/factory-reset" -H "Content-Type: application/json" -d '{"use_warmup":true,"confirm":"RESET","dry_run":true}'
+curl -X POST "http://localhost:8080/api/dev/reset-agent" -H "Content-Type: application/json" -d '{"trader_id":"t_001","reset_memory":true,"reset_positions":true,"reset_stats":true,"confirm":"t_001"}'
+curl "http://localhost:8080/api/ops/live-preflight"
 ```
 
-Factory reset options:
+Reset options:
 
 - Runtime reset without restart: `POST /api/dev/factory-reset` (default rewinds to cursor `0`)
-- Warmup reset cursor: `POST /api/dev/factory-reset` with `{"use_warmup":true}`
+- Warmup reset cursor: `POST /api/dev/factory-reset` with `{"use_warmup":true,"confirm":"RESET"}`
+- Scoped reset: `POST /api/dev/reset-agent` with `trader_id` + reset scope booleans and `confirm` matching the trader id.
 - Startup auto-reset: set `RESET_AGENT_MEMORY_ON_BOOT=true`
+
+Control auth hardening:
+
+- If `CONTROL_API_TOKEN` is configured, all mutating control endpoints require `x-control-token` (or bearer token).
+- Unauthorized requests return `401` with `unauthorized_control_token`.
 
 ## Notes
 

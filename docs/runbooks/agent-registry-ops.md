@@ -6,6 +6,8 @@ Operate folder-discovered agents with registry-backed lifecycle controls.
 
 ## Core flow: add -> register -> start
 
+If `CONTROL_API_TOKEN` is configured, lifecycle mutating routes (`register/unregister/start/stop`) require a valid control token (`x-control-token` or bearer token).
+
 1. Create `agents/<agent_id>/agent.json`
 2. (Optional) Place avatar assets in same folder and reference via `avatar_file` / `avatar_hd_file`.
 3. Verify available:

@@ -22,7 +22,9 @@ Examples:
   bash scripts/onlytrade-ssh-ops.sh set-loop off
   bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
   bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
-  bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0
+  bash scripts/onlytrade-ssh-ops.sh live-preflight
+  bash scripts/onlytrade-ssh-ops.sh agent-reset t_001 --positions-only --confirm
+  bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0 --confirm
 
 Optional env vars:
   ONLYTRADE_VM_HOST   VM SSH target (default: root@104.238.213.119)

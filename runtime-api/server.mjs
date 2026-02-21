@@ -1,6 +1,6 @@
 import express from 'express'
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -94,6 +94,7 @@ const RUNTIME_DATA_MODE = resolveRuntimeDataMode(process.env.RUNTIME_DATA_MODE |
 const STRICT_LIVE_MODE = String(process.env.STRICT_LIVE_MODE || 'true').toLowerCase() !== 'false'
 const LIVE_FILE_REFRESH_MS = Math.max(250, Number(process.env.LIVE_FILE_REFRESH_MS || 10000))
 const LIVE_FILE_STALE_MS = Math.max(10_000, Number(process.env.LIVE_FILE_STALE_MS || 180_000))
+const LIVE_PREFLIGHT_EXPECTED_REGISTRY_COUNT = Math.max(0, Number(process.env.LIVE_PREFLIGHT_EXPECTED_REGISTRY_COUNT || 0))
 const AGENT_SESSION_GUARD_ENABLED = String(
   process.env.AGENT_SESSION_GUARD_ENABLED || (RUNTIME_DATA_MODE === 'live_file' ? 'true' : 'false')
 ).toLowerCase() !== 'false'
@@ -317,6 +318,30 @@ if (STRICT_LIVE_MODE && RUNTIME_DATA_MODE !== 'live_file') {
 if (STRICT_LIVE_MODE && MARKET_PROVIDER !== 'real') {
   throw new Error('strict_live_mode_requires_market_provider_real')
 }
+
+function assertReadableLiveFilePath(filePath, label) {
+  const target = String(filePath || '').trim()
+  if (!target) {
+    throw new Error(`${label}_missing`)
+  }
+  try {
+    accessSync(target, fsConstants.R_OK)
+  } catch {
+    throw new Error(`${label}_unreadable:${target}`)
+  }
+}
+
+function validateLiveModeBootConfig() {
+  if (RUNTIME_DATA_MODE !== 'live_file') return
+  assertReadableLiveFilePath(LIVE_FRAMES_PATH_CN, 'live_frames_path_cn')
+
+  const usPathExplicitlyConfigured = String(process.env.LIVE_FRAMES_PATH_US || '').trim()
+  if (usPathExplicitlyConfigured) {
+    assertReadableLiveFilePath(LIVE_FRAMES_PATH_US, 'live_frames_path_us')
+  }
+}
+
+validateLiveModeBootConfig()
 
 const DEFAULT_TRADERS = [
   {
@@ -1835,6 +1860,59 @@ function publicLiveFileStatus(status) {
   }
 }
 
+function buildFreshnessCheck(label, status) {
+  const lastLoadTsMs = Number(status?.last_load_ts_ms)
+  const staleAfterMs = Number(status?.stale_after_ms)
+  const nowMs = Date.now()
+  const ageMs = Number.isFinite(lastLoadTsMs) && lastLoadTsMs > 0
+    ? Math.max(0, nowMs - lastLoadTsMs)
+    : null
+  const staleByAge = Number.isFinite(ageMs) && Number.isFinite(staleAfterMs)
+    ? ageMs > staleAfterMs
+    : false
+  const staleFlag = status?.stale === true || staleByAge
+  const ok = !!status && !status?.last_error && !staleFlag
+
+  return {
+    label,
+    ok,
+    stale: staleFlag,
+    age_ms: ageMs,
+    stale_after_ms: Number.isFinite(staleAfterMs) ? staleAfterMs : null,
+    last_load_ts_ms: Number.isFinite(lastLoadTsMs) ? lastLoadTsMs : null,
+    last_error: status?.last_error || null,
+    file_path: status?.file_path || null,
+  }
+}
+
+function buildLiveDataFreshnessSummary() {
+  if (RUNTIME_DATA_MODE !== 'live_file') {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'runtime_data_mode_not_live_file',
+      checks: {},
+    }
+  }
+
+  const checks = [
+    buildFreshnessCheck('frames_cn_a', liveFileFrameProviderCn?.getStatus?.() || null),
+    buildFreshnessCheck('frames_us', liveFileFrameProviderUs?.getStatus?.() || null),
+    buildFreshnessCheck('market_overview_cn_a', marketOverviewProviderCn.getStatus()),
+    buildFreshnessCheck('market_overview_us', marketOverviewProviderUs.getStatus()),
+    buildFreshnessCheck('news_digest_cn_a', newsDigestProviderCn.getStatus()),
+    buildFreshnessCheck('news_digest_us', newsDigestProviderUs.getStatus()),
+    buildFreshnessCheck('market_breadth_cn_a', marketBreadthProviderCn.getStatus()),
+    buildFreshnessCheck('market_breadth_us', marketBreadthProviderUs.getStatus()),
+  ]
+
+  const checksByLabel = Object.fromEntries(checks.map((check) => [check.label, check]))
+  return {
+    ok: checks.every((check) => check.ok),
+    checks: checksByLabel,
+  }
+}
+
 function getMarketSessionGatePublicSnapshot(nowMs = Date.now()) {
   const enabled = AGENT_SESSION_GUARD_ENABLED && RUNTIME_DATA_MODE === 'live_file'
   if (!enabled) {
@@ -1895,11 +1973,42 @@ function resolveControlToken(req) {
   return bodyToken
 }
 
-function requireControlAuthorization(req, res) {
+function resolveControlActor(req) {
+  const explicit = String(req.body?.actor || req.headers['x-control-actor'] || '').trim()
+  if (explicit) return explicit
+
+  const forwardedFor = String(req.headers['x-forwarded-for'] || '').trim()
+  if (forwardedFor) {
+    const first = forwardedFor.split(',')[0].trim()
+    if (first) return first
+  }
+
+  const ip = String(req.ip || '').trim()
+  if (ip) return ip
+  return 'unknown'
+}
+
+function auditControlAction({ req, action, target = null, result, error = null } = {}) {
+  const payload = {
+    ts: new Date().toISOString(),
+    action: String(action || 'unknown'),
+    actor: resolveControlActor(req || {}),
+    ip: String(req?.ip || '').trim() || null,
+    target: target ? String(target) : null,
+    result: String(result || 'unknown'),
+  }
+  if (error) {
+    payload.error = String(error)
+  }
+  console.log(`[control_audit] ${JSON.stringify(payload)}`)
+}
+
+function requireControlAuthorization(req, res, { action = 'unknown', target = null } = {}) {
   if (!CONTROL_API_TOKEN) return true
 
   const provided = resolveControlToken(req)
   if (!secureTokenEquals(CONTROL_API_TOKEN, provided)) {
+    auditControlAction({ req, action, target, result: 'unauthorized', error: 'unauthorized_control_token' })
     res.status(401).json({ success: false, error: 'unauthorized_control_token' })
     return false
   }
@@ -3805,6 +3914,77 @@ async function refreshLiveFileProviders() {
   }
 }
 
+async function refreshSupplementalLiveProviders() {
+  const providers = [
+    marketOverviewProviderCn,
+    marketOverviewProviderUs,
+    newsDigestProviderCn,
+    newsDigestProviderUs,
+    marketBreadthProviderCn,
+    marketBreadthProviderUs,
+  ]
+  await Promise.all(
+    providers.map(async (provider) => {
+      if (!provider?.refresh) return
+      try {
+        await provider.refresh(false)
+      } catch {
+        // keep status endpoint resilient
+      }
+    })
+  )
+}
+
+function buildLivePreflightPayload() {
+  const gate = getMarketSessionGatePublicSnapshot()
+  const registeredCount = getRegisteredTraders().length
+  const runningCount = getRunningRuntimeTraders().length
+  const activeCount = Array.isArray(gate?.active_trader_ids) ? gate.active_trader_ids.length : 0
+  const expectedRegistryCount = LIVE_PREFLIGHT_EXPECTED_REGISTRY_COUNT
+  const registryCountOk = expectedRegistryCount > 0
+    ? registeredCount >= expectedRegistryCount
+    : registeredCount > 0
+
+  const liveFiles = {
+    cn_a: buildFreshnessCheck('frames_cn_a', liveFileFrameProviderCn?.getStatus?.() || null),
+    us: buildFreshnessCheck('frames_us', liveFileFrameProviderUs?.getStatus?.() || null),
+  }
+
+  const checks = {
+    data_mode: {
+      ok: RUNTIME_DATA_MODE === 'live_file',
+      expected: 'live_file',
+      actual: RUNTIME_DATA_MODE,
+    },
+    strict_live_mode: {
+      ok: STRICT_LIVE_MODE === true,
+      expected: true,
+      actual: STRICT_LIVE_MODE,
+    },
+    freshness: {
+      ok: liveFiles.cn_a.ok,
+      markets: liveFiles,
+    },
+    registry_count: {
+      ok: registryCountOk,
+      registered_count: registeredCount,
+      running_count: runningCount,
+      active_count: activeCount,
+      expected_min_count: expectedRegistryCount > 0 ? expectedRegistryCount : 1,
+    },
+    market_gate: {
+      ok: !!gate?.enabled,
+      state: gate,
+    },
+  }
+
+  return {
+    ok: Object.values(checks).every((item) => item?.ok === true),
+    ts_ms: Date.now(),
+    checks,
+  }
+}
+
 function isLiveFileFresh(status) {
   if (!status) return false
   if (status.last_error) return false
@@ -4626,48 +4806,64 @@ app.get('/api/agents/registered', async (_req, res) => {
 })
 
 app.post('/api/agents/:id/register', async (req, res) => {
+  const agentId = String(req.params.id || '').trim()
+  if (!requireControlAuthorization(req, res, { action: 'agent.register', target: agentId })) return
+
   try {
-    const agentId = String(req.params.id || '').trim()
     const registered = await agentRegistryStore.registerAgent(agentId)
     await refreshAgentState()
+    auditControlAction({ req, action: 'agent.register', target: agentId, result: 'ok' })
     res.json(ok(registered))
   } catch (error) {
+    auditControlAction({ req, action: 'agent.register', target: agentId, result: 'error', error: error?.code || error?.message })
     res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_register_failed' })
   }
 })
 
 app.post('/api/agents/:id/unregister', async (req, res) => {
+  const agentId = String(req.params.id || '').trim()
+  if (!requireControlAuthorization(req, res, { action: 'agent.unregister', target: agentId })) return
+
   try {
-    const agentId = String(req.params.id || '').trim()
     const removed = await agentRegistryStore.unregisterAgent(agentId)
     const state = await refreshAgentState()
+    auditControlAction({ req, action: 'agent.unregister', target: agentId, result: 'ok' })
     res.json(ok({
       ...removed,
       running_agent_ids: state.running_agent_ids,
     }))
   } catch (error) {
+    auditControlAction({ req, action: 'agent.unregister', target: agentId, result: 'error', error: error?.code || error?.message })
     res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_unregister_failed' })
   }
 })
 
 app.post('/api/agents/:id/start', async (req, res) => {
+  const agentId = String(req.params.id || '').trim()
+  if (!requireControlAuthorization(req, res, { action: 'agent.start', target: agentId })) return
+
   try {
-    const agentId = String(req.params.id || '').trim()
     const started = await agentRegistryStore.startAgent(agentId)
     await refreshAgentState()
+    auditControlAction({ req, action: 'agent.start', target: agentId, result: 'ok' })
     res.json(ok(started))
   } catch (error) {
+    auditControlAction({ req, action: 'agent.start', target: agentId, result: 'error', error: error?.code || error?.message })
     res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_start_failed' })
   }
 })
 
 app.post('/api/agents/:id/stop', async (req, res) => {
+  const agentId = String(req.params.id || '').trim()
+  if (!requireControlAuthorization(req, res, { action: 'agent.stop', target: agentId })) return
+
   try {
-    const agentId = String(req.params.id || '').trim()
     const stopped = await agentRegistryStore.stopAgent(agentId)
     await refreshAgentState()
+    auditControlAction({ req, action: 'agent.stop', target: agentId, result: 'ok' })
     res.json(ok(stopped))
   } catch (error) {
+    auditControlAction({ req, action: 'agent.stop', target: agentId, result: 'error', error: error?.code || error?.message })
     res.status(agentErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'agent_stop_failed' })
   }
 })
@@ -5341,7 +5537,12 @@ app.get('/api/decisions/latest', (req, res) => {
     })
 })
 
-app.get('/api/agent/runtime/status', (_req, res) => {
+app.get('/api/agent/runtime/status', async (_req, res) => {
+  if (RUNTIME_DATA_MODE === 'live_file') {
+    await refreshLiveFileProviders()
+    await refreshSupplementalLiveProviders()
+  }
+
   const state = agentRuntime?.getState?.() || {
     running: false,
     cycle_ms: derivedDecisionCycleMs(),
@@ -5373,6 +5574,7 @@ app.get('/api/agent/runtime/status', (_req, res) => {
       cn_a: marketBreadthProviderCn.getStatus(),
       us: marketBreadthProviderUs.getStatus(),
     },
+    live_data_freshness: buildLiveDataFreshnessSummary(),
     chat_streaming: {
       proactive_interval_ms: Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000)),
       proactive_news_burst_enabled: CHAT_PROACTIVE_NEWS_BURST_ENABLED,
@@ -5421,12 +5623,16 @@ app.get('/api/agent/memory', (req, res) => {
 
 app.post('/api/agent/runtime/control', async (req, res) => {
   const action = String(req.body?.action || '').trim().toLowerCase()
+  if (!requireControlAuthorization(req, res, { action: `agent.runtime.control.${action || 'unknown'}`, target: 'agent_runtime' })) return
+
   if (!agentRuntime) {
+    auditControlAction({ req, action: `agent.runtime.control.${action || 'unknown'}`, target: 'agent_runtime', result: 'rejected', error: 'agent_runtime_unavailable' })
     res.status(503).json({ success: false, error: 'agent_runtime_unavailable' })
     return
   }
 
   if (killSwitchState.active && (action === 'resume' || action === 'step')) {
+    auditControlAction({ req, action: `agent.runtime.control.${action}`, target: 'agent_runtime', result: 'rejected', error: 'kill_switch_active' })
     res.status(423).json({ success: false, error: 'kill_switch_active' })
     return
   }
@@ -5443,6 +5649,7 @@ app.post('/api/agent/runtime/control', async (req, res) => {
   } else if (action === 'set_cycle_ms') {
     const cycleMs = Number(req.body?.cycle_ms)
     if (!Number.isFinite(cycleMs)) {
+      auditControlAction({ req, action: 'agent.runtime.control.set_cycle_ms', target: 'agent_runtime', result: 'invalid', error: 'invalid_cycle_ms' })
       res.status(400).json({ success: false, error: 'invalid_cycle_ms' })
       return
     }
@@ -5456,14 +5663,18 @@ app.post('/api/agent/runtime/control', async (req, res) => {
   } else if (action === 'set_decision_every_bars') {
     const bars = Number(req.body?.decision_every_bars)
     if (!Number.isFinite(bars)) {
+      auditControlAction({ req, action: 'agent.runtime.control.set_decision_every_bars', target: 'agent_runtime', result: 'invalid', error: 'invalid_decision_every_bars' })
       res.status(400).json({ success: false, error: 'invalid_decision_every_bars' })
       return
     }
     agentDecisionEveryBars = Math.max(1, Math.min(Math.floor(bars), 240))
   } else {
+    auditControlAction({ req, action: `agent.runtime.control.${action || 'unknown'}`, target: 'agent_runtime', result: 'invalid', error: 'invalid_action' })
     res.status(400).json({ success: false, error: 'invalid_action' })
     return
   }
+
+  auditControlAction({ req, action: `agent.runtime.control.${action}`, target: 'agent_runtime', result: 'ok' })
 
   res.json(ok({
     action,
@@ -5477,13 +5688,14 @@ app.post('/api/agent/runtime/control', async (req, res) => {
 })
 
 app.post('/api/agent/runtime/kill-switch', async (req, res) => {
-  if (!requireControlAuthorization(req, res)) return
-
   const action = String(req.body?.action || '').trim().toLowerCase()
+  if (!requireControlAuthorization(req, res, { action: `agent.runtime.kill_switch.${action || 'unknown'}`, target: 'agent_runtime' })) return
+
   const reason = String(req.body?.reason || '').trim()
   const actor = String(req.body?.actor || req.ip || 'api').trim() || 'api'
 
   if (action !== 'activate' && action !== 'deactivate') {
+    auditControlAction({ req, action: `agent.runtime.kill_switch.${action || 'unknown'}`, target: 'agent_runtime', result: 'invalid', error: 'invalid_action' })
     res.status(400).json({ success: false, error: 'invalid_action' })
     return
   }
@@ -5493,6 +5705,8 @@ app.post('/api/agent/runtime/kill-switch', async (req, res) => {
     reason,
     actor,
   })
+
+  auditControlAction({ req, action: `agent.runtime.kill_switch.${action}`, target: 'agent_runtime', result: 'ok' })
 
   res.json(ok({
     action,
@@ -5537,9 +5751,20 @@ app.get('/api/replay/runtime/status', async (_req, res) => {
   }))
 })
 
+app.get('/api/ops/live-preflight', async (_req, res) => {
+  await refreshAgentState({ reconcile: true })
+  await refreshLiveFileProviders()
+  await refreshSupplementalLiveProviders()
+  const payload = buildLivePreflightPayload()
+  res.json(ok(payload))
+})
+
 app.post('/api/replay/runtime/control', (req, res) => {
   const action = String(req.body?.action || '').trim().toLowerCase()
+  if (!requireControlAuthorization(req, res, { action: `replay.runtime.control.${action || 'unknown'}`, target: 'replay_runtime' })) return
+
   if (!replayEngine) {
+    auditControlAction({ req, action: `replay.runtime.control.${action || 'unknown'}`, target: 'replay_runtime', result: 'rejected', error: 'replay_unavailable' })
     res.status(503).json({ success: false, error: 'replay_unavailable' })
     return
   }
@@ -5555,6 +5780,7 @@ app.post('/api/replay/runtime/control', (req, res) => {
   } else if (action === 'set_speed') {
     const speed = Number(req.body?.speed)
     if (!Number.isFinite(speed)) {
+      auditControlAction({ req, action: 'replay.runtime.control.set_speed', target: 'replay_runtime', result: 'invalid', error: 'invalid_speed' })
       res.status(400).json({ success: false, error: 'invalid_speed' })
       return
     }
@@ -5562,6 +5788,7 @@ app.post('/api/replay/runtime/control', (req, res) => {
   } else if (action === 'set_cursor') {
     const cursor = Number(req.body?.cursor_index)
     if (!Number.isFinite(cursor)) {
+      auditControlAction({ req, action: 'replay.runtime.control.set_cursor', target: 'replay_runtime', result: 'invalid', error: 'invalid_cursor_index' })
       res.status(400).json({ success: false, error: 'invalid_cursor_index' })
       return
     }
@@ -5569,14 +5796,18 @@ app.post('/api/replay/runtime/control', (req, res) => {
   } else if (action === 'set_loop') {
     const loop = req.body?.loop
     if (typeof loop !== 'boolean') {
+      auditControlAction({ req, action: 'replay.runtime.control.set_loop', target: 'replay_runtime', result: 'invalid', error: 'invalid_loop' })
       res.status(400).json({ success: false, error: 'invalid_loop' })
       return
     }
     replayEngine.setLoop(loop)
   } else {
+    auditControlAction({ req, action: `replay.runtime.control.${action || 'unknown'}`, target: 'replay_runtime', result: 'invalid', error: 'invalid_action' })
     res.status(400).json({ success: false, error: 'invalid_action' })
     return
   }
+
+  auditControlAction({ req, action: `replay.runtime.control.${action}`, target: 'replay_runtime', result: 'ok' })
 
   res.json(ok({
     action,
@@ -5585,7 +5816,17 @@ app.post('/api/replay/runtime/control', (req, res) => {
 })
 
 app.post('/api/dev/factory-reset', async (req, res) => {
+  if (!requireControlAuthorization(req, res, { action: 'dev.factory_reset', target: 'runtime' })) return
+
   try {
+    const confirm = String(req.body?.confirm || '').trim()
+    const dryRun = String(req.body?.dry_run ?? 'false').toLowerCase() === 'true'
+    if (confirm !== 'RESET') {
+      auditControlAction({ req, action: 'dev.factory_reset', target: 'runtime', result: 'rejected', error: 'reset_confirmation_required' })
+      res.status(400).json({ success: false, error: 'reset_confirmation_required' })
+      return
+    }
+
     const useWarmup = String(req.body?.use_warmup ?? 'false').toLowerCase() === 'true'
     const warmupCursor = Math.max(0, REPLAY_WARMUP_BARS - 1)
     const requestedCursor = Number(req.body?.cursor_index)
@@ -5593,15 +5834,107 @@ app.post('/api/dev/factory-reset', async (req, res) => {
       ? Math.max(0, Math.floor(requestedCursor))
       : (useWarmup ? warmupCursor : 0)
 
+    if (dryRun) {
+      auditControlAction({ req, action: 'dev.factory_reset', target: 'runtime', result: 'dry_run' })
+      res.json(ok({
+        action: 'factory_reset',
+        dry_run: true,
+        cursor_index: cursorIndex,
+        use_warmup: useWarmup,
+      }))
+      return
+    }
+
     const state = await factoryResetRuntime({ cursorIndex })
+    auditControlAction({ req, action: 'dev.factory_reset', target: 'runtime', result: 'ok' })
     res.json(ok({
       action: 'factory_reset',
       cursor_index: cursorIndex,
       use_warmup: useWarmup,
+      dry_run: false,
       state,
     }))
   } catch (error) {
+    auditControlAction({ req, action: 'dev.factory_reset', target: 'runtime', result: 'error', error: error?.message || 'factory_reset_failed' })
     res.status(500).json({ success: false, error: error?.message || 'factory_reset_failed' })
+  }
+})
+
+app.post('/api/dev/reset-agent', async (req, res) => {
+  const traderId = String(req.body?.trader_id || '').trim()
+  if (!requireControlAuthorization(req, res, { action: 'dev.reset_agent', target: traderId || null })) return
+
+  if (!traderId) {
+    auditControlAction({ req, action: 'dev.reset_agent', target: null, result: 'invalid', error: 'invalid_trader_id' })
+    res.status(400).json({ success: false, error: 'invalid_trader_id' })
+    return
+  }
+
+  const trader = getTraderById(traderId)
+  if (String(trader?.trader_id || '') !== traderId) {
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'invalid', error: 'trader_not_found' })
+    res.status(404).json({ success: false, error: 'trader_not_found' })
+    return
+  }
+
+  const confirm = String(req.body?.confirm || '').trim()
+  if (confirm !== traderId) {
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'rejected', error: 'reset_confirmation_required' })
+    res.status(400).json({ success: false, error: 'reset_confirmation_required' })
+    return
+  }
+
+  const resetMemory = String(req.body?.reset_memory ?? 'false').toLowerCase() === 'true'
+  const resetPositions = String(req.body?.reset_positions ?? 'false').toLowerCase() === 'true'
+  const resetStats = String(req.body?.reset_stats ?? 'false').toLowerCase() === 'true'
+  const dryRun = String(req.body?.dry_run ?? 'false').toLowerCase() === 'true'
+
+  if (!resetMemory && !resetPositions && !resetStats) {
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'invalid', error: 'no_reset_scope_selected' })
+    res.status(400).json({ success: false, error: 'no_reset_scope_selected' })
+    return
+  }
+
+  if (dryRun) {
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'dry_run' })
+    res.json(ok({
+      action: 'reset_agent',
+      trader_id: traderId,
+      reset_memory: resetMemory,
+      reset_positions: resetPositions,
+      reset_stats: resetStats,
+      dry_run: true,
+    }))
+    return
+  }
+
+  try {
+    const snapshot = await memoryStore.resetTrader(traderId, {
+      resetMemory,
+      resetPositions,
+      resetStats,
+      persistSnapshot: true,
+    })
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'ok' })
+    res.json(ok({
+      action: 'reset_agent',
+      trader_id: traderId,
+      reset_memory: resetMemory,
+      reset_positions: resetPositions,
+      reset_stats: resetStats,
+      dry_run: false,
+      memory: snapshot,
+    }))
+  } catch (error) {
+    const code = String(error?.code || '')
+    if (code === 'memory_trader_not_found') {
+      auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'error', error: 'trader_not_found' })
+      res.status(404).json({ success: false, error: 'trader_not_found' })
+      return
+    }
+
+    auditControlAction({ req, action: 'dev.reset_agent', target: traderId, result: 'error', error: error?.message || 'reset_agent_failed' })
+    res.status(500).json({ success: false, error: error?.message || 'reset_agent_failed' })
   }
 })
 

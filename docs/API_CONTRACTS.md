@@ -152,6 +152,11 @@ Supported `action` values:
 - `set_cycle_ms` (requires `cycle_ms`; maps to `decision_every_bars` under current replay speed)
 - `set_decision_every_bars` (requires `decision_every_bars`)
 
+Authorization:
+
+- If `CONTROL_API_TOKEN` is configured, request must include valid control token (`x-control-token` header or bearer token).
+- Unauthorized response: `401 unauthorized_control_token`.
+
 ### POST /api/agent/runtime/kill-switch
 
 Emergency control endpoint to stop all agent decisions and block LLM calls.
@@ -205,6 +210,11 @@ Supported `action` values:
 - `set_speed` (requires `speed`)
 - `set_cursor` (requires `cursor_index`)
 
+Authorization:
+
+- If `CONTROL_API_TOKEN` is configured, request must include valid control token (`x-control-token` header or bearer token).
+- Unauthorized response: `401 unauthorized_control_token`.
+
 ### POST /api/dev/factory-reset
 
 Dev-only hard reset endpoint for repeated replay test runs.
@@ -213,6 +223,44 @@ Dev-only hard reset endpoint for repeated replay test runs.
 - Resets replay cursor (default `0`, optional `use_warmup=true`)
 - Clears in-memory agent decision counters/history
 - Reinitializes `data/agent-memory/*.json` to defaults
+
+Required fields for destructive execution:
+
+- `confirm: "RESET"`
+- optional `dry_run: true` for preview-only
+
+Authorization:
+
+- Requires valid control token when `CONTROL_API_TOKEN` is configured.
+- Unauthorized response: `401 unauthorized_control_token`.
+
+### POST /api/dev/reset-agent
+
+Scoped per-agent reset endpoint.
+
+Body:
+
+```json
+{
+  "trader_id": "t_001",
+  "reset_memory": true,
+  "reset_positions": true,
+  "reset_stats": true,
+  "confirm": "t_001",
+  "dry_run": false
+}
+```
+
+Authorization:
+
+- Requires valid control token when `CONTROL_API_TOKEN` is configured.
+- Unauthorized response: `401 unauthorized_control_token`.
+
+### GET /api/ops/live-preflight
+
+Live-mode readiness endpoint.
+
+- Returns `ok` and detailed checks for runtime mode, strict-live flag, live-file freshness, registry counts, and market gate state.
 
 ### GET /api/equity-history?trader_id=&hours=
 

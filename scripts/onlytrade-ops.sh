@@ -8,6 +8,7 @@ CONTROL_TOKEN="${ONLYTRADE_CONTROL_TOKEN:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+AKSHARE_PYTHON="${ONLYTRADE_AKSHARE_PYTHON:-$REPO_ROOT/.venv-akshare/bin/python}"
 
 load_control_token_from_env_file() {
   if [ -n "$CONTROL_TOKEN" ]; then
@@ -52,8 +53,14 @@ Commands:
   set-speed <speed>               Set replay speed multiplier
   set-loop <on|off>               Set replay loop mode
   set-cadence <bars>              Set agent decision cadence in bars
-  factory-reset [--warmup|--cursor N]
-                                  Reset runtime/memory/replay cursor
+  factory-reset [--warmup|--cursor N] --confirm [--dry-run]
+                                   Reset runtime/memory/replay cursor
+  agent-reset <agent_id> (--full|--positions-only) --confirm [--dry-run]
+                                  Reset one agent safely (scoped)
+  live-preflight                  Show live mode preflight checks
+  check-live-freshness [--strict] Validate live data file freshness thresholds
+  continuity-snapshot [output]    Snapshot data/agent-memory continuity state
+  health-restart-probe            Health check + listener probe on API port
   kill-on [reason]                Activate emergency kill switch
   kill-off [reason]               Deactivate emergency kill switch
   stop-all [reason]               Alias of kill-on
@@ -93,6 +100,7 @@ Env vars:
   ONLYTRADE_REPLAY_SPEED          Default replay speed for start-3day (default: 60)
   ONLYTRADE_DECISION_EVERY_BARS   Default cadence for start-3day (default: 10)
   ONLYTRADE_AKSHARE_CANONICAL     Canonical output path (default: data/live/onlytrade/frames.1m.json)
+  ONLYTRADE_AKSHARE_PYTHON        Python interpreter for AKShare jobs (default: .venv-akshare/bin/python)
 
 Token behavior:
   - If ONLYTRADE_CONTROL_TOKEN is not set, script attempts to read CONTROL_API_TOKEN
@@ -195,11 +203,169 @@ kill_switch() {
 factory_reset() {
   local mode="$1"
   local cursor="${2:-0}"
+  local dry_run="${3:-false}"
 
   if [ "$mode" = "warmup" ]; then
-    curl_post "/api/dev/factory-reset" '{"use_warmup":true}'
+    curl_post "/api/dev/factory-reset" "{\"use_warmup\":true,\"confirm\":\"RESET\",\"dry_run\":$dry_run}"
   else
-    curl_post "/api/dev/factory-reset" "{\"cursor_index\":$cursor}"
+    curl_post "/api/dev/factory-reset" "{\"cursor_index\":$cursor,\"confirm\":\"RESET\",\"dry_run\":$dry_run}"
+  fi
+}
+
+agent_reset() {
+  local agent_id="$1"
+  local reset_memory="$2"
+  local reset_positions="$3"
+  local reset_stats="$4"
+  local dry_run="${5:-false}"
+
+  curl_post "/api/dev/reset-agent" "{\"trader_id\":\"$agent_id\",\"reset_memory\":$reset_memory,\"reset_positions\":$reset_positions,\"reset_stats\":$reset_stats,\"confirm\":\"$agent_id\",\"dry_run\":$dry_run}"
+}
+
+live_preflight() {
+  curl_get "/api/ops/live-preflight"
+}
+
+check_live_freshness() {
+  local strict="${1:-false}"
+  local script_path="$REPO_ROOT/scripts/ops/check_live_data_freshness.py"
+  if [ ! -f "$script_path" ]; then
+    echo "[ops] ERROR: missing script: $script_path" >&2
+    exit 1
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    if [ "$strict" = "true" ]; then
+      python3 "$script_path" --repo-root "$REPO_ROOT" --strict
+    else
+      python3 "$script_path" --repo-root "$REPO_ROOT"
+    fi
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    if [ "$strict" = "true" ]; then
+      python "$script_path" --repo-root "$REPO_ROOT" --strict
+    else
+      python "$script_path" --repo-root "$REPO_ROOT"
+    fi
+    return
+  fi
+
+  echo "[ops] ERROR: python/python3 not found for check-live-freshness" >&2
+  exit 1
+}
+
+continuity_snapshot() {
+  local output_path="${1:-}"
+  local memory_dir="$REPO_ROOT/data/agent-memory"
+
+  if [ ! -d "$memory_dir" ]; then
+    echo "[ops] ERROR: memory dir missing: $memory_dir" >&2
+    exit 1
+  fi
+
+  local py_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    py_bin="python"
+  else
+    echo "[ops] ERROR: python/python3 not found for continuity-snapshot" >&2
+    exit 1
+  fi
+
+  local payload
+  payload="$($py_bin - "$memory_dir" <<'PY'
+import glob
+import hashlib
+import json
+import os
+import sys
+
+memory_dir = sys.argv[1]
+files = sorted(glob.glob(os.path.join(memory_dir, '*.json')))
+rows = []
+
+for fp in files:
+    try:
+        st = os.stat(fp)
+        with open(fp, 'rb') as f:
+            content = f.read()
+        rows.append({
+            'file': os.path.basename(fp),
+            'size_bytes': st.st_size,
+            'mtime_epoch': st.st_mtime,
+            'sha256': hashlib.sha256(content).hexdigest(),
+        })
+    except Exception as exc:  # pragma: no cover
+        rows.append({
+            'file': os.path.basename(fp),
+            'error': str(exc),
+        })
+
+print(json.dumps({
+    'ts_ms': int(__import__('time').time() * 1000),
+    'memory_dir': memory_dir,
+    'count': len(rows),
+    'files': rows,
+}, ensure_ascii=False))
+PY
+)"
+
+  if [ -n "$output_path" ]; then
+    mkdir -p "$(dirname "$output_path")"
+    printf '%s\n' "$payload" > "$output_path"
+    echo "[ops] continuity snapshot written: $output_path"
+  fi
+
+  printf '%s\n' "$payload" | json_pretty
+}
+
+health_restart_probe() {
+  local health_json=""
+  local health_ok=false
+  if health_json="$(curl_get "/health" 2>/dev/null)"; then
+    health_ok=true
+  fi
+
+  local api_port=""
+  if command -v python3 >/dev/null 2>&1; then
+    api_port="$(python3 - "$API_BASE" <<'PY'
+import sys
+from urllib.parse import urlparse
+u = urlparse(sys.argv[1])
+print(u.port or (443 if u.scheme == 'https' else 80))
+PY
+)"
+  elif command -v python >/dev/null 2>&1; then
+    api_port="$(python - "$API_BASE" <<'PY'
+import sys
+from urllib.parse import urlparse
+u = urlparse(sys.argv[1])
+print(u.port or (443 if u.scheme == 'https' else 80))
+PY
+)"
+  else
+    api_port="8080"
+  fi
+
+  local listener_count="-1"
+  if command -v lsof >/dev/null 2>&1; then
+    listener_count="$(lsof -iTCP:"$api_port" -sTCP:LISTEN -t 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+  elif command -v ss >/dev/null 2>&1; then
+    listener_count="$(ss -ltn "sport = :$api_port" 2>/dev/null | awk 'NR>1 {count+=1} END {print count+0}')"
+  fi
+
+  local node_count="$(pgrep -fa "node server.mjs" | wc -l | tr -d ' ')"
+
+  if [ "$health_ok" = true ]; then
+    printf '{"health_ok":true,"api_base":"%s","api_port":%s,"listener_count":%s,"node_server_count":%s,"health":%s}\n' \
+      "$API_BASE" "$api_port" "$listener_count" "$node_count" "$health_json" | json_pretty
+  else
+    printf '{"health_ok":false,"api_base":"%s","api_port":%s,"listener_count":%s,"node_server_count":%s}\n' \
+      "$API_BASE" "$api_port" "$listener_count" "$node_count" | json_pretty
+    return 1
   fi
 }
 
@@ -228,6 +394,11 @@ watch_status() {
 akshare_run_once() {
   local symbols_csv="${1:-002131,300058,002342,600519,300059,600089,600986,601899,002050,002195}"
   local canonical_path="${ONLYTRADE_AKSHARE_CANONICAL:-data/live/onlytrade/frames.1m.json}"
+
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_cycle.py" --symbols "$symbols_csv" --canonical-path "$canonical_path"
+    return
+  fi
 
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_cycle.py" --symbols "$symbols_csv" --canonical-path "$canonical_path"
@@ -316,6 +487,10 @@ market_overview_us_if_open() {
 }
 
 market_overview_cn_run_once() {
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_market_overview_cycle.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_market_overview_cycle.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
     return
@@ -324,6 +499,10 @@ market_overview_cn_run_once() {
 }
 
 market_overview_cn_if_open() {
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_market_overview_if_market_open.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_market_overview_if_market_open.py" --canonical-path "data/live/onlytrade/market_overview.cn-a.json"
     return
@@ -336,6 +515,10 @@ news_digest_us_run_once() {
 }
 
 news_digest_cn_run_once() {
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
     return
@@ -344,6 +527,10 @@ news_digest_cn_run_once() {
 }
 
 red_blue_cn_run_once() {
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_red_blue_cycle.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_red_blue_cycle.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
     return
@@ -352,6 +539,10 @@ red_blue_cn_run_once() {
 }
 
 red_blue_cn_if_open() {
+  if [ -x "$AKSHARE_PYTHON" ]; then
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_red_blue_if_market_open.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+    return
+  fi
   if command -v python3 >/dev/null 2>&1; then
     python3 "$REPO_ROOT/scripts/akshare/run_red_blue_if_market_open.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
     return
@@ -493,9 +684,9 @@ start_three_day_run() {
 
   echo "[ops] start-3day: activating clean baseline"
   if [ "$reset_mode" = "warmup" ]; then
-    factory_reset warmup | json_pretty
+    factory_reset warmup 0 false | json_pretty
   else
-    factory_reset cursor 0 | json_pretty
+    factory_reset cursor 0 false | json_pretty
   fi
 
   echo "[ops] ensuring kill switch is OFF"
@@ -573,6 +764,8 @@ main() {
     factory-reset)
       local mode="cursor"
       local cursor="0"
+      local dry_run="false"
+      local confirmed="false"
       while [ "$#" -gt 0 ]; do
         case "$1" in
           --warmup)
@@ -583,13 +776,101 @@ main() {
             cursor="$2"
             shift 2
             ;;
+          --dry-run)
+            dry_run="true"
+            shift
+            ;;
+          --confirm)
+            confirmed="true"
+            shift
+            ;;
           *)
             echo "[ops] ERROR: unknown factory-reset option $1" >&2
             exit 1
             ;;
         esac
       done
-      factory_reset "$mode" "$cursor" | json_pretty
+      if [ "$confirmed" != "true" ]; then
+        echo "[ops] ERROR: factory-reset requires --confirm" >&2
+        exit 1
+      fi
+      factory_reset "$mode" "$cursor" "$dry_run" | json_pretty
+      ;;
+    agent-reset)
+      local agent_id="${1:-}"
+      shift || true
+      if [ -z "$agent_id" ]; then
+        echo "[ops] ERROR: agent-reset requires <agent_id>" >&2
+        exit 1
+      fi
+      local reset_memory="false"
+      local reset_positions="false"
+      local reset_stats="false"
+      local dry_run="false"
+      local confirmed="false"
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --full)
+            reset_memory="true"
+            reset_positions="true"
+            reset_stats="true"
+            shift
+            ;;
+          --positions-only)
+            reset_memory="false"
+            reset_positions="true"
+            reset_stats="false"
+            shift
+            ;;
+          --dry-run)
+            dry_run="true"
+            shift
+            ;;
+          --confirm)
+            confirmed="true"
+            shift
+            ;;
+          *)
+            echo "[ops] ERROR: unknown agent-reset option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [ "$confirmed" != "true" ]; then
+        echo "[ops] ERROR: agent-reset requires --confirm" >&2
+        exit 1
+      fi
+      if [ "$reset_memory" != "true" ] && [ "$reset_positions" != "true" ] && [ "$reset_stats" != "true" ]; then
+        echo "[ops] ERROR: agent-reset requires --full or --positions-only" >&2
+        exit 1
+      fi
+      agent_reset "$agent_id" "$reset_memory" "$reset_positions" "$reset_stats" "$dry_run" | json_pretty
+      ;;
+    live-preflight)
+      live_preflight | json_pretty
+      ;;
+    check-live-freshness)
+      local strict="false"
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --strict)
+            strict="true"
+            shift
+            ;;
+          *)
+            echo "[ops] ERROR: unknown check-live-freshness option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      check_live_freshness "$strict" | json_pretty
+      ;;
+    continuity-snapshot)
+      local output_path="${1:-}"
+      continuity_snapshot "$output_path"
+      ;;
+    health-restart-probe)
+      health_restart_probe
       ;;
     kill-on|stop-all)
       local reason="${1:-manual_emergency_stop}"

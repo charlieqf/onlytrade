@@ -50,11 +50,54 @@ Expected:
 - `provider: akshare` with non-empty `frames` for watched symbols.
 - Stream packet has `market_breadth.source_kind = breadth_file` and non-stale status.
 
+Recommended preflight endpoint check:
+
+```bash
+curl -fsS "http://127.0.0.1:18080/api/ops/live-preflight"
+```
+
+Or with ops helper:
+
+```bash
+bash scripts/onlytrade-ops.sh live-preflight
+```
+
 ## Runtime checks
 
 - If `live_file.stale=true`, inspect collector/converter logs immediately.
 - If canonical parse fails, backend should continue serving last good cache.
 - During market close, stale alerts should use broader thresholds.
+
+Freshness checker script:
+
+```bash
+python scripts/ops/check_live_data_freshness.py --repo-root /opt/onlytrade --strict
+```
+
+Or via ops helper:
+
+```bash
+bash scripts/onlytrade-ops.sh check-live-freshness --strict
+```
+
+## Continuity guardrail (day rollover)
+
+- Do **not** run global `factory-reset` for normal day rollover.
+- Keep `RESET_AGENT_MEMORY_ON_BOOT=false` in production/live sessions.
+- Use continuity snapshot before/after restart/day boundary:
+
+```bash
+bash scripts/onlytrade-ops.sh continuity-snapshot logs/continuity-before.json
+# restart runtime
+bash scripts/onlytrade-ops.sh continuity-snapshot logs/continuity-after.json
+```
+
+If manual reset is required, explicit confirmation is mandatory:
+
+```bash
+bash scripts/onlytrade-ops.sh factory-reset --cursor 0 --confirm
+bash scripts/onlytrade-ops.sh agent-reset t_001 --full --confirm
+```
 
 ## Rollback
 
@@ -71,3 +114,21 @@ curl -fsS "http://127.0.0.1:18080/api/replay/runtime/status"
 ```bash
 bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
 ```
+
+## Runtime supervision baseline (systemd)
+
+Recommended unit properties:
+
+- `Restart=always`
+- `RestartSec=2`
+- `EnvironmentFile=/opt/onlytrade/runtime-api/.env.local`
+- `WorkingDirectory=/opt/onlytrade/runtime-api`
+- `ExecStart=/usr/bin/node server.mjs`
+
+Single-instance check on API port:
+
+```bash
+bash scripts/onlytrade-ops.sh health-restart-probe
+```
+
+Expected: `health_ok=true` and listener count on API port equals `1`.

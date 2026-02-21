@@ -290,7 +290,16 @@ bash scripts/onlytrade-ops.sh start-3day --single-run --speed 60 --cadence 10
 bash scripts/onlytrade-ops.sh set-loop off
 
 # factory reset only
-bash scripts/onlytrade-ops.sh factory-reset --cursor 0
+bash scripts/onlytrade-ops.sh factory-reset --cursor 0 --confirm
+
+# scoped agent reset (positions only)
+bash scripts/onlytrade-ops.sh agent-reset t_001 --positions-only --confirm
+
+# live-mode preflight
+bash scripts/onlytrade-ops.sh live-preflight
+
+# live data freshness checker
+bash scripts/onlytrade-ops.sh check-live-freshness --strict
 ```
 
 Optional secure control token (recommended):
@@ -308,6 +317,8 @@ bash scripts/onlytrade-ssh-ops.sh status
 bash scripts/onlytrade-ssh-ops.sh kill-on "manual_emergency_stop"
 bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
 bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
+bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0 --confirm
+bash scripts/onlytrade-ssh-ops.sh live-preflight
 ```
 
 Note: `onlytrade-ssh-ops.sh` targets VM API base `http://127.0.0.1:18080` by default.

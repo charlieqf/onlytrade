@@ -77,10 +77,10 @@ bash scripts/onlytrade-ops.sh pause
 
 ```bash
 # Run A (cold-start behavior):
-bash scripts/onlytrade-ops.sh factory-reset --cursor 0
+bash scripts/onlytrade-ops.sh factory-reset --cursor 0 --confirm
 
 # Run B/C (recommended for natural trading behavior checks):
-# bash scripts/onlytrade-ops.sh factory-reset --warmup
+# bash scripts/onlytrade-ops.sh factory-reset --warmup --confirm
 
 bash scripts/onlytrade-ops.sh set-loop off
 bash scripts/onlytrade-ops.sh set-speed 1
@@ -91,6 +91,7 @@ Notes:
 
 - If the goal is "opening minutes" behavior, keep `--cursor 0`.
 - If the goal is "natural trading under load", use `--warmup` for Run B/C to avoid early-bar feature gating noise.
+- If `CONTROL_API_TOKEN` is enabled, export `ONLYTRADE_CONTROL_TOKEN` before mutating ops commands.
 
 3. Reset test data (test environment only):
 
@@ -162,7 +163,7 @@ curl -fsS "http://127.0.0.1:18080/api/bets/market?trader_id=t_001"
 
 ## Run B (10 minutes)
 
-1. Execute **Common Reset/Initialize Procedure** with warmup reset (`factory-reset --warmup`).
+1. Execute **Common Reset/Initialize Procedure** with warmup reset (`factory-reset --warmup --confirm`).
 2. Run viewer simulators for 10 minutes:
 
 ```bash
@@ -188,7 +189,7 @@ python3 scripts/simulate_viewers_chat.py --api-base http://127.0.0.1:18080 --roo
 
 ## Run C (10 minutes)
 
-1. Execute **Common Reset/Initialize Procedure** with warmup reset (`factory-reset --warmup`).
+1. Execute **Common Reset/Initialize Procedure** with warmup reset (`factory-reset --warmup --confirm`).
 2. Run same dual-room viewer load for 10 minutes.
 3. Repeat endpoint checks and collect final artifacts.
 

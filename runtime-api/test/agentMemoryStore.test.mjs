@@ -322,3 +322,100 @@ test('agent memory store records closed positions and equity curve from executed
   assert.equal(snapshot.equity_curve.length >= 3, true)
   assert.equal(snapshot.equity_curve[snapshot.equity_curve.length - 1].total_equity, 100047.95)
 })
+
+test('agent memory store resetTrader scopes reset to one trader', async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'onlytrade-memory-reset-trader-'))
+  const traders = [
+    { trader_id: 't_001', trader_name: 'HS300 Momentum' },
+    { trader_id: 't_002', trader_name: 'Value Rebound' },
+  ]
+  const store = createAgentMemoryStore({ rootDir, traders })
+  await store.hydrate()
+
+  await store.recordSnapshot({
+    trader: traders[0],
+    decision: {
+      timestamp: '2026-02-12T09:30:00.000Z',
+      cycle_number: 1,
+      decisions: [{ action: 'buy', symbol: '600519.SH', price: 10, filled_quantity: 100, executed: true }],
+      account_state: { total_balance: 100000, available_balance: 99000, total_unrealized_profit: 0 },
+    },
+    account: {
+      total_equity: 100000,
+      available_balance: 99000,
+      unrealized_profit: 0,
+    },
+    positions: [
+      {
+        symbol: '600519.SH',
+        quantity: 100,
+        entry_price: 10,
+        mark_price: 10,
+        unrealized_pnl: 0,
+      },
+    ],
+    replayStatus: {
+      trading_day: '2026-02-12',
+      day_index: 1,
+      day_count: 3,
+      cursor_index: 1,
+      is_day_start: true,
+      is_day_end: false,
+    },
+  })
+
+  await store.recordSnapshot({
+    trader: traders[1],
+    decision: {
+      timestamp: '2026-02-12T09:31:00.000Z',
+      cycle_number: 1,
+      decisions: [{ action: 'hold', symbol: '300750.SZ', price: 20 }],
+      account_state: { total_balance: 100200, available_balance: 100200, total_unrealized_profit: 0 },
+    },
+    account: {
+      total_equity: 100200,
+      available_balance: 100200,
+      unrealized_profit: 0,
+    },
+    positions: [],
+    replayStatus: {
+      trading_day: '2026-02-12',
+      day_index: 1,
+      day_count: 3,
+      cursor_index: 2,
+      is_day_start: false,
+      is_day_end: false,
+    },
+  })
+
+  const beforeT2 = store.getSnapshot('t_002')
+  assert.equal(beforeT2.stats.decisions, 1)
+
+  const resetT1 = await store.resetTrader('t_001', {
+    resetMemory: false,
+    resetPositions: true,
+    resetStats: false,
+    persistSnapshot: false,
+  })
+
+  assert.equal(Array.isArray(resetT1.holdings), true)
+  assert.equal(resetT1.holdings.length, 0)
+  assert.equal(Array.isArray(resetT1.open_lots), true)
+  assert.equal(resetT1.open_lots.length, 0)
+
+  const afterT2 = store.getSnapshot('t_002')
+  assert.equal(afterT2.stats.decisions, 1)
+  assert.equal(afterT2.stats.latest_total_balance, 100200)
+
+  const resetStatsOnly = await store.resetTrader('t_001', {
+    resetMemory: false,
+    resetPositions: false,
+    resetStats: true,
+    persistSnapshot: false,
+  })
+
+  assert.equal(resetStatsOnly.stats.decisions, 0)
+  assert.equal(resetStatsOnly.stats.buy_trades, 0)
+  assert.equal(Array.isArray(resetStatsOnly.daily_journal), true)
+  assert.equal(resetStatsOnly.daily_journal.length, 0)
+})

@@ -214,6 +214,19 @@ const CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY = Math.max(
   1,
   Math.min(5, Number(process.env.CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY || 3))
 )
+const CHAT_TTS_ENABLED = String(process.env.CHAT_TTS_ENABLED || 'false').toLowerCase() === 'true'
+const CHAT_TTS_MODEL = String(process.env.CHAT_TTS_MODEL || 'tts-1-hd').trim() || 'tts-1-hd'
+const CHAT_TTS_RESPONSE_FORMAT = String(process.env.CHAT_TTS_RESPONSE_FORMAT || 'mp3').trim().toLowerCase()
+const CHAT_TTS_MAX_CHARS = Math.max(48, Math.min(600, Math.floor(Number(process.env.CHAT_TTS_MAX_CHARS || 220))))
+const CHAT_TTS_SPEED = (() => {
+  const parsed = Number(process.env.CHAT_TTS_SPEED || 1)
+  if (!Number.isFinite(parsed)) return 1
+  return Math.max(0.25, Math.min(parsed, 4))
+})()
+const CHAT_TTS_VOICE_FEMALE_1 = String(process.env.CHAT_TTS_VOICE_FEMALE_1 || 'nova').trim() || 'nova'
+const CHAT_TTS_VOICE_FEMALE_2 = String(process.env.CHAT_TTS_VOICE_FEMALE_2 || 'shimmer').trim() || 'shimmer'
+const CHAT_TTS_VOICE_MALE_1 = String(process.env.CHAT_TTS_VOICE_MALE_1 || 'onyx').trim() || 'onyx'
+const CHAT_TTS_VOICE_MALE_2 = String(process.env.CHAT_TTS_VOICE_MALE_2 || 'echo').trim() || 'echo'
 
 const MARKET_OVERVIEW_PATH_CN = path.resolve(
   ROOT_DIR,
@@ -3513,6 +3526,86 @@ function normalizeForProactiveDedupe(value) {
     .trim()
 }
 
+function sanitizeTtsText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
+  const text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!text) return ''
+  return text.slice(0, Math.max(24, Math.floor(Number(maxChars) || CHAT_TTS_MAX_CHARS))).trim()
+}
+
+function ttsContentType(format) {
+  const key = String(format || '').trim().toLowerCase()
+  if (key === 'wav') return 'audio/wav'
+  if (key === 'opus') return 'audio/ogg'
+  if (key === 'aac') return 'audio/aac'
+  if (key === 'flac') return 'audio/flac'
+  return 'audio/mpeg'
+}
+
+function ttsVoiceEnvKeyByTraderId(traderId) {
+  const safe = String(traderId || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '_')
+  return safe ? `CHAT_TTS_VOICE_${safe}` : ''
+}
+
+function resolveTtsVoiceForTraderId(traderId) {
+  const safeTraderId = String(traderId || '').trim().toLowerCase()
+  const dynamicKey = ttsVoiceEnvKeyByTraderId(safeTraderId)
+  const dynamicVoice = dynamicKey ? String(process.env[dynamicKey] || '').trim() : ''
+  if (dynamicVoice) return dynamicVoice
+
+  if (safeTraderId === 't_003') return CHAT_TTS_VOICE_FEMALE_1
+  if (safeTraderId === 't_004') return CHAT_TTS_VOICE_FEMALE_2
+  if (safeTraderId === 't_001') return CHAT_TTS_VOICE_MALE_1
+  if (safeTraderId === 't_002') return CHAT_TTS_VOICE_MALE_2
+  if (safeTraderId === 'us_001') return CHAT_TTS_VOICE_MALE_1
+  if (safeTraderId === 'us_002') return CHAT_TTS_VOICE_FEMALE_1
+  return CHAT_TTS_VOICE_FEMALE_1
+}
+
+function ttsVoicesSummary() {
+  return {
+    t_001: resolveTtsVoiceForTraderId('t_001'),
+    t_002: resolveTtsVoiceForTraderId('t_002'),
+    t_003: resolveTtsVoiceForTraderId('t_003'),
+    t_004: resolveTtsVoiceForTraderId('t_004'),
+  }
+}
+
+async function synthesizeOpenAITts({ text, voice }) {
+  const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/audio/speech`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: CHAT_TTS_MODEL,
+      voice,
+      input: text,
+      response_format: CHAT_TTS_RESPONSE_FORMAT,
+      speed: CHAT_TTS_SPEED,
+    }),
+  })
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '')
+    throw new Error(`openai_tts_http_${response.status}:${String(errText || '').slice(0, 160)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  if (!arrayBuffer || arrayBuffer.byteLength <= 0) {
+    throw new Error('openai_tts_empty_audio')
+  }
+
+  return Buffer.from(arrayBuffer)
+}
+
 function fallbackProactiveText({ roomContext, latestDecision }) {
   const readiness = String(roomContext?.data_readiness?.level || '').toUpperCase() || ''
   const symbolBrief = roomContext?.symbol_brief || null
@@ -4975,6 +5068,59 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
   }
 })
 
+app.get('/api/chat/tts/config', (_req, res) => {
+  res.json(ok({
+    enabled: CHAT_TTS_ENABLED && !!OPENAI_API_KEY,
+    provider: 'openai',
+    model: CHAT_TTS_MODEL,
+    response_format: CHAT_TTS_RESPONSE_FORMAT,
+    speed: CHAT_TTS_SPEED,
+    max_chars: CHAT_TTS_MAX_CHARS,
+    voice_map: ttsVoicesSummary(),
+  }))
+})
+
+app.post('/api/chat/tts', async (req, res) => {
+  try {
+    if (!CHAT_TTS_ENABLED) {
+      res.status(503).json({ success: false, error: 'chat_tts_disabled' })
+      return
+    }
+    if (!OPENAI_API_KEY) {
+      res.status(503).json({ success: false, error: 'chat_tts_unavailable' })
+      return
+    }
+
+    const roomId = String(req.body?.room_id || '').trim()
+    const text = sanitizeTtsText(req.body?.text, { maxChars: CHAT_TTS_MAX_CHARS })
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    if (!text) {
+      res.status(400).json({ success: false, error: 'text_required' })
+      return
+    }
+
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    const voice = resolveTtsVoiceForTraderId(roomId)
+    const audioBuffer = await synthesizeOpenAITts({ text, voice })
+
+    res.set('Content-Type', ttsContentType(CHAT_TTS_RESPONSE_FORMAT))
+    res.set('Cache-Control', 'no-store')
+    res.set('x-tts-model', CHAT_TTS_MODEL)
+    res.set('x-tts-voice', voice)
+    res.send(audioBuffer)
+  } catch (error) {
+    res.status(502).json({ success: false, error: error?.message || 'chat_tts_failed' })
+  }
+})
+
 function httpError(code, status = 400) {
   const error = new Error(code)
   error.code = code
@@ -5590,6 +5736,13 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       decision_narration_min_interval_ms: CHAT_DECISION_NARRATION_MIN_INTERVAL_MS,
       decision_narration_hold_interval_ms: CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS,
       decision_narration_conservative_hold_interval_ms: CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS,
+      tts_enabled: CHAT_TTS_ENABLED && !!OPENAI_API_KEY,
+      tts_provider: 'openai',
+      tts_model: CHAT_TTS_MODEL,
+      tts_response_format: CHAT_TTS_RESPONSE_FORMAT,
+      tts_speed: CHAT_TTS_SPEED,
+      tts_max_chars: CHAT_TTS_MAX_CHARS,
+      tts_voice_map: ttsVoicesSummary(),
     },
     kill_switch: killSwitchPublicState(),
     llm: {
@@ -6408,6 +6561,9 @@ app.listen(PORT, () => {
   const llmInfo = llmDecider
     ? `llm=openai model=${OPENAI_MODEL} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
+  const ttsInfo = CHAT_TTS_ENABLED && OPENAI_API_KEY
+    ? `chat_tts=enabled model=${CHAT_TTS_MODEL} format=${CHAT_TTS_RESPONSE_FORMAT} speed=${CHAT_TTS_SPEED}`
+    : `chat_tts=disabled enabled_flag=${CHAT_TTS_ENABLED} openai_key=${OPENAI_API_KEY ? 'configured' : 'missing'}`
   const replayRuntimeInfo = RUNTIME_DATA_MODE === 'live_file'
     ? `data_mode=live_file live_frames_cn=${LIVE_FRAMES_PATH_CN} live_frames_us=${LIVE_FRAMES_PATH_US} refresh_ms=${LIVE_FILE_REFRESH_MS} stale_ms=${LIVE_FILE_STALE_MS}`
     : (replayEngine?.getStatus?.()
@@ -6425,6 +6581,7 @@ app.listen(PORT, () => {
   console.log(`[runtime-api] ${killSwitchInfo}`)
   console.log(`[runtime-api] ${resetInfo}`)
   console.log(`[runtime-api] ${llmInfo}`)
+  console.log(`[runtime-api] ${ttsInfo}`)
   console.log(`[runtime-api] ${replayRuntimeInfo}`)
   console.log(`[runtime-api] ${registryInfo}`)
   console.log(`[runtime-api] ${agentInfo}`)

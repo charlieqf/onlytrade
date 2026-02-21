@@ -10,6 +10,7 @@ import {
   useAutoScrollFeed,
   useAvatarSize,
   usePhoneStreamData,
+  useAgentTtsAutoplay,
 } from './phoneStreamShared'
 
 export default function Expert1CommandDeckPage(
@@ -25,23 +26,48 @@ export default function Expert1CommandDeckPage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    packetAgeLabel,
+    decisionAgeLabel,
+    chatAgeLabel,
+    transportLabel,
+    chatSyncState,
+    isDegraded,
     marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert1')
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+    roomId,
+    publicMessages,
+  })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
   const [pinnedSymbol, setPinnedSymbol] = useState<string>('')
+  const [pinnedUntilMs, setPinnedUntilMs] = useState<number>(0)
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (!pinnedSymbol) return
-    const timer = window.setTimeout(() => setPinnedSymbol(''), 20_000)
+    const remainingMs = Math.max(0, pinnedUntilMs - Date.now())
+    if (remainingMs <= 0) {
+      setPinnedSymbol('')
+      return
+    }
+    const timer = window.setTimeout(() => setPinnedSymbol(''), remainingMs)
     return () => window.clearTimeout(timer)
-  }, [pinnedSymbol])
+  }, [pinnedSymbol, pinnedUntilMs])
 
   const activeSymbol = pinnedSymbol || focusedSymbol
+  const pinRemainingSec = pinnedSymbol
+    ? Math.max(0, Math.ceil((pinnedUntilMs - nowMs) / 1000))
+    : 0
 
   return (
     <div className="h-[100dvh] w-screen overflow-hidden bg-[#050510] text-white">
@@ -62,6 +88,9 @@ export default function Expert1CommandDeckPage(
             <span className="rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[10px] font-black">
               {modeLabel}
             </span>
+            <span className="rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+              {transportLabel}
+            </span>
             <span className="rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[10px] font-mono text-white/80">
               {sseStatus}
             </span>
@@ -70,9 +99,55 @@ export default function Expert1CommandDeckPage(
             </span>
           </div>
 
+          <div className="absolute right-2 top-9 z-20 flex items-center gap-1 text-[9px] font-mono">
+            <span className="rounded bg-black/55 px-1.5 py-0.5 text-white/85">pkt {packetAgeLabel}</span>
+            <span className="rounded bg-black/55 px-1.5 py-0.5 text-white/85">dec {decisionAgeLabel}</span>
+            <span className="rounded bg-black/55 px-1.5 py-0.5 text-white/85">chat {chatAgeLabel}</span>
+            <button
+              type="button"
+              onClick={() => setTtsAutoPlay((prev) => !prev)}
+              disabled={!ttsAvailable}
+              className={`rounded px-1.5 py-0.5 text-[9px] ${ttsAutoPlay ? 'bg-emerald-600/65 text-white' : 'bg-black/55 text-white/80'} disabled:opacity-50`}
+            >
+              {ttsAutoPlay ? 'voice on' : 'voice off'}
+            </button>
+          </div>
+
+          {(roomVoice || ttsError) && (
+            <div className="absolute right-2 top-14 z-20 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-mono text-white/80">
+              {ttsError ? `voice err` : `voice ${roomVoice}`}
+            </div>
+          )}
+
           <div className="absolute left-2 top-2 z-20 rounded bg-black/50 px-2 py-1 text-[10px] font-mono text-white/90">
             {selectedTrader.trader_name} · {activeSymbol}
           </div>
+
+          <div className="absolute left-2 top-9 z-20 flex items-center gap-1 text-[9px] font-mono text-white/85">
+            <span className="rounded bg-black/55 px-1.5 py-0.5">chat {chatSyncState}</span>
+            {pinnedSymbol && (
+              <>
+                <span className="rounded bg-black/55 px-1.5 py-0.5 text-amber-300">
+                  pin {pinRemainingSec}s
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPinnedSymbol('')}
+                  className="rounded border border-white/20 bg-black/60 px-1.5 py-0.5 text-[9px] text-white"
+                >
+                  clear
+                </button>
+              </>
+            )}
+          </div>
+
+          {isDegraded && (
+            <div className="absolute inset-x-2 top-16 z-20 rounded border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] font-medium text-red-200">
+              {language === 'zh'
+                ? '数据降级：SSE/数据新鲜度异常，已自动切换轮询兜底。'
+                : 'Degraded stream: SSE/freshness issue detected, polling fallback active.'}
+            </div>
+          )}
 
           {marketBreadth.advancers != null && marketBreadth.decliners != null && (
             <div className="absolute left-2 top-10 z-20 rounded bg-black/55 px-2 py-1 text-[10px] font-mono text-white/90">
@@ -133,7 +208,10 @@ export default function Expert1CommandDeckPage(
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setPinnedSymbol(item.symbol)}
+                    onClick={() => {
+                      setPinnedSymbol(item.symbol)
+                      setPinnedUntilMs(Date.now() + 20_000)
+                    }}
                     className="block w-full border-l-2 border-white/20 pl-2 text-left"
                   >
                     <div className="flex items-center justify-between">

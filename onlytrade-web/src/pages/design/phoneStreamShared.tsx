@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 
 import { api } from '../../lib/api'
+import { mergeChatMessages } from '../../lib/chat/mergeChatMessages'
 import { TraderAvatar } from '../../components/TraderAvatar'
 import type { Language } from '../../i18n/translations'
 import type { RoomSseState } from '../../hooks/useRoomSse'
@@ -26,6 +27,7 @@ export type FormalStreamDesignPageProps = {
 export type DecisionViewItem = {
   id: string
   timestamp: string
+  timestampMs: number
   action: string
   symbol: string
   confidence: number | null
@@ -68,6 +70,35 @@ function clipText(value: string, maxLen: number): string {
   return `${text.slice(0, maxLen)}...`
 }
 
+function pickLatestChatTsMs(messages: ChatMessage[]): number {
+  if (!Array.isArray(messages) || messages.length === 0) return 0
+  return messages.reduce((maxTs, msg) => {
+    const ts = Number(msg?.created_ts_ms || 0)
+    return ts > maxTs ? ts : maxTs
+  }, 0)
+}
+
+function classifyFreshness(
+  ageMs: number,
+  freshThresholdMs: number,
+  warmThresholdMs: number
+): 'fresh' | 'warm' | 'stale' {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return 'stale'
+  if (ageMs < freshThresholdMs) return 'fresh'
+  if (ageMs < warmThresholdMs) return 'warm'
+  return 'stale'
+}
+
+function formatAgeCompact(ageMs: number): string {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return '--'
+  const secs = Math.floor(ageMs / 1000)
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  return `${hours}h`
+}
+
 function decisionToViewItem(row: DecisionRecord, index: number): DecisionViewItem {
   const first = row.decisions?.[0]
   const rawAction = String(first?.action || '')
@@ -84,9 +115,12 @@ function decisionToViewItem(row: DecisionRecord, index: number): DecisionViewIte
     84
   )
 
+  const rawTs = String(row.timestamp || '')
+  const tsMs = new Date(rawTs).getTime()
   return {
     id: `${row.timestamp || 'ts'}-${row.cycle_number || index}`,
-    timestamp: formatTimeLabel(String(row.timestamp || '')),
+    timestamp: formatTimeLabel(rawTs),
+    timestampMs: Number.isFinite(tsMs) ? tsMs : 0,
     action: normalizeAction(rawAction),
     symbol: rawSymbol || '--',
     confidence,
@@ -110,9 +144,12 @@ function auditToViewItem(row: DecisionAuditRecord, index: number): DecisionViewI
     84
   )
 
+  const rawTs = String(row.timestamp || '')
+  const tsMs = new Date(rawTs).getTime()
   return {
     id: `${String(row.timestamp || 'audit-ts')}-${Number(row.cycle_number || index)}`,
-    timestamp: formatTimeLabel(String(row.timestamp || '')),
+    timestamp: formatTimeLabel(rawTs),
+    timestampMs: Number.isFinite(tsMs) ? tsMs : 0,
     action: normalizeAction(rawAction),
     symbol: rawSymbol,
     confidence,
@@ -151,8 +188,14 @@ export function usePhoneStreamData({
   language,
 }: FormalStreamDesignPageProps) {
   const roomId = selectedTrader.trader_id
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
 
-  const { data: publicMessages = [] } = useSWR<ChatMessage[]>(
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const { data: apiPublicMessages = [] } = useSWR<ChatMessage[]>(
     roomId ? ['room-public-chat', roomId] : null,
     () => api.getRoomPublicMessages(roomId, 100),
     {
@@ -160,6 +203,16 @@ export function usePhoneStreamData({
       revalidateOnFocus: false,
       dedupingInterval: 1200,
     }
+  )
+
+  const packetPublicMessages = useMemo(() => {
+    const fromPacket = (streamPacket as any)?.public_chat_preview?.messages
+    return Array.isArray(fromPacket) ? fromPacket : []
+  }, [(streamPacket as any)?.public_chat_preview?.messages])
+
+  const mergedPublicMessages = useMemo(
+    () => mergeChatMessages(apiPublicMessages, packetPublicMessages),
+    [apiPublicMessages, packetPublicMessages]
   )
 
   const decisions = Array.isArray(streamPacket?.decisions_latest)
@@ -191,7 +244,7 @@ export function usePhoneStreamData({
     decisions[0]?.timestamp || streamPacket?.decision_latest?.timestamp || ''
   )
   const latestDecisionAgeMs = latestDecisionTs
-    ? Date.now() - new Date(latestDecisionTs).getTime()
+    ? nowMs - new Date(latestDecisionTs).getTime()
     : Number.POSITIVE_INFINITY
   const thinkingSymbol = pickThinkingSymbol(streamPacket)
   const positionSymbol = pickPositionSymbol(positions)
@@ -207,13 +260,44 @@ export function usePhoneStreamData({
 
   const modeLabel = replayRuntimeStatus?.running ? 'REPLAY' : 'LIVE'
   const packetTs = Number(streamPacket?.ts_ms || 0)
-  const packetFreshMs = packetTs > 0 ? Date.now() - packetTs : Number.POSITIVE_INFINITY
-  const freshnessLabel =
-    packetFreshMs < 15_000
-      ? 'fresh'
-      : packetFreshMs < 60_000
-        ? 'warm'
-        : 'stale'
+  const packetFreshMs = packetTs > 0 ? nowMs - packetTs : Number.POSITIVE_INFINITY
+  const freshnessLabel = classifyFreshness(packetFreshMs, 15_000, 60_000)
+
+  const apiLatestChatTsMs = pickLatestChatTsMs(apiPublicMessages)
+  const packetLatestChatTsMs = pickLatestChatTsMs(packetPublicMessages)
+  const mergedLatestChatTsMs = pickLatestChatTsMs(mergedPublicMessages)
+  const chatAgeMs =
+    mergedLatestChatTsMs > 0 ? nowMs - mergedLatestChatTsMs : Number.POSITIVE_INFINITY
+  const decisionFreshnessLabel = classifyFreshness(latestDecisionAgeMs, 60_000, 180_000)
+  const chatFreshnessLabel = classifyFreshness(chatAgeMs, 30_000, 120_000)
+
+  let chatSyncState = 'empty'
+  if (apiLatestChatTsMs > 0 && packetLatestChatTsMs > 0) {
+    const deltaMs = apiLatestChatTsMs - packetLatestChatTsMs
+    chatSyncState = Math.abs(deltaMs) <= 5_000
+      ? 'synced'
+      : deltaMs > 0
+        ? 'api-ahead'
+        : 'packet-ahead'
+  } else if (apiLatestChatTsMs > 0) {
+    chatSyncState = 'api-only'
+  } else if (packetLatestChatTsMs > 0) {
+    chatSyncState = 'packet-only'
+  }
+
+  const lastSseEventAgeMs = roomSseState?.last_event_ts_ms
+    ? nowMs - roomSseState.last_event_ts_ms
+    : Number.POSITIVE_INFINITY
+  const sseHealthy = roomSseState?.status === 'connected' && lastSseEventAgeMs <= 15_000
+  const transportLabel = sseHealthy ? 'SSE' : 'POLL'
+
+  const staleFlags = {
+    transport: transportLabel === 'POLL',
+    packet: freshnessLabel === 'stale',
+    decision: decisionFreshnessLabel === 'stale',
+    chat: mergedPublicMessages.length > 0 && chatFreshnessLabel === 'stale',
+  }
+  const isDegraded = staleFlags.transport || staleFlags.packet || staleFlags.decision || staleFlags.chat
 
   const breadthRaw = (streamPacket as any)?.market_breadth?.breadth
     || (streamPacket as any)?.room_context?.market_breadth
@@ -239,13 +323,161 @@ export function usePhoneStreamData({
     roomId,
     positions,
     decisionItems,
-    publicMessages: publicMessages.slice(-80),
+    publicMessages: mergedPublicMessages.slice(-80),
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    packetAgeLabel: formatAgeCompact(packetFreshMs),
+    decisionAgeLabel: formatAgeCompact(latestDecisionAgeMs),
+    chatAgeLabel: formatAgeCompact(chatAgeMs),
+    decisionFreshnessLabel,
+    chatFreshnessLabel,
+    transportLabel,
+    chatSyncState,
+    staleFlags,
+    isDegraded,
     marketBreadth,
     sseStatus: roomSseState?.status || 'connecting',
     packetTs,
+  }
+}
+
+export function useAgentTtsAutoplay({
+  roomId,
+  publicMessages,
+}: {
+  roomId: string
+  publicMessages: ChatMessage[]
+}) {
+  const [ttsAutoPlay, setTtsAutoPlay] = useState<boolean>(true)
+  const [ttsError, setTtsError] = useState<string>('')
+
+  const { data: chatTtsConfig } = useSWR(
+    ['chat-tts-config'],
+    () => api.getChatTtsConfig(),
+    {
+      refreshInterval: 60000,
+      revalidateOnFocus: false,
+    }
+  )
+
+  const ttsAvailable = chatTtsConfig?.enabled === true
+  const roomVoice = String(chatTtsConfig?.voice_map?.[roomId] || '').trim()
+
+  const ttsSeenMessageIdsRef = useRef<Set<string>>(new Set())
+  const ttsQueueRef = useRef<ChatMessage[]>([])
+  const ttsPlayingRef = useRef<boolean>(false)
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
+  const ttsObjectUrlRef = useRef<string | null>(null)
+
+  const playQueuedTts = useCallback(async () => {
+    if (!ttsAutoPlay || !ttsAvailable) return
+    if (ttsPlayingRef.current) return
+    const next = ttsQueueRef.current.shift()
+    if (!next) return
+
+    const text = String(next.text || '').trim().slice(0, 220)
+    if (!text) return
+
+    ttsPlayingRef.current = true
+    try {
+      const blob = await api.synthesizeRoomSpeech({
+        room_id: roomId,
+        text,
+      })
+      if (!blob || blob.size <= 0) {
+        throw new Error('tts_empty_audio')
+      }
+
+      if (ttsObjectUrlRef.current) {
+        URL.revokeObjectURL(ttsObjectUrlRef.current)
+      }
+      const objectUrl = URL.createObjectURL(blob)
+      ttsObjectUrlRef.current = objectUrl
+
+      const audio = new Audio(objectUrl)
+      audio.preload = 'auto'
+      ttsAudioRef.current = audio
+
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve()
+        audio.onerror = () => reject(new Error('tts_audio_playback_failed'))
+        audio.play().then(() => {}).catch((error) => reject(error))
+      })
+
+      setTtsError('')
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : 'tts_play_failed')
+      setTtsError(message)
+      if (/NotAllowedError|play\(\) failed/i.test(message)) {
+        setTtsAutoPlay(false)
+      }
+    } finally {
+      ttsPlayingRef.current = false
+      if (ttsQueueRef.current.length > 0) {
+        void playQueuedTts()
+      }
+    }
+  }, [roomId, ttsAutoPlay, ttsAvailable])
+
+  useEffect(() => {
+    ttsSeenMessageIdsRef.current.clear()
+    ttsQueueRef.current = []
+    ttsPlayingRef.current = false
+    setTtsError('')
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause()
+      ttsAudioRef.current = null
+    }
+    if (ttsObjectUrlRef.current) {
+      URL.revokeObjectURL(ttsObjectUrlRef.current)
+      ttsObjectUrlRef.current = null
+    }
+  }, [roomId])
+
+  useEffect(() => {
+    return () => {
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause()
+        ttsAudioRef.current = null
+      }
+      if (ttsObjectUrlRef.current) {
+        URL.revokeObjectURL(ttsObjectUrlRef.current)
+        ttsObjectUrlRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!ttsAutoPlay || !ttsAvailable) return
+
+    const seen = ttsSeenMessageIdsRef.current
+    const queue = ttsQueueRef.current
+    let appended = 0
+
+    for (const row of publicMessages.slice(-30)) {
+      if (row.sender_type !== 'agent') continue
+      if (!(row.agent_message_kind === 'proactive' || row.agent_message_kind === 'narration')) {
+        continue
+      }
+      const id = String(row.id || '').trim()
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      queue.push(row)
+      appended += 1
+    }
+
+    if (appended > 0) {
+      void playQueuedTts()
+    }
+  }, [publicMessages, ttsAutoPlay, ttsAvailable, playQueuedTts])
+
+  return {
+    ttsAvailable,
+    ttsAutoPlay,
+    setTtsAutoPlay,
+    ttsError,
+    roomVoice,
   }
 }
 

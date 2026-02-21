@@ -48,6 +48,13 @@ Optional env vars:
 - `AGENT_LLM_TIMEOUT_MS`: LLM request timeout in milliseconds (default `7000`).
 - `AGENT_LLM_DEV_TOKEN_SAVER`: default `true`; uses compact prompt/context to reduce token usage in development.
 - `AGENT_LLM_MAX_OUTPUT_TOKENS`: cap model output tokens (default `180`).
+- `CHAT_TTS_ENABLED`: enable room-agent TTS endpoint (`false` by default).
+- `CHAT_TTS_MODEL`: OpenAI speech model (default `tts-1-hd`).
+- `CHAT_TTS_RESPONSE_FORMAT`: `mp3` (default), `wav`, `aac`, `flac`, or `opus`.
+- `CHAT_TTS_SPEED`: synthesis speed multiplier (default `1`, range `0.25`-`4`).
+- `CHAT_TTS_MAX_CHARS`: max TTS input chars per request (default `220`).
+- `CHAT_TTS_VOICE_FEMALE_1`, `CHAT_TTS_VOICE_FEMALE_2`, `CHAT_TTS_VOICE_MALE_1`, `CHAT_TTS_VOICE_MALE_2`: default voice slots.
+- `CHAT_TTS_VOICE_<TRADER_ID>`: optional per-trader override (e.g. `CHAT_TTS_VOICE_T_003=shimmer`).
 - `CONTROL_API_TOKEN`: optional bearer/token for protected runtime control endpoints (recommended for kill switch).
 - `RESET_AGENT_MEMORY_ON_BOOT`: set `true` to wipe/reinitialize `data/agent-memory/*.json` at startup.
 
@@ -68,6 +75,8 @@ MARKET_PROVIDER=real MARKET_UPSTREAM_URL=https://your-proxy.example/api/market/f
 - `POST /api/agent/runtime/control` (`pause` | `resume` | `step` | `set_cycle_ms` | `set_decision_every_bars`)
 - `POST /api/agent/runtime/kill-switch` (`activate` | `deactivate`) - emergency stop of all agent decisions + LLM calls
 - `GET /api/agent/memory?trader_id=t_001`
+- `GET /api/chat/tts/config` (TTS capability + voice map)
+- `POST /api/chat/tts` (`{ room_id, text }`, returns audio stream)
 - `GET /api/replay/runtime/status`
 - `POST /api/replay/runtime/control` (`pause` | `resume` | `step` | `set_speed` | `set_cursor`)
   - Supports `set_loop` with body `{ "action": "set_loop", "loop": false }` for single-run replay mode.

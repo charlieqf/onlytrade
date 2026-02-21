@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import useSWR from 'swr'
 import { api } from '../lib/api'
 import { DeepVoidBackground } from '../components/DeepVoidBackground'
+import { PhoneRealtimeKlineChart } from '../components/PhoneRealtimeKlineChart'
 import {
   TraderAvatar,
   resolveTraderAvatarImageUrls,
@@ -99,6 +100,55 @@ function topPosition(positions: Position[]) {
       Math.abs(Number(a?.unrealized_pnl || 0))
   )
   return sorted[0] || null
+}
+
+function pickThinkingSymbol(packet?: RoomStreamPacket): string | undefined {
+  const fromMeta = String((packet as any)?.decision_meta?.thinking_symbol || '').trim()
+  if (fromMeta) return fromMeta
+
+  const symbolBrief = (packet?.room_context as any)?.symbol_brief
+  if (symbolBrief && typeof symbolBrief === 'object') {
+    const fromBrief = String(symbolBrief.symbol || symbolBrief.focus_symbol || '').trim()
+    if (fromBrief) return fromBrief
+  }
+
+  return undefined
+}
+
+function resolveKlineFocusTarget({
+  streamPacket,
+  decision,
+  featuredPos,
+}: {
+  streamPacket?: RoomStreamPacket
+  decision: DecisionRecord | null
+  featuredPos: Position | null
+}) {
+  const decisionSymbol = String(decision?.decisions?.[0]?.symbol || '').trim()
+  const decisionTs = String(decision?.timestamp || '')
+  const decisionAgeMs = decisionTs
+    ? Date.now() - new Date(decisionTs).getTime()
+    : Number.POSITIVE_INFINITY
+
+  if (decisionSymbol && decisionAgeMs <= 2 * 60_000) {
+    return { symbol: decisionSymbol, source: 'decision' as const }
+  }
+
+  const thinkingSymbol = pickThinkingSymbol(streamPacket)
+  if (thinkingSymbol) {
+    return { symbol: thinkingSymbol, source: 'thinking' as const }
+  }
+
+  const positionSymbol = String(featuredPos?.symbol || '').trim()
+  if (positionSymbol) {
+    return { symbol: positionSymbol, source: 'position' as const }
+  }
+
+  if (decisionSymbol) {
+    return { symbol: decisionSymbol, source: 'decision' as const }
+  }
+
+  return { symbol: '600519.SH', source: 'fallback' as const }
 }
 
 function senderLabel(message: ChatMessage) {
@@ -1044,6 +1094,8 @@ export function StreamingRoomPage({
   const [giftSending, setGiftSending] = useState<boolean>(false)
   const [giftError, setGiftError] = useState<string>('')
   const [giftNotice, setGiftNotice] = useState<string>('')
+  const [ttsAutoPlay, setTtsAutoPlay] = useState<boolean>(true)
+  const [ttsError, setTtsError] = useState<string>('')
 
   const streamingParams = useMemo(() => parseStreamingParams(), [])
   const [digitalPerson, setDigitalPerson] = useState<DigitalPersonState>(
@@ -1065,6 +1117,11 @@ export function StreamingRoomPage({
   const giftCooldownTimerRef = useRef<number | null>(null)
   const betCooldownTimerRef = useRef<number | null>(null)
   const reactionWindowRef = useRef<number[]>([])
+  const ttsSeenMessageIdsRef = useRef<Set<string>>(new Set())
+  const ttsQueueRef = useRef<ChatMessage[]>([])
+  const ttsPlayingRef = useRef<boolean>(false)
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
+  const ttsObjectUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
     const onVisibility = () => {
@@ -1116,6 +1173,14 @@ export function StreamingRoomPage({
       if (betCooldownTimerRef.current != null) {
         window.clearTimeout(betCooldownTimerRef.current)
       }
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause()
+        ttsAudioRef.current = null
+      }
+      if (ttsObjectUrlRef.current) {
+        URL.revokeObjectURL(ttsObjectUrlRef.current)
+        ttsObjectUrlRef.current = null
+      }
     }
   }, [])
 
@@ -1136,6 +1201,17 @@ export function StreamingRoomPage({
       )
       .slice(-80)
   }, [chatData])
+
+  const { data: chatTtsConfig } = useSWR(
+    ['chat-tts-config'],
+    () => api.getChatTtsConfig(),
+    {
+      refreshInterval: 60000,
+      revalidateOnFocus: false,
+    }
+  )
+  const ttsAvailable = chatTtsConfig?.enabled === true
+  const roomVoice = String(chatTtsConfig?.voice_map?.[roomId] || '').trim()
 
   const {
     data: betMarket,
@@ -1207,6 +1283,110 @@ export function StreamingRoomPage({
   const supporters = Array.isArray(creditsData?.leaderboard)
     ? creditsData.leaderboard.slice(0, 6)
     : []
+
+  const playQueuedTts = async () => {
+    if (!ttsAutoPlay || !ttsAvailable) return
+    if (ttsPlayingRef.current) return
+    const next = ttsQueueRef.current.shift()
+    if (!next) return
+
+    const text = safeText(next.text, 220)
+    if (!text) return
+
+    ttsPlayingRef.current = true
+    try {
+      const blob = await api.synthesizeRoomSpeech({
+        room_id: roomId,
+        text,
+      })
+
+      if (!blob || blob.size <= 0) {
+        throw new Error('tts_empty_audio')
+      }
+
+      if (ttsObjectUrlRef.current) {
+        URL.revokeObjectURL(ttsObjectUrlRef.current)
+      }
+      const objectUrl = URL.createObjectURL(blob)
+      ttsObjectUrlRef.current = objectUrl
+
+      const audio = new Audio(objectUrl)
+      audio.preload = 'auto'
+      ttsAudioRef.current = audio
+
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve()
+        audio.onerror = () => reject(new Error('tts_audio_playback_failed'))
+        audio
+          .play()
+          .then(() => {
+            // playback started
+          })
+          .catch((error) => {
+            reject(error)
+          })
+      })
+
+      setTtsError('')
+    } catch (error) {
+      const message = String(
+        error instanceof Error ? error.message : 'tts_play_failed'
+      )
+      setTtsError(message)
+      if (/NotAllowedError|play\(\) failed/i.test(message)) {
+        setTtsAutoPlay(false)
+      }
+    } finally {
+      ttsPlayingRef.current = false
+      if (ttsQueueRef.current.length > 0) {
+        void playQueuedTts()
+      }
+    }
+  }
+
+  useEffect(() => {
+    ttsSeenMessageIdsRef.current.clear()
+    ttsQueueRef.current = []
+    ttsPlayingRef.current = false
+    setTtsError('')
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause()
+      ttsAudioRef.current = null
+    }
+    if (ttsObjectUrlRef.current) {
+      URL.revokeObjectURL(ttsObjectUrlRef.current)
+      ttsObjectUrlRef.current = null
+    }
+  }, [roomId])
+
+  useEffect(() => {
+    if (!ttsAutoPlay || !ttsAvailable) return
+
+    const seen = ttsSeenMessageIdsRef.current
+    const queue = ttsQueueRef.current
+    let appended = 0
+
+    for (const row of publicMessages.slice(-30)) {
+      if (row.sender_type !== 'agent') continue
+      if (
+        !(
+          row.agent_message_kind === 'proactive' ||
+          row.agent_message_kind === 'narration'
+        )
+      ) {
+        continue
+      }
+      const id = String(row.id || '').trim()
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      queue.push(row)
+      appended += 1
+    }
+
+    if (appended > 0) {
+      void playQueuedTts()
+    }
+  }, [publicMessages, ttsAutoPlay, ttsAvailable])
 
   const spawnReactions = (
     count: number,
@@ -1468,6 +1648,23 @@ export function StreamingRoomPage({
     ? streamPacket.positions
     : []
   const featuredPos = useMemo(() => topPosition(positions), [positions])
+  const klineFocus = useMemo(
+    () =>
+      resolveKlineFocusTarget({
+        streamPacket,
+        decision,
+        featuredPos,
+      }),
+    [streamPacket, decision, featuredPos]
+  )
+  const klineFocusSourceLabel =
+    klineFocus.source === 'decision'
+      ? (language === 'zh' ? '来源: 最新决策' : 'source: latest decision')
+      : klineFocus.source === 'thinking'
+        ? (language === 'zh' ? '来源: 当前思考' : 'source: current thinking')
+        : klineFocus.source === 'position'
+          ? (language === 'zh' ? '来源: 重点持仓' : 'source: featured position')
+          : (language === 'zh' ? '来源: 默认符号' : 'source: default symbol')
 
   const sseStatus = roomSseState?.status || 'connecting'
   const sseCls =
@@ -1825,6 +2022,26 @@ export function StreamingRoomPage({
                   />
                 </div>
 
+                <div className="rounded-2xl border border-white/10 bg-black/25 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-3">
+                    <div className="text-[11px] font-mono text-nofx-text-muted">
+                      {language === 'zh' ? '焦点K线' : 'focus kline'}
+                    </div>
+                    <div className="text-[10px] font-mono text-nofx-text-muted">
+                      {klineFocusSourceLabel}
+                    </div>
+                  </div>
+                  <div className="h-[260px] sm:h-[320px]">
+                    <PhoneRealtimeKlineChart
+                      symbol={klineFocus.symbol}
+                      interval="1m"
+                      limit={240}
+                      refreshMs={12_000}
+                      height="100%"
+                    />
+                  </div>
+                </div>
+
                 <div className="hidden lg:grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
                     <div className="flex items-center justify-between gap-2">
@@ -2012,6 +2229,55 @@ export function StreamingRoomPage({
                   )}
                   {giftNotice && <div className="text-xs text-nofx-green">{giftNotice}</div>}
                   {giftError && <div className="text-xs text-nofx-red">{giftError}</div>}
+
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold text-nofx-text-main">
+                        {language === 'zh' ? '主播语音（TTS）' : 'Agent Voice (TTS)'}
+                      </div>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded border font-mono ${ttsAvailable ? 'border-nofx-green/35 text-nofx-green bg-nofx-green/10' : 'border-white/20 text-nofx-text-muted bg-black/35'}`}
+                      >
+                        {ttsAvailable
+                          ? language === 'zh'
+                            ? '可用'
+                            : 'READY'
+                          : language === 'zh'
+                            ? '未启用'
+                            : 'OFF'}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTtsAutoPlay((prev) => !prev)}
+                        disabled={!ttsAvailable}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border disabled:opacity-45 disabled:cursor-not-allowed ${ttsAutoPlay ? 'border-nofx-gold/45 bg-nofx-gold/15 text-nofx-gold' : 'border-white/20 bg-black/40 text-nofx-text-muted'}`}
+                      >
+                        {ttsAutoPlay
+                          ? language === 'zh'
+                            ? '语音播报：开'
+                            : 'Voice: ON'
+                          : language === 'zh'
+                            ? '语音播报：关'
+                            : 'Voice: OFF'}
+                      </button>
+                      <div className="text-[11px] font-mono text-nofx-text-muted text-right">
+                        {roomVoice ? `voice=${roomVoice}` : ''}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-[11px] text-nofx-text-muted">
+                      {language === 'zh'
+                        ? '仅播报 agent 的主动消息与解说消息（proactive/narration）。'
+                        : 'Only proactive and narration agent messages are voiced.'}
+                    </div>
+
+                    {ttsError ? (
+                      <div className="mt-1 text-[11px] text-nofx-red break-all">{ttsError}</div>
+                    ) : null}
+                  </div>
 
                   <div className="pt-2 border-t border-white/10">
                     <div className="flex items-center justify-between mb-2">

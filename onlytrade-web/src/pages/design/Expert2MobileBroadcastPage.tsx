@@ -10,6 +10,7 @@ import {
   useAutoScrollFeed,
   useAvatarSize,
   usePhoneStreamData,
+  useAgentTtsAutoplay,
 } from './phoneStreamShared'
 
 export default function Expert2MobileBroadcastPage(
@@ -24,23 +25,43 @@ export default function Expert2MobileBroadcastPage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    packetAgeLabel,
+    decisionAgeLabel,
+    chatAgeLabel,
+    decisionFreshnessLabel,
+    transportLabel,
+    chatSyncState,
+    isDegraded,
     marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert2')
-  const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+    roomId: selectedTrader.trader_id,
+    publicMessages,
+  })
+  const { containerRef, unseenCount, autoScroll, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
   const [headlineIndex, setHeadlineIndex] = useState(0)
 
   useEffect(() => {
-    if (decisionItems.length <= 1) return
+    const canRotate =
+      decisionItems.length > 1
+      && autoScroll
+      && decisionFreshnessLabel !== 'stale'
+    if (!canRotate) return
     const timer = window.setInterval(() => {
       setHeadlineIndex((prev) => (prev + 1) % decisionItems.length)
     }, 4500)
     return () => window.clearInterval(timer)
-  }, [decisionItems.length])
+  }, [decisionItems.length, autoScroll, decisionFreshnessLabel])
+
+  useEffect(() => {
+    if (headlineIndex < decisionItems.length) return
+    setHeadlineIndex(0)
+  }, [headlineIndex, decisionItems.length])
 
   const featuredDecision = decisionItems[headlineIndex] || decisionItems[0]
   const tickerItems = useMemo(
@@ -67,6 +88,9 @@ export default function Expert2MobileBroadcastPage(
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-black">{modeLabel}</span>
+                <span className="rounded border border-white/25 bg-black/45 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+                  {transportLabel}
+                </span>
                 <span className="text-sm font-bold tracking-tight">{selectedTrader.trader_name}</span>
               </div>
               <span className="rounded-full border border-white/20 bg-black/45 px-2 py-0.5 text-[10px] font-mono">
@@ -74,10 +98,36 @@ export default function Expert2MobileBroadcastPage(
               </span>
             </div>
             <div className="mt-2 text-[10px] font-mono text-white/75">focus: {focusedSymbol}</div>
+            <div className="mt-1 flex items-center gap-1 text-[9px] font-mono text-white/80">
+              <span className="rounded bg-black/45 px-1.5 py-0.5">pkt {packetAgeLabel}</span>
+              <span className="rounded bg-black/45 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
+              <span className="rounded bg-black/45 px-1.5 py-0.5">chat {chatAgeLabel}</span>
+              <span className="rounded bg-black/45 px-1.5 py-0.5">{chatSyncState}</span>
+              <button
+                type="button"
+                onClick={() => setTtsAutoPlay((prev) => !prev)}
+                disabled={!ttsAvailable}
+                className={`rounded px-1.5 py-0.5 ${ttsAutoPlay ? 'bg-emerald-600/65 text-white' : 'bg-black/45 text-white/80'} disabled:opacity-50`}
+              >
+                {ttsAutoPlay ? 'voice on' : 'voice off'}
+              </button>
+            </div>
+            {(roomVoice || ttsError) && (
+              <div className="mt-1 text-[9px] font-mono text-white/70">
+                {ttsError ? 'voice err' : `voice ${roomVoice}`}
+              </div>
+            )}
             {marketBreadth.advancers != null && marketBreadth.decliners != null && (
               <div className="mt-1 text-[10px] font-mono text-white/75">
                 R {marketBreadth.advancers} / B {marketBreadth.decliners}
                 {marketBreadth.redBlueRatio != null && ` · ${marketBreadth.redBlueRatio.toFixed(2)}`}
+              </div>
+            )}
+            {isDegraded && (
+              <div className="mt-2 rounded border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] text-red-100">
+                {language === 'zh'
+                  ? '当前为降级模式：SSE 不稳定或数据陈旧，已启用轮询兜底。'
+                  : 'Degraded mode: SSE unstable or stale data; polling fallback enabled.'}
               </div>
             )}
           </div>

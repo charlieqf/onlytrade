@@ -10,6 +10,7 @@ import {
   useAutoScrollFeed,
   useAvatarSize,
   usePhoneStreamData,
+  useAgentTtsAutoplay,
 } from './phoneStreamShared'
 
 type TimelineType = 'decision' | 'chat'
@@ -26,11 +27,21 @@ export default function Expert3StudioTimelinePage(
     focusedSymbol,
     modeLabel,
     freshnessLabel,
+    packetAgeLabel,
+    decisionAgeLabel,
+    chatAgeLabel,
+    transportLabel,
+    chatSyncState,
+    isDegraded,
     marketBreadth,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert3')
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+    roomId: selectedTrader.trader_id,
+    publicMessages,
+  })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
@@ -47,7 +58,8 @@ export default function Expert3StudioTimelinePage(
     const decisionEvents = decisionItems.slice(0, 8).map((item) => ({
       id: `d-${item.id}`,
       type: 'decision' as TimelineType,
-      ts: item.timestamp,
+      tsLabel: item.timestamp,
+      tsMs: Number(item.timestampMs || 0),
       title: `${item.action} ${item.symbol}`,
       detail: item.reasoning,
       symbol: item.symbol,
@@ -56,14 +68,15 @@ export default function Expert3StudioTimelinePage(
     const chatEvents = publicMessages.slice(-8).map((msg) => ({
       id: `c-${msg.id}`,
       type: 'chat' as TimelineType,
-      ts: new Date(msg.created_ts_ms).toLocaleTimeString('en-GB', { hour12: false }),
+      tsLabel: new Date(msg.created_ts_ms).toLocaleTimeString('en-GB', { hour12: false }),
+      tsMs: Number(msg.created_ts_ms || 0),
       title: `${msg.sender_name}`,
       detail: msg.text,
       symbol: '',
       confidence: null as number | null,
     }))
     return [...decisionEvents, ...chatEvents]
-      .sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+      .sort((a, b) => Number(b.tsMs || 0) - Number(a.tsMs || 0))
       .slice(0, 20)
   }, [decisionItems, publicMessages])
 
@@ -76,11 +89,39 @@ export default function Expert3StudioTimelinePage(
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-bold text-white">{selectedTrader.trader_name}</div>
-              <div className="text-[10px] font-mono text-indigo-300">{modeLabel} · {sseStatus} · {freshnessLabel}</div>
+              <div className="text-[10px] font-mono text-indigo-300">
+                {modeLabel} · {transportLabel} · {sseStatus} · {freshnessLabel}
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[9px] font-mono text-indigo-100/90">
+                <span className="rounded bg-black/35 px-1.5 py-0.5">pkt {packetAgeLabel}</span>
+                <span className="rounded bg-black/35 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
+                <span className="rounded bg-black/35 px-1.5 py-0.5">chat {chatAgeLabel}</span>
+                <span className="rounded bg-black/35 px-1.5 py-0.5">{chatSyncState}</span>
+                <button
+                  type="button"
+                  onClick={() => setTtsAutoPlay((prev) => !prev)}
+                  disabled={!ttsAvailable}
+                  className={`rounded px-1.5 py-0.5 ${ttsAutoPlay ? 'bg-emerald-600/65 text-white' : 'bg-black/35 text-white/80'} disabled:opacity-50`}
+                >
+                  {ttsAutoPlay ? 'voice on' : 'voice off'}
+                </button>
+              </div>
+              {(roomVoice || ttsError) && (
+                <div className="mt-1 text-[9px] font-mono text-indigo-100/85">
+                  {ttsError ? 'voice err' : `voice ${roomVoice}`}
+                </div>
+              )}
               {marketBreadth.advancers != null && marketBreadth.decliners != null && (
                 <div className="text-[10px] font-mono text-indigo-200/85">
                   R {marketBreadth.advancers} / B {marketBreadth.decliners}
                   {marketBreadth.redBlueRatio != null && ` · ${marketBreadth.redBlueRatio.toFixed(2)}`}
+                </div>
+              )}
+              {isDegraded && (
+                <div className="mt-1 rounded border border-red-300/35 bg-red-500/15 px-2 py-1 text-[10px] text-red-100">
+                  {language === 'zh'
+                    ? '数据降级中：已启用轮询兜底，请关注时效标签。'
+                    : 'Degraded stream: polling fallback active, watch freshness tags.'}
                 </div>
               )}
             </div>
@@ -134,7 +175,7 @@ export default function Expert3StudioTimelinePage(
                   </div>
                   <div className={`flex-1 rounded-lg border p-2 ${selectedEventId === event.id ? 'border-indigo-400/35 bg-white/[0.07]' : 'border-white/10 bg-white/[0.03]'}`}>
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono text-white/35">{event.ts}</span>
+                      <span className="text-[9px] font-mono text-white/35">{event.tsLabel}</span>
                       {event.confidence != null && (
                         <span className="text-[9px] font-mono text-amber-400">
                           {(event.confidence * 100).toFixed(0)}%

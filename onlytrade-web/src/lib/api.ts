@@ -224,6 +224,59 @@ export const api = {
     return result.data
   },
 
+  async getChatTtsConfig(): Promise<{
+    enabled: boolean
+    provider: string
+    model: string
+    response_format: string
+    speed: number
+    max_chars: number
+    voice_map: Record<string, string>
+  }> {
+    const result = await httpClient.get<{
+      enabled: boolean
+      provider: string
+      model: string
+      response_format: string
+      speed: number
+      max_chars: number
+      voice_map: Record<string, string>
+    }>(`${API_BASE}/chat/tts/config`)
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '获取语音配置失败')
+    }
+    return result.data
+  },
+
+  async synthesizeRoomSpeech(payload: {
+    room_id: string
+    text: string
+  }): Promise<Blob> {
+    const res = await fetch(`${API_BASE}/chat/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      let message = text || '语音合成失败'
+      try {
+        const parsed = text ? JSON.parse(text) : null
+        if (parsed && typeof parsed === 'object') {
+          message = parsed.error || parsed.message || message
+        }
+      } catch {
+        // keep fallback text
+      }
+      throw new Error(message)
+    }
+
+    return await res.blob()
+  },
+
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {
     const result = await httpClient.post<TraderInfo>(
       `${API_BASE}/traders`,

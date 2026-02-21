@@ -182,6 +182,10 @@ const CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS = Math.max(
   2000,
   Number(process.env.CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS || 5000)
 )
+const CHAT_PROACTIVE_ACTIVITY_WINDOW_MS = Math.max(
+  10_000,
+  Number(process.env.CHAT_PROACTIVE_ACTIVITY_WINDOW_MS || 120_000)
+)
 const CHAT_PROACTIVE_LLM_MAX_CONCURRENCY = Math.max(
   0,
   Math.min(10, Number(process.env.CHAT_PROACTIVE_LLM_MAX_CONCURRENCY || 2))
@@ -3461,7 +3465,12 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
   if (!safeRoomId) return false
 
   const set = roomEventSubscribersByRoom.get(safeRoomId)
-  if (!set || set.size === 0) return false
+  const hasSubscribers = !!set && set.size > 0
+  const activity = roomPublicChatActivityByRoom.get(safeRoomId) || null
+  const lastPublicAppendMs = Number(activity?.last_public_append_ms || 0)
+  const hasRecentPublicActivity = Number.isFinite(lastPublicAppendMs)
+    && (Date.now() - lastPublicAppendMs) <= CHAT_PROACTIVE_ACTIVITY_WINDOW_MS
+  if (!hasSubscribers && !hasRecentPublicActivity) return false
 
   const roomAgent = resolveRoomAgentForChat(safeRoomId)
   if (!roomAgent || roomAgent.isRunning !== true) return false
@@ -3570,7 +3579,10 @@ function tickChatProactiveForRoomsWithViewers() {
   if (!CHAT_PROACTIVE_VIEWER_TICK_ENABLED) return
   if (!chatService) return
 
-  const roomIds = Array.from(roomEventSubscribersByRoom.keys())
+  const roomIds = Array.from(new Set([
+    ...roomEventSubscribersByRoom.keys(),
+    ...roomPublicChatActivityByRoom.keys(),
+  ]))
   if (roomIds.length === 0) return
 
   // Cleanup any stale tick state for rooms that no longer have subscribers.
@@ -3596,7 +3608,12 @@ function tickChatProactiveForRoomsWithViewers() {
     advanced = i + 1
 
     const set = roomEventSubscribersByRoom.get(roomId)
-    if (!set || set.size === 0) continue
+    const hasSubscribers = !!set && set.size > 0
+    const activity = roomPublicChatActivityByRoom.get(roomId) || null
+    const lastPublicAppendMs = Number(activity?.last_public_append_ms || 0)
+    const hasRecentPublicActivity = Number.isFinite(lastPublicAppendMs)
+      && (now - lastPublicAppendMs) <= CHAT_PROACTIVE_ACTIVITY_WINDOW_MS
+    if (!hasSubscribers && !hasRecentPublicActivity) continue
 
     const lastTick = Number(proactiveViewerTickStateByRoom.get(roomId) || 0)
     if (now - lastTick < CHAT_PROACTIVE_VIEWER_TICK_MIN_ROOM_INTERVAL_MS) continue

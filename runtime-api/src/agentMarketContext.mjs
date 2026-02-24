@@ -111,6 +111,127 @@ function computeRangePct(frames, period = 20) {
   return round(range / latest, 6)
 }
 
+function average(values) {
+  const nums = Array.isArray(values) ? values.filter((value) => Number.isFinite(value)) : []
+  if (!nums.length) return null
+  return nums.reduce((acc, value) => acc + value, 0) / nums.length
+}
+
+function pctText(value) {
+  if (!Number.isFinite(value)) return 'n/a'
+  const pct = value * 100
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct.toFixed(2)}%`
+}
+
+function priceVolumeReferenceForHorizon(frames, { key, label, lookbackDays }) {
+  const series = sortedFrames(frames)
+  const total = series.length
+  if (total < 2) {
+    return {
+      key,
+      label,
+      lookback_days: lookbackDays,
+      effective_lookback_days: Math.max(0, total - 1),
+      description: `${label}: insufficient daily bars (${total}) for reliable price/volume reference.`,
+    }
+  }
+
+  const latest = series[total - 1]
+  const latestClose = Number(latest?.bar?.close)
+  const latestVolume = Number(latest?.bar?.volume_shares)
+  const effectiveLookback = Math.max(1, Math.min(lookbackDays, total - 1))
+  const anchorIndex = Math.max(0, total - 1 - effectiveLookback)
+  const anchorClose = Number(series[anchorIndex]?.bar?.close)
+
+  const priceChangePct = (Number.isFinite(latestClose) && Number.isFinite(anchorClose) && anchorClose !== 0)
+    ? round(latestClose / anchorClose - 1, 6)
+    : null
+
+  const recentStart = Math.max(0, total - effectiveLookback)
+  const recentVolumes = series.slice(recentStart).map((item) => Number(item?.bar?.volume_shares))
+  const recentAvgVolume = average(recentVolumes)
+  const span = Math.max(1, total - recentStart)
+  const previousStart = Math.max(0, recentStart - span)
+  const previousVolumes = series.slice(previousStart, recentStart).map((item) => Number(item?.bar?.volume_shares))
+  const previousAvgVolume = average(previousVolumes)
+
+  const volumeChangePct = (Number.isFinite(recentAvgVolume) && Number.isFinite(previousAvgVolume) && previousAvgVolume !== 0)
+    ? round(recentAvgVolume / previousAvgVolume - 1, 6)
+    : null
+  const latestVsRecentRatio = (Number.isFinite(latestVolume) && Number.isFinite(recentAvgVolume) && recentAvgVolume !== 0)
+    ? round(latestVolume / recentAvgVolume, 4)
+    : null
+
+  const volumeClause = Number.isFinite(volumeChangePct)
+    ? `recent average volume ${pctText(volumeChangePct)} vs prior window`
+    : (Number.isFinite(latestVsRecentRatio)
+      ? `latest volume ${latestVsRecentRatio.toFixed(2)}x of window average`
+      : 'volume trend unavailable')
+
+  const closeClause = (Number.isFinite(anchorClose) && Number.isFinite(latestClose))
+    ? `${anchorClose.toFixed(2)} -> ${latestClose.toFixed(2)}`
+    : 'price path unavailable'
+  const sampleClause = effectiveLookback < lookbackDays
+    ? ` (using ${effectiveLookback} trading days)`
+    : ''
+
+  return {
+    key,
+    label,
+    lookback_days: lookbackDays,
+    effective_lookback_days: effectiveLookback,
+    start_close: Number.isFinite(anchorClose) ? round(anchorClose, 4) : null,
+    latest_close: Number.isFinite(latestClose) ? round(latestClose, 4) : null,
+    latest_volume: Number.isFinite(latestVolume) ? round(latestVolume, 4) : null,
+    recent_avg_volume: Number.isFinite(recentAvgVolume) ? round(recentAvgVolume, 4) : null,
+    previous_avg_volume: Number.isFinite(previousAvgVolume) ? round(previousAvgVolume, 4) : null,
+    price_change_pct: priceChangePct,
+    volume_change_pct: volumeChangePct,
+    latest_vs_recent_volume_ratio: latestVsRecentRatio,
+    description: `${label}${sampleClause}: price ${pctText(priceChangePct)} (${closeClause}), ${volumeClause}.`,
+  }
+}
+
+function buildPriceVolumeReferences(frames) {
+  const specs = [
+    { key: 'past_6m', label: 'past 6 months', lookbackDays: 126 },
+    { key: 'past_1m', label: 'past 1 month', lookbackDays: 21 },
+    { key: 'past_1w', label: 'past 1 week', lookbackDays: 5 },
+    { key: 'past_1d', label: 'past 1 day', lookbackDays: 1 },
+  ]
+
+  const windows = {}
+  const descriptions = {}
+  const lines = []
+
+  for (const spec of specs) {
+    const row = priceVolumeReferenceForHorizon(frames, spec)
+    windows[spec.key] = {
+      lookback_days: row.lookback_days,
+      effective_lookback_days: row.effective_lookback_days,
+      start_close: row.start_close ?? null,
+      latest_close: row.latest_close ?? null,
+      latest_volume: row.latest_volume ?? null,
+      recent_avg_volume: row.recent_avg_volume ?? null,
+      previous_avg_volume: row.previous_avg_volume ?? null,
+      price_change_pct: row.price_change_pct ?? null,
+      volume_change_pct: row.volume_change_pct ?? null,
+      latest_vs_recent_volume_ratio: row.latest_vs_recent_volume_ratio ?? null,
+    }
+    descriptions[spec.key] = String(row.description || '').trim()
+    if (descriptions[spec.key]) {
+      lines.push(descriptions[spec.key])
+    }
+  }
+
+  return {
+    windows,
+    descriptions,
+    lines,
+  }
+}
+
 export function buildPositionState({ symbol, account, positions }) {
   const matched = (positions || []).find((position) => position.symbol === symbol)
   return {
@@ -135,6 +256,7 @@ export function buildAgentMarketContext({
   const spec = marketSpec || {}
   const intradayFrames = sortedFrames(intradayBatch?.frames || [])
   const dailyFrames = sortedFrames(dailyBatch?.frames || [])
+  const priceVolumeRefs = buildPriceVolumeReferences(dailyFrames)
 
   return {
     schema_version: 'agent.market_context.v1',
@@ -169,6 +291,10 @@ export function buildAgentMarketContext({
         rsi_14: computeRsi(dailyFrames, 14),
         range_20d_pct: computeRangePct(dailyFrames, 20),
       },
+      price_volume_windows: priceVolumeRefs.windows,
+      price_volume_descriptions: priceVolumeRefs.descriptions,
+      price_volume_reference_lines: priceVolumeRefs.lines,
+      price_volume_reference_text: priceVolumeRefs.lines.join(' '),
     },
     position_state: positionState,
   }

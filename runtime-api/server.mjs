@@ -228,6 +228,26 @@ const CHAT_TTS_SPEED = (() => {
   if (!Number.isFinite(parsed)) return 1
   return Math.max(0.25, Math.min(parsed, 4))
 })()
+const CHAT_TTS_TONE_SPEED_CALM = (() => {
+  const parsed = Number(process.env.CHAT_TTS_TONE_SPEED_CALM || 0.94)
+  if (!Number.isFinite(parsed)) return 0.94
+  return Math.max(0.25, Math.min(parsed, 4))
+})()
+const CHAT_TTS_TONE_SPEED_FOCUSED = (() => {
+  const parsed = Number(process.env.CHAT_TTS_TONE_SPEED_FOCUSED || CHAT_TTS_SPEED || 1)
+  if (!Number.isFinite(parsed)) return 1
+  return Math.max(0.25, Math.min(parsed, 4))
+})()
+const CHAT_TTS_TONE_SPEED_ENERGETIC = (() => {
+  const parsed = Number(process.env.CHAT_TTS_TONE_SPEED_ENERGETIC || 1.08)
+  if (!Number.isFinite(parsed)) return 1.08
+  return Math.max(0.25, Math.min(parsed, 4))
+})()
+const CHAT_TTS_TONE_SPEED_CAUTIOUS = (() => {
+  const parsed = Number(process.env.CHAT_TTS_TONE_SPEED_CAUTIOUS || 0.9)
+  if (!Number.isFinite(parsed)) return 0.9
+  return Math.max(0.25, Math.min(parsed, 4))
+})()
 const CHAT_TTS_VOICE_FEMALE_1 = String(process.env.CHAT_TTS_VOICE_FEMALE_1 || 'nova').trim() || 'nova'
 const CHAT_TTS_VOICE_FEMALE_2 = String(process.env.CHAT_TTS_VOICE_FEMALE_2 || 'shimmer').trim() || 'shimmer'
 const CHAT_TTS_VOICE_MALE_1 = String(process.env.CHAT_TTS_VOICE_MALE_1 || 'onyx').trim() || 'onyx'
@@ -519,6 +539,22 @@ function symbolsToEntries(symbols) {
       : (US_STOCK_NAME_BY_SYMBOL[String(symbol).toUpperCase()] || symbol)),
     category: 'stock',
   }))
+}
+
+function resolveStockDisplay(symbolRaw, exchangeId = '') {
+  const symbol = String(symbolRaw || '').trim().toUpperCase()
+  if (!symbol) return { symbol: '', name: '', display: '' }
+  const exchange = String(exchangeId || '').trim().toLowerCase()
+  const maybeCn = exchange.includes('sim-cn') || isCnStockSymbol(symbol)
+  const maybeUs = exchange.includes('sim-us') || isUsTicker(symbol)
+  const name = maybeCn
+    ? (CN_STOCK_NAME_BY_SYMBOL[symbol] || '')
+    : (maybeUs ? (US_STOCK_NAME_BY_SYMBOL[symbol] || '') : '')
+  return {
+    symbol,
+    name,
+    display: name ? `${name}(${symbol})` : symbol,
+  }
 }
 
 function toTraderRecord(agent) {
@@ -3501,14 +3537,19 @@ async function buildRoomChatContext(roomId, {
   }
 
   const symbolBrief = head
-    ? {
-      symbol: head.symbol || null,
+    ? (() => {
+      const symbolMeta = resolveStockDisplay(headSymbol, trader?.exchange_id)
+      return {
+        symbol: symbolMeta.symbol || head.symbol || null,
+        symbol_name: symbolMeta.name || null,
+        symbol_display: symbolMeta.display || symbolMeta.symbol || head.symbol || null,
       action: head.action || null,
       confidence: head.confidence ?? null,
       reasoning: typeof head.reasoning === 'string' ? head.reasoning.slice(0, 120) : null,
       order_executed: head.executed === true,
       position_shares_on_symbol: Math.max(0, Math.floor(positionSharesOnSymbol)),
-    }
+      }
+    })()
     : null
 
   return {
@@ -3680,6 +3721,24 @@ function ttsVoiceEnvKeyByTraderId(traderId) {
   return safe ? `CHAT_TTS_VOICE_${safe}` : ''
 }
 
+function normalizeTtsTone(value) {
+  const tone = String(value || '').trim().toLowerCase()
+  if (tone === 'calm' || tone === 'focused' || tone === 'energetic' || tone === 'cautious') {
+    return tone
+  }
+  return ''
+}
+
+function alternateTtsVoice(baseVoice) {
+  const voice = String(baseVoice || '').trim()
+  if (!voice) return ''
+  if (voice === CHAT_TTS_VOICE_FEMALE_1) return CHAT_TTS_VOICE_FEMALE_2
+  if (voice === CHAT_TTS_VOICE_FEMALE_2) return CHAT_TTS_VOICE_FEMALE_1
+  if (voice === CHAT_TTS_VOICE_MALE_1) return CHAT_TTS_VOICE_MALE_2
+  if (voice === CHAT_TTS_VOICE_MALE_2) return CHAT_TTS_VOICE_MALE_1
+  return ''
+}
+
 function resolveTtsVoiceForTraderId(traderId) {
   const safeTraderId = String(traderId || '').trim().toLowerCase()
   const dynamicKey = ttsVoiceEnvKeyByTraderId(safeTraderId)
@@ -3695,6 +3754,21 @@ function resolveTtsVoiceForTraderId(traderId) {
   return CHAT_TTS_VOICE_FEMALE_1
 }
 
+function resolveTtsProfileForMessage({ traderId, tone = '', seed = '' } = {}) {
+  void tone
+  const baseVoice = resolveTtsVoiceForTraderId(traderId)
+  const safeSeed = String(seed || '').trim() || `${Date.now()}|${Math.random().toString(36).slice(2, 8)}`
+  const derivedTone = 'energetic'
+  const baseSpeed = Number(CHAT_TTS_TONE_SPEED_ENERGETIC || CHAT_TTS_SPEED || 1)
+  const speedJitter = ((simpleHash(`${safeSeed}|tts-energy`) % 5) - 2) * 0.01
+  const speed = Number(baseSpeed) + speedJitter
+  return {
+    tone: derivedTone,
+    voice: baseVoice,
+    speed: Number.isFinite(speed) ? Math.max(0.25, Math.min(speed, 4)) : 1,
+  }
+}
+
 function ttsVoicesSummary() {
   return {
     t_001: resolveTtsVoiceForTraderId('t_001'),
@@ -3704,8 +3778,11 @@ function ttsVoicesSummary() {
   }
 }
 
-async function synthesizeOpenAITts({ text, voice }) {
+async function synthesizeOpenAITts({ text, voice, speed = CHAT_TTS_SPEED }) {
   const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/audio/speech`
+  const safeSpeed = Number.isFinite(Number(speed))
+    ? Math.max(0.25, Math.min(Number(speed), 4))
+    : CHAT_TTS_SPEED
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -3717,7 +3794,7 @@ async function synthesizeOpenAITts({ text, voice }) {
       voice,
       input: text,
       response_format: CHAT_TTS_RESPONSE_FORMAT,
-      speed: CHAT_TTS_SPEED,
+      speed: safeSpeed,
     }),
   })
 
@@ -3799,7 +3876,13 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     : []
 
   const head = latestDecision?.decisions?.[0] || null
-  const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
+  const symbolCode = String(symbolBrief?.symbol || head?.symbol || '').trim().toUpperCase()
+  const symbolName = String(symbolBrief?.symbol_name || '').trim()
+  const symbolReadable = symbolName || symbolCode
+  const symbolDisplay = symbolName && symbolCode && (simpleHash(`${seedBase}|symbol-display|${symbolCode}`) % 6 === 0)
+    ? `${symbolName}(${symbolCode})`
+    : symbolReadable
+  const symbol = symbolDisplay
   const action = String(symbolBrief?.action || head?.action || 'hold').trim().toUpperCase()
   const riskProfile = String(roomAgent?.riskProfile || '').trim().toLowerCase()
   const tone = chooseProactiveTone({
@@ -3807,7 +3890,7 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     burstSignal,
     riskProfile,
     previousTones: previousActivity?.recent_proactive_tones,
-    seed: `${seedBase}|tone|${symbol}|${action}|${riskProfile}`,
+    seed: `${seedBase}|tone|${symbolCode || symbol}|${action}|${riskProfile}`,
   })
 
   const marketLine = marketBrief
@@ -3890,7 +3973,7 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   const buyPool = buyTemplatesByTone[tone] || buyTemplatesByTone.calm
   const sellPool = sellTemplatesByTone[tone] || sellTemplatesByTone.calm
   const actionPool = action === 'BUY' ? buyPool : (action === 'SELL' ? sellPool : holdPool)
-  const actionLine = pickFromPool(actionPool, `${seedBase}|action|${symbol}|${action}|${tone}`, holdPool[0])
+  const actionLine = pickFromPool(actionPool, `${seedBase}|action|${symbolCode || symbol}|${action}|${tone}`, holdPool[0])
 
   const compactMarketLine = String(marketLine || '')
     .replace(/^A股概览：/, 'A股')
@@ -5039,7 +5122,7 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
         marketDataService.getFrames({
           symbol,
           interval: '1d',
-          limit: 90,
+          limit: 180,
         }),
       ])
 
@@ -5085,7 +5168,7 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       marketDataService.getFrames({
         symbol: fallbackSymbol,
         interval: '1d',
-        limit: 90,
+        limit: 180,
       }),
     ])
     const intradayFrames = Array.isArray(intradayBatch?.frames) ? intradayBatch.frames : []
@@ -5111,13 +5194,17 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     const rowContext = item.context || {}
     const intraday = rowContext?.intraday?.feature_snapshot || {}
     const daily = rowContext?.daily?.feature_snapshot || {}
+    const dailyRefs = rowContext?.daily?.price_volume_descriptions || {}
     const positionState = rowContext?.position_state || {}
     const frames = Array.isArray(rowContext?.intraday?.frames) ? rowContext.intraday.frames : []
     const latestFrame = frames[frames.length - 1]
     const latestPrice = toSafeNumber(latestFrame?.bar?.close, 0)
+    const symbolMeta = resolveStockDisplay(item.symbol, trader?.exchange_id)
 
     return {
       symbol: item.symbol,
+      symbol_name: symbolMeta.name || null,
+      symbol_display: symbolMeta.display || item.symbol,
       latest_price: latestPrice,
       ret_5: toSafeNumber(intraday.ret_5, 0),
       ret_20: toSafeNumber(intraday.ret_20, 0),
@@ -5127,6 +5214,13 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       sma_20: toSafeNumber(daily.sma_20, 0),
       sma_60: toSafeNumber(daily.sma_60, 0),
       range_20d_pct: toSafeNumber(daily.range_20d_pct, 0),
+      price_volume_descriptions: {
+        past_6m: String(dailyRefs?.past_6m || '').slice(0, 180),
+        past_1m: String(dailyRefs?.past_1m || '').slice(0, 180),
+        past_1w: String(dailyRefs?.past_1w || '').slice(0, 180),
+        past_1d: String(dailyRefs?.past_1d || '').slice(0, 180),
+      },
+      price_volume_reference_text: String(rowContext?.daily?.price_volume_reference_text || '').slice(0, 420),
       position_shares: toSafeNumber(positionState.shares, 0),
     }
   }), trader)
@@ -5171,6 +5265,8 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     ranked_top_symbol: rankedTopSymbol,
     items: rankedCandidates.map((item) => ({
       symbol: item.symbol,
+      symbol_name: item.symbol_name || null,
+      symbol_display: item.symbol_display || item.symbol,
       latest_price: item.latest_price,
       ret_5: item.ret_5,
       ret_20: item.ret_20,
@@ -5180,6 +5276,8 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
       sma_20: item.sma_20,
       sma_60: item.sma_60,
       range_20d_pct: item.range_20d_pct,
+      price_volume_descriptions: item.price_volume_descriptions || {},
+      price_volume_reference_text: item.price_volume_reference_text || '',
       position_shares: item.position_shares,
       score: item.score,
       trend: item.trend,
@@ -5198,6 +5296,20 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     max_symbol_concentration_pct: AGENT_PORTFOLIO_MAX_SYMBOL_CONCENTRATION_PCT,
     min_cash_reserve_pct: AGENT_PORTFOLIO_MIN_CASH_RESERVE_PCT,
     turnover_throttle_pct: AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT,
+  }
+
+  context.preopen_price_volume_reference = {
+    generated_at_ts_ms: Date.now(),
+    selected_symbol: symbol,
+    selected_symbol_name: resolveStockDisplay(symbol, trader?.exchange_id).name || null,
+    selected_lines: Array.isArray(context?.daily?.price_volume_reference_lines)
+      ? context.daily.price_volume_reference_lines.slice(0, 4)
+      : [],
+    by_symbol: rankedCandidates.slice(0, 10).map((item) => ({
+      symbol: item.symbol,
+      symbol_name: item.symbol_name || null,
+      descriptions: item.price_volume_descriptions || {},
+    })),
   }
 
   const memorySnapshot = memoryStore.getSnapshot(trader.trader_id)
@@ -5273,6 +5385,8 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     context.session_gate = buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs })
     context.symbol_brief = {
       symbol,
+      symbol_name: resolveStockDisplay(symbol, context.market === 'CN-A' ? 'sim-cn' : 'sim-us').name || null,
+      symbol_display: resolveStockDisplay(symbol, context.market === 'CN-A' ? 'sim-cn' : 'sim-us').display || symbol,
       last_bar_ts_ms: Number.isFinite(Number(latestEventTs)) ? Number(latestEventTs) : null,
       ret_5: context?.intraday?.feature_snapshot?.ret_5 ?? null,
       ret_20: context?.intraday?.feature_snapshot?.ret_20 ?? null,
@@ -5538,6 +5652,10 @@ app.get('/api/chat/tts/config', (_req, res) => {
     speed: CHAT_TTS_SPEED,
     max_chars: CHAT_TTS_MAX_CHARS,
     voice_map: ttsVoicesSummary(),
+    tone_modes: ['energetic'],
+    tone_speed_map: {
+      energetic: CHAT_TTS_TONE_SPEED_ENERGETIC,
+    },
   }))
 })
 
@@ -5569,13 +5687,21 @@ app.post('/api/chat/tts', async (req, res) => {
       return
     }
 
-    const voice = resolveTtsVoiceForTraderId(roomId)
-    const audioBuffer = await synthesizeOpenAITts({ text, voice })
+    const tone = normalizeTtsTone(req.body?.tone)
+    const seed = String(req.body?.message_id || '').trim() || text
+    const ttsProfile = resolveTtsProfileForMessage({ traderId: roomId, tone, seed })
+    const audioBuffer = await synthesizeOpenAITts({
+      text,
+      voice: ttsProfile.voice,
+      speed: ttsProfile.speed,
+    })
 
     res.set('Content-Type', ttsContentType(CHAT_TTS_RESPONSE_FORMAT))
     res.set('Cache-Control', 'no-store')
     res.set('x-tts-model', CHAT_TTS_MODEL)
-    res.set('x-tts-voice', voice)
+    res.set('x-tts-voice', ttsProfile.voice)
+    res.set('x-tts-speed', String(ttsProfile.speed))
+    res.set('x-tts-tone', ttsProfile.tone)
     res.send(audioBuffer)
   } catch (error) {
     res.status(502).json({ success: false, error: error?.message || 'chat_tts_failed' })
@@ -6210,6 +6336,10 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       tts_model: CHAT_TTS_MODEL,
       tts_response_format: CHAT_TTS_RESPONSE_FORMAT,
       tts_speed: CHAT_TTS_SPEED,
+      tts_tone_modes: ['energetic'],
+      tts_tone_speed_map: {
+        energetic: CHAT_TTS_TONE_SPEED_ENERGETIC,
+      },
       tts_max_chars: CHAT_TTS_MAX_CHARS,
       tts_voice_map: ttsVoicesSummary(),
     },

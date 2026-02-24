@@ -54,6 +54,7 @@ function summarizeCandidateSet(context, { tokenSaver = false } = {}) {
   const normalizedItems = rawItems
     .map((item) => ({
       symbol: String(item?.symbol || '').trim(),
+      symbol_name: String(item?.symbol_name || '').trim(),
       latest_price: toNumber(item?.latest_price, 0),
       ret_5: toNumber(item?.ret_5, 0),
       ret_20: toNumber(item?.ret_20, 0),
@@ -61,6 +62,10 @@ function summarizeCandidateSet(context, { tokenSaver = false } = {}) {
       rsi_14: toNumber(item?.rsi_14, 50),
       rank_score: toNumber(item?.rank_score, 0),
       position_shares: toNumber(item?.position_shares, 0),
+      pv_6m: String(item?.price_volume_descriptions?.past_6m || '').trim(),
+      pv_1m: String(item?.price_volume_descriptions?.past_1m || '').trim(),
+      pv_1w: String(item?.price_volume_descriptions?.past_1w || '').trim(),
+      pv_1d: String(item?.price_volume_descriptions?.past_1d || '').trim(),
     }))
     .filter((item) => item.symbol)
 
@@ -89,6 +94,7 @@ function summarizeCandidateSet(context, { tokenSaver = false } = {}) {
         .slice(0, 5)
         .map((row) => ({
           s: row.symbol,
+          n: row.symbol_name || undefined,
           p: row.latest_price,
           r5: row.ret_5,
           r20: row.ret_20,
@@ -96,6 +102,10 @@ function summarizeCandidateSet(context, { tokenSaver = false } = {}) {
           rsi: row.rsi_14,
           rk: row.rank_score,
           sh: row.position_shares,
+          p6: row.pv_6m ? row.pv_6m.slice(0, 120) : undefined,
+          p1m: row.pv_1m ? row.pv_1m.slice(0, 120) : undefined,
+          p1w: row.pv_1w ? row.pv_1w.slice(0, 120) : undefined,
+          p1d: row.pv_1d ? row.pv_1d.slice(0, 120) : undefined,
         })),
     }
   }
@@ -121,6 +131,9 @@ function summarizeContext(context) {
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
   const holdStreak = recentHoldStreak(context)
   const candidateSet = summarizeCandidateSet(context)
+  const selectedHorizonLines = Array.isArray(context?.daily?.price_volume_reference_lines)
+    ? context.daily.price_volume_reference_lines.map((item) => String(item || '').slice(0, 180)).filter(Boolean).slice(0, 4)
+    : []
 
   return {
     symbol: candidateSet?.selected_symbol || context?.symbol || '600519.SH',
@@ -174,6 +187,7 @@ function summarizeContext(context) {
       news_digest_titles: Array.isArray(newsDigest.titles)
         ? newsDigest.titles.map((item) => String(item || '').slice(0, 96)).filter(Boolean).slice(0, 3)
         : [],
+      selected_price_volume_reference: selectedHorizonLines,
     },
     candidate_set: candidateSet,
   }
@@ -190,6 +204,9 @@ function summarizeContextLite(context) {
   const lastAction = context?.memory_state?.recent_actions?.[0] || null
   const holdStreak = recentHoldStreak(context)
   const candidateSet = summarizeCandidateSet(context, { tokenSaver: true })
+  const selectedHorizonLines = Array.isArray(context?.daily?.price_volume_reference_lines)
+    ? context.daily.price_volume_reference_lines.map((item) => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 4)
+    : []
 
   return {
     symbol: candidateSet?.selected_symbol || context?.symbol || '600519.SH',
@@ -229,6 +246,7 @@ function summarizeContextLite(context) {
       nw: Array.isArray(newsDigest.titles)
         ? newsDigest.titles.map((item) => String(item || '').slice(0, 64)).filter(Boolean).slice(0, 2)
         : [],
+      pv: selectedHorizonLines,
     },
     cands: candidateSet,
   }

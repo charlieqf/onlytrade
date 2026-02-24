@@ -264,6 +264,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   useEffect(() => {
     const narration = new Audio(narrationSrc)
     narration.preload = 'auto'
+    narration.loop = true
 
     const bgm = new Audio(bgmSrc)
     bgm.preload = 'auto'
@@ -294,13 +295,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     const onPause = () => {
       setNarrationPlaying(false)
     }
-    const onEnded = () => {
-      setNarrationPlaying(false)
-      const duration = Number(narration.duration)
-      if (Number.isFinite(duration) && duration > 0) {
-        setNarrationTimeSec(duration)
-      }
-    }
     const onNarrationError = () => {
       if (narrationRetryCountRef.current >= 2) {
         setMediaError('narration_load_failed')
@@ -324,7 +318,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.addEventListener('timeupdate', onTimeUpdate)
     narration.addEventListener('play', onPlay)
     narration.addEventListener('pause', onPause)
-    narration.addEventListener('ended', onEnded)
     narration.addEventListener('error', onNarrationError)
     narration.addEventListener('canplay', onNarrationCanPlay)
     bgm.addEventListener('error', onBgmError)
@@ -337,7 +330,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       narration.removeEventListener('timeupdate', onTimeUpdate)
       narration.removeEventListener('play', onPlay)
       narration.removeEventListener('pause', onPause)
-      narration.removeEventListener('ended', onEnded)
       narration.removeEventListener('error', onNarrationError)
       narration.removeEventListener('canplay', onNarrationCanPlay)
       bgm.removeEventListener('error', onBgmError)
@@ -349,6 +341,39 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       if (bgmAudioRef.current === bgm) bgmAudioRef.current = null
     }
   }, [narrationSrc, bgmSrc, manifest.duration_sec])
+
+  const tryStartNarration = useCallback(async () => {
+    const narration = narrationAudioRef.current
+    if (!narration || !narration.paused) return
+    try {
+      await narration.play()
+      setPlayHint('')
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : 'narration_play_failed')
+      if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
+        setPlayHint(language === 'zh' ? '点击页面任意处以解锁音频' : 'Tap screen to unlock audio')
+        return
+      }
+      setMediaError(message)
+    }
+  }, [language])
+
+  useEffect(() => {
+    void tryStartNarration()
+  }, [tryStartNarration, narrationSrc])
+
+  useEffect(() => {
+    function unlockAndPlay() {
+      void tryStartNarration()
+    }
+
+    window.addEventListener('pointerdown', unlockAndPlay, { passive: true })
+    window.addEventListener('keydown', unlockAndPlay)
+    return () => {
+      window.removeEventListener('pointerdown', unlockAndPlay)
+      window.removeEventListener('keydown', unlockAndPlay)
+    }
+  }, [tryStartNarration])
 
   useEffect(() => {
     const bgm = bgmAudioRef.current
@@ -364,40 +389,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     }
     bgm.play().catch(() => {})
   }, [bgmEnabled, bgmVolume, narrationPlaying])
-
-  const toggleNarration = useCallback(async () => {
-    const narration = narrationAudioRef.current
-    if (!narration) return
-
-    if (narration.paused) {
-      try {
-        await narration.play()
-      } catch (error) {
-        const message = String(error instanceof Error ? error.message : 'narration_play_failed')
-        if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
-          setPlayHint(language === 'zh' ? '点击播放以解锁音频' : 'Tap play to unlock audio')
-          return
-        }
-        setMediaError(message)
-      }
-      return
-    }
-
-    narration.pause()
-  }, [language])
-
-  const restartNarration = useCallback(async () => {
-    const narration = narrationAudioRef.current
-    if (!narration) return
-    narration.currentTime = 0
-    setNarrationTimeSec(0)
-    try {
-      await narration.play()
-    } catch (error) {
-      const message = String(error instanceof Error ? error.message : 'narration_play_failed')
-      setMediaError(message)
-    }
-  }, [])
 
   const seekNarration = useCallback((nextSec: number) => {
     const narration = narrationAudioRef.current
@@ -463,20 +454,9 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
           <div className="shrink-0 border-b border-white/10 bg-[#101010] px-3 py-2">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void toggleNarration()}
-                className="rounded border border-amber-300/40 bg-amber-500/20 px-2.5 py-1 text-[11px] font-bold text-amber-200"
-              >
-                {narrationPlaying ? (language === 'zh' ? '暂停旁白' : 'Pause') : (language === 'zh' ? '播放旁白' : 'Play')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void restartNarration()}
-                className="rounded border border-white/20 bg-black/45 px-2 py-1 text-[11px] font-medium text-white/85"
-              >
-                {language === 'zh' ? '重播' : 'Restart'}
-              </button>
+              <div className="rounded border border-amber-300/40 bg-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-200">
+                {language === 'zh' ? '旁白循环播放' : 'Narration loop'}
+              </div>
 
               <button
                 type="button"
@@ -543,12 +523,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               <span>{language === 'zh' ? '说书专场' : 'Story only'}</span>
             </div>
             <div className="h-[calc(100%-30px)] overflow-y-auto px-3 py-3">
-              <div className="rounded border border-amber-300/20 bg-amber-500/10 p-3 text-[12px] leading-relaxed text-amber-100/90">
-                {language === 'zh'
-                  ? '本房间不提供聊天互动，仅提供故事口播与画面播放。'
-                  : 'Chat is disabled for this room. Story narration and visuals only.'}
-              </div>
-              <div className="mt-3 rounded border border-white/10 bg-white/[0.03] p-3 text-[11px] text-white/75">
+              <div className="rounded border border-white/10 bg-white/[0.03] p-3 text-[11px] text-white/75">
                 <div className="font-mono text-[10px] uppercase tracking-wider text-white/45">
                   Story Assets
                 </div>

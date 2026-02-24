@@ -38,7 +38,7 @@ export default function Expert1CommandDeckPage(
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert1')
-  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice, ttsSpeaking } = useAgentTtsAutoplay({
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
     roomId,
     publicMessages,
   })
@@ -48,7 +48,7 @@ export default function Expert1CommandDeckPage(
     setBgmEnabled,
     bgmTrackTitle,
     bgmError,
-  } = useRoomBgm({ roomId, ducking: ttsSpeaking })
+  } = useRoomBgm({ roomId, ducking: false })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )

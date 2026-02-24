@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
+import { useRoomBgm } from '../../hooks/useRoomBgm'
 import { PhoneRealtimeKlineChart } from '../../components/PhoneRealtimeKlineChart'
 import {
   type FormalStreamDesignPageProps,
@@ -37,10 +38,17 @@ export default function Expert2MobileBroadcastPage(
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert2')
-  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice, ttsSpeaking } = useAgentTtsAutoplay({
     roomId: selectedTrader.trader_id,
     publicMessages,
   })
+  const {
+    bgmAvailable,
+    bgmEnabled,
+    setBgmEnabled,
+    bgmTrackTitle,
+    bgmError,
+  } = useRoomBgm({ roomId: selectedTrader.trader_id, ducking: ttsSpeaking })
   const { containerRef, unseenCount, autoScroll, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
@@ -111,10 +119,24 @@ export default function Expert2MobileBroadcastPage(
               >
                 {ttsAutoPlay ? 'voice on' : 'voice off'}
               </button>
+              <button
+                type="button"
+                onClick={() => setBgmEnabled((prev) => !prev)}
+                disabled={!bgmAvailable}
+                className={`rounded px-1.5 py-0.5 ${bgmEnabled ? 'bg-amber-500/70 text-black' : 'bg-black/45 text-white/80'} disabled:opacity-50`}
+              >
+                {bgmEnabled ? 'bgm on' : 'bgm off'}
+              </button>
             </div>
-            {(roomVoice || ttsError) && (
+            {(roomVoice || ttsError || bgmTrackTitle || bgmError) && (
               <div className="mt-1 text-[9px] font-mono text-white/70">
-                {ttsError ? 'voice err' : `voice ${roomVoice}`}
+                {ttsError
+                  ? 'voice err'
+                  : bgmError
+                    ? 'bgm err'
+                    : bgmTrackTitle
+                      ? `voice ${roomVoice} · bgm ${bgmTrackTitle}`
+                      : `voice ${roomVoice}`}
               </div>
             )}
             {marketBreadth.advancers != null && marketBreadth.decliners != null && (

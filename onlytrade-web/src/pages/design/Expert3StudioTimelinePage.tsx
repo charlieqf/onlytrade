@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
+import { useRoomBgm } from '../../hooks/useRoomBgm'
 import { PhoneRealtimeKlineChart } from '../../components/PhoneRealtimeKlineChart'
 import {
   type FormalStreamDesignPageProps,
@@ -18,6 +19,8 @@ type TimelineType = 'decision' | 'chat'
 export default function Expert3StudioTimelinePage(
   props: FormalStreamDesignPageProps
 ) {
+  const clampVolume = (value: number) => Math.max(0, Math.min(0.3, value))
+
   useFullscreenLock()
   const {
     selectedTrader,
@@ -38,10 +41,19 @@ export default function Expert3StudioTimelinePage(
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert3')
-  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice, ttsSpeaking } = useAgentTtsAutoplay({
     roomId: selectedTrader.trader_id,
     publicMessages,
   })
+  const {
+    bgmAvailable,
+    bgmEnabled,
+    setBgmEnabled,
+    bgmVolume,
+    setBgmVolume,
+    bgmTrackTitle,
+    bgmError,
+  } = useRoomBgm({ roomId: selectedTrader.trader_id, ducking: ttsSpeaking })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
@@ -105,10 +117,65 @@ export default function Expert3StudioTimelinePage(
                 >
                   {ttsAutoPlay ? 'voice on' : 'voice off'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setBgmEnabled((prev) => !prev)}
+                  disabled={!bgmAvailable}
+                  className={`rounded px-1.5 py-0.5 ${bgmEnabled ? 'bg-amber-500/70 text-black' : 'bg-black/35 text-white/80'} disabled:opacity-50`}
+                >
+                  {bgmEnabled ? 'bgm on' : 'bgm off'}
+                </button>
+                <label className="flex items-center gap-1 rounded bg-black/35 px-1 py-0.5 text-[9px] text-white/85">
+                  <span>bgm</span>
+                  <button
+                    type="button"
+                    onClick={() => setBgmVolume((prev) => clampVolume(prev - 0.02))}
+                    disabled={!bgmAvailable || !bgmEnabled}
+                    className="rounded bg-black/50 px-1 text-white/90 disabled:opacity-40"
+                    aria-label="Lower BGM volume"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={0.3}
+                    step={0.01}
+                    value={bgmVolume}
+                    onInput={(event) => {
+                      const target = event.target as HTMLInputElement
+                      setBgmVolume(clampVolume(Number(target.value)))
+                    }}
+                    onChange={(event) => {
+                      const target = event.target as HTMLInputElement
+                      setBgmVolume(clampVolume(Number(target.value)))
+                    }}
+                    disabled={!bgmAvailable || !bgmEnabled}
+                    className="h-4 w-20 accent-amber-300 disabled:opacity-40"
+                    style={{ touchAction: 'pan-x' }}
+                    aria-label="BGM volume"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBgmVolume((prev) => clampVolume(prev + 0.02))}
+                    disabled={!bgmAvailable || !bgmEnabled}
+                    className="rounded bg-black/50 px-1 text-white/90 disabled:opacity-40"
+                    aria-label="Raise BGM volume"
+                  >
+                    +
+                  </button>
+                  <span>{Math.round((bgmVolume || 0) * 100)}%</span>
+                </label>
               </div>
-              {(roomVoice || ttsError) && (
+              {(roomVoice || ttsError || bgmTrackTitle || bgmError) && (
                 <div className="mt-1 text-[9px] font-mono text-indigo-100/85">
-                  {ttsError ? 'voice err' : `voice ${roomVoice}`}
+                  {ttsError
+                    ? 'voice err'
+                    : bgmError
+                      ? 'bgm err'
+                      : bgmTrackTitle
+                        ? `voice ${roomVoice} · bgm ${bgmTrackTitle}`
+                        : `voice ${roomVoice}`}
                 </div>
               )}
               {marketBreadth.advancers != null && marketBreadth.decliners != null && (
@@ -139,7 +206,7 @@ export default function Expert3StudioTimelinePage(
           />
           <PhoneAvatarSlot
             trader={selectedTrader}
-            sizePx={Math.max(96, Math.min(sizePx - 54, 170))}
+            sizePx={Math.max(48, Math.round(Math.max(96, Math.min(sizePx - 54, 170)) / 2))}
             language={language}
             onDecrease={decrease}
             onIncrease={increase}

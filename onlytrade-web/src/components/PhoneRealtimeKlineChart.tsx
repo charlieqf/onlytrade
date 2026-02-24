@@ -107,6 +107,10 @@ export function PhoneRealtimeKlineChart({
         borderVisible: false,
         scaleMargins: { top: 0.06, bottom: 0.3 },
       },
+      leftPriceScale: {
+        visible: false,
+        borderVisible: false,
+      },
       timeScale: {
         borderVisible: false,
         timeVisible: true,
@@ -132,13 +136,14 @@ export function PhoneRealtimeKlineChart({
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
+      priceScaleId: 'left',
       lastValueVisible: false,
       priceLineVisible: false,
     })
 
-    chart.priceScale('volume').applyOptions({
+    chart.priceScale('left').applyOptions({
       visible: false,
+      borderVisible: false,
       scaleMargins: { top: 0.72, bottom: 0 },
     })
 

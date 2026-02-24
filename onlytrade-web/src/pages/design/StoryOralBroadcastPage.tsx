@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
 import {
   type FormalStreamDesignPageProps,
-  useAutoScrollFeed,
   usePhoneStreamData,
 } from './phoneStreamShared'
 
@@ -147,20 +146,15 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   useFullscreenLock()
   const {
     selectedTrader,
-    publicMessages,
     modeLabel,
     freshnessLabel,
     packetAgeLabel,
     decisionAgeLabel,
-    chatAgeLabel,
     transportLabel,
-    chatSyncState,
     isDegraded,
     sseStatus,
     language,
   } = usePhoneStreamData(props)
-
-  const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(publicMessages.length)
 
   const [manifest, setManifest] = useState<StoryManifest>(DEFAULT_MANIFEST)
   const [scriptText, setScriptText] = useState('')
@@ -186,6 +180,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   const narrationAudioRef = useRef<HTMLAudioElement | null>(null)
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null)
+  const narrationRetryCountRef = useRef(0)
 
   const pathBase = useMemo(() => detectPathBase(), [])
   const storyRoot = `${pathBase}/story/zhaolaoge`
@@ -276,6 +271,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
     narrationAudioRef.current = narration
     bgmAudioRef.current = bgm
+    narrationRetryCountRef.current = 0
     setNarrationTimeSec(0)
     setNarrationDurationSec(Math.max(0, manifest.duration_sec || 0))
     setNarrationPlaying(false)
@@ -306,7 +302,19 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       }
     }
     const onNarrationError = () => {
-      setMediaError('narration_load_failed')
+      if (narrationRetryCountRef.current >= 2) {
+        setMediaError('narration_load_failed')
+        return
+      }
+
+      narrationRetryCountRef.current += 1
+      const retry = narrationRetryCountRef.current
+      const join = narrationSrc.includes('?') ? '&' : '?'
+      narration.src = `${narrationSrc}${join}retry=${Date.now()}-${retry}`
+      narration.load()
+    }
+    const onNarrationCanPlay = () => {
+      setMediaError((prev) => (prev === 'narration_load_failed' ? '' : prev))
     }
     const onBgmError = () => {
       setMediaError((prev) => prev || 'bgm_load_failed')
@@ -318,7 +326,11 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.addEventListener('pause', onPause)
     narration.addEventListener('ended', onEnded)
     narration.addEventListener('error', onNarrationError)
+    narration.addEventListener('canplay', onNarrationCanPlay)
     bgm.addEventListener('error', onBgmError)
+
+    narration.load()
+    bgm.load()
 
     return () => {
       narration.removeEventListener('loadedmetadata', onLoadedMetadata)
@@ -327,6 +339,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       narration.removeEventListener('pause', onPause)
       narration.removeEventListener('ended', onEnded)
       narration.removeEventListener('error', onNarrationError)
+      narration.removeEventListener('canplay', onNarrationCanPlay)
       bgm.removeEventListener('error', onBgmError)
       narration.pause()
       bgm.pause()
@@ -418,8 +431,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               <span className="rounded bg-black/55 px-1.5 py-0.5">{freshnessLabel}</span>
               <span className="rounded bg-black/55 px-1.5 py-0.5">pkt {packetAgeLabel}</span>
               <span className="rounded bg-black/55 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">chat {chatAgeLabel}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">{chatSyncState}</span>
             </div>
 
             {(isDegraded || loadError || mediaError || playHint) && (
@@ -528,35 +539,25 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
           <div className="min-h-0 flex-1 overflow-hidden bg-[#0d0d0d]">
             <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/45">
-              <span>{language === 'zh' ? '房间聊天（只读）' : 'Room chat (read-only)'}</span>
-              <span>{publicMessages.length}</span>
+              <span>{language === 'zh' ? '房间模式' : 'Room mode'}</span>
+              <span>{language === 'zh' ? '说书专场' : 'Story only'}</span>
             </div>
-
-            <div ref={containerRef} onScroll={onScroll} className="h-[calc(100%-30px)] overflow-y-auto px-3 py-2">
-              <div className="space-y-2">
-                {publicMessages.map((msg) => (
-                  <div key={msg.id} className="rounded border border-white/10 bg-white/[0.03] px-2 py-1.5">
-                    <div className="text-[10px] font-bold text-amber-300">{msg.sender_name}</div>
-                    <div className="mt-0.5 text-[11px] leading-snug text-white/85">{msg.text}</div>
-                  </div>
-                ))}
-                {!publicMessages.length && (
-                  <div className="py-8 text-center text-xs text-white/45">
-                    {language === 'zh' ? '暂无聊天消息' : 'No chat messages yet'}
-                  </div>
-                )}
+            <div className="h-[calc(100%-30px)] overflow-y-auto px-3 py-3">
+              <div className="rounded border border-amber-300/20 bg-amber-500/10 p-3 text-[12px] leading-relaxed text-amber-100/90">
+                {language === 'zh'
+                  ? '本房间不提供聊天互动，仅提供故事口播与画面播放。'
+                  : 'Chat is disabled for this room. Story narration and visuals only.'}
+              </div>
+              <div className="mt-3 rounded border border-white/10 bg-white/[0.03] p-3 text-[11px] text-white/75">
+                <div className="font-mono text-[10px] uppercase tracking-wider text-white/45">
+                  Story Assets
+                </div>
+                <div className="mt-1">scene set: {sceneFiles.length}</div>
+                <div>subtitle cues: {subtitleCues.length}</div>
+                <div>narration: {manifest.narration_file}</div>
+                <div>bgm: {manifest.bgm_file}</div>
               </div>
             </div>
-
-            {unseenCount > 0 && (
-              <button
-                type="button"
-                onClick={jumpToLatest}
-                className="absolute bottom-2 right-2 rounded-full border border-cyan-400/40 bg-black/85 px-2 py-1 text-[10px] text-cyan-300"
-              >
-                {language === 'zh' ? `新消息 ${unseenCount}` : `New ${unseenCount}`}
-              </button>
-            )}
           </div>
         </div>
       </div>

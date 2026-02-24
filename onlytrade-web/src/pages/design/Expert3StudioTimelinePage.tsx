@@ -41,7 +41,7 @@ export default function Expert3StudioTimelinePage(
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert3')
-  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice, ttsSpeaking } = useAgentTtsAutoplay({
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
     roomId: selectedTrader.trader_id,
     publicMessages,
   })
@@ -53,7 +53,7 @@ export default function Expert3StudioTimelinePage(
     setBgmVolume,
     bgmTrackTitle,
     bgmError,
-  } = useRoomBgm({ roomId: selectedTrader.trader_id, ducking: ttsSpeaking })
+  } = useRoomBgm({ roomId: selectedTrader.trader_id, ducking: false })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )

@@ -163,7 +163,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   const [narrationTimeSec, setNarrationTimeSec] = useState(0)
   const [narrationDurationSec, setNarrationDurationSec] = useState(0)
-  const [narrationPlaying, setNarrationPlaying] = useState(false)
+  const [narrationPlaying, setNarrationPlaying] = useState(true)
 
   const [bgmEnabled, setBgmEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true
@@ -274,7 +274,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narrationRetryCountRef.current = 0
     setNarrationTimeSec(0)
     setNarrationDurationSec(Math.max(0, manifest.duration_sec || 0))
-    setNarrationPlaying(false)
+    setNarrationPlaying(true)
     setMediaError('')
 
     const onLoadedMetadata = () => {
@@ -341,12 +341,25 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   const tryStartNarration = useCallback(async () => {
     const narration = narrationAudioRef.current
-    if (!narration || !narration.paused) return
+    if (!narration) return
+    if (!narration.paused) {
+      setNarrationPlaying(true)
+      return
+    }
+    setNarrationPlaying(true)
     try {
+      narration.muted = false
       await narration.play()
     } catch (error) {
       const message = String(error instanceof Error ? error.message : 'narration_play_failed')
       if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
+        try {
+          narration.muted = true
+          await narration.play()
+          narration.muted = false
+        } catch {
+          // Keep optimistic playing state for default UI.
+        }
         return
       }
       setMediaError(message)
@@ -361,21 +374,34 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     const narration = narrationAudioRef.current
     if (!narration) return
 
+    if (narrationPlaying) {
+      narration.pause()
+      setNarrationPlaying(false)
+      return
+    }
+
     if (narration.paused) {
       try {
+        narration.muted = false
         await narration.play()
+        setNarrationPlaying(true)
       } catch (error) {
         const message = String(error instanceof Error ? error.message : 'narration_play_failed')
         if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
+          try {
+            narration.muted = true
+            await narration.play()
+            narration.muted = false
+            setNarrationPlaying(true)
+          } catch {
+            // Intentionally silent; user can try again.
+          }
           return
         }
         setMediaError(message)
       }
-      return
     }
-
-    narration.pause()
-  }, [])
+  }, [narrationPlaying])
 
   useEffect(() => {
     const bgm = bgmAudioRef.current
@@ -435,21 +461,23 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
             )}
           </div>
 
-          <div className="relative shrink-0 border-b border-white/10" style={{ height: '52vh' }}>
+          <div className="relative shrink-0 border-b border-white/10" style={{ height: '48vh' }}>
             <img
               src={activeSceneSrc}
               alt={manifest.title}
               className="h-full w-full object-cover"
               loading="eager"
             />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-black/55" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/40" />
+          </div>
 
-            <div className="absolute inset-x-3 bottom-3 rounded border border-white/20 bg-black/55 p-2 backdrop-blur-sm">
-              <div className="line-clamp-3 text-[13px] font-medium leading-relaxed text-white">
+          <div className="shrink-0 border-b border-white/10 bg-[#121212] px-3 py-2">
+            <div className="min-h-[96px] rounded border border-white/15 bg-black/45 p-2">
+              <div className="line-clamp-4 text-[13px] font-medium leading-relaxed text-white">
                 {activeCue || (language === 'zh' ? '说书准备中...' : 'Story stream loading...')}
               </div>
               <div className="mt-1 text-[10px] font-mono text-white/65">
-                scene {activeSceneIndex + 1}/{sceneFiles.length} · {formatClock(narrationTimeSec)} / {formatClock(narrationDurationSec || manifest.duration_sec)}
+                scene {activeSceneIndex + 1}/{sceneFiles.length}
               </div>
             </div>
           </div>

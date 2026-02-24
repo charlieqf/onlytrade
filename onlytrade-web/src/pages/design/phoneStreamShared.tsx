@@ -383,6 +383,7 @@ export function usePhoneStreamData({
     selectedTrader,
     language,
     roomId,
+    account: streamPacket?.account || null,
     positions,
     decisionItems,
     publicMessages: mergedPublicMessages.slice(-80),

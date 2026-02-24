@@ -398,11 +398,11 @@ stream_monitor() {
   local decision_limit="${2:-5}"
   local packet_json
   local replay_json
-  local sse_headers
+  local sse_probe
 
   packet_json="$(curl_get "/api/rooms/$room_id/stream-packet?decision_limit=$decision_limit")"
   replay_json="$(curl_get "/api/replay/runtime/status" || printf '{}')"
-  sse_headers="$(curl -sS -I --max-time 5 "$API_BASE/api/rooms/$room_id/events?decision_limit=$decision_limit" 2>/dev/null || true)"
+  sse_probe="$(curl -sS -o /dev/null -w "%{http_code} %{content_type}" --max-time 5 "$API_BASE/api/rooms/$room_id/events?decision_limit=$decision_limit" 2>/dev/null || true)"
 
   local py_bin=""
   if command -v python3 >/dev/null 2>&1; then
@@ -414,9 +414,8 @@ stream_monitor() {
     exit 1
   fi
 
-  "$py_bin" - "$room_id" "$packet_json" "$replay_json" "$sse_headers" <<'PY'
+  "$py_bin" - "$room_id" "$packet_json" "$replay_json" "$sse_probe" <<'PY'
 import json
-import re
 import sys
 from datetime import datetime
 
@@ -460,7 +459,7 @@ def freshness_label(value, fresh_ms, warm_ms):
 room_id = sys.argv[1]
 packet = parse_json(sys.argv[2])
 replay = parse_json(sys.argv[3])
-sse_headers = sys.argv[4]
+sse_probe = str(sys.argv[4] or '').strip()
 now_ms = int(datetime.now().timestamp() * 1000)
 
 packet_data = packet.get('data') if isinstance(packet.get('data'), dict) else packet
@@ -501,15 +500,12 @@ chat_age = age_ms(now_ms, chat_ts_ms)
 
 status_code = None
 content_type = ''
-if sse_headers:
-    first_line = sse_headers.splitlines()[0] if sse_headers.splitlines() else ''
-    match = re.search(r'\s(\d{3})\s', first_line)
-    if match:
-        status_code = int(match.group(1))
-    for line in sse_headers.splitlines():
-        if line.lower().startswith('content-type:'):
-            content_type = line.split(':', 1)[1].strip()
-            break
+if sse_probe:
+    parts = sse_probe.split(' ', 1)
+    if parts and parts[0].isdigit():
+        status_code = int(parts[0])
+    if len(parts) > 1:
+        content_type = parts[1].strip()
 
 output = {
     'room_id': room_id,

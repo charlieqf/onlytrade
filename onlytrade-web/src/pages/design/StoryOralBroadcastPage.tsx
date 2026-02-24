@@ -160,7 +160,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const [scriptText, setScriptText] = useState('')
   const [loadError, setLoadError] = useState('')
   const [mediaError, setMediaError] = useState('')
-  const [playHint, setPlayHint] = useState('')
 
   const [narrationTimeSec, setNarrationTimeSec] = useState(0)
   const [narrationDurationSec, setNarrationDurationSec] = useState(0)
@@ -277,7 +276,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     setNarrationDurationSec(Math.max(0, manifest.duration_sec || 0))
     setNarrationPlaying(false)
     setMediaError('')
-    setPlayHint('')
 
     const onLoadedMetadata = () => {
       const duration = Number(narration.duration)
@@ -290,7 +288,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     }
     const onPlay = () => {
       setNarrationPlaying(true)
-      setPlayHint('')
     }
     const onPause = () => {
       setNarrationPlaying(false)
@@ -347,33 +344,38 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     if (!narration || !narration.paused) return
     try {
       await narration.play()
-      setPlayHint('')
     } catch (error) {
       const message = String(error instanceof Error ? error.message : 'narration_play_failed')
       if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
-        setPlayHint(language === 'zh' ? '点击页面任意处以解锁音频' : 'Tap screen to unlock audio')
         return
       }
       setMediaError(message)
     }
-  }, [language])
+  }, [])
 
   useEffect(() => {
     void tryStartNarration()
   }, [tryStartNarration, narrationSrc])
 
-  useEffect(() => {
-    function unlockAndPlay() {
-      void tryStartNarration()
+  const toggleNarration = useCallback(async () => {
+    const narration = narrationAudioRef.current
+    if (!narration) return
+
+    if (narration.paused) {
+      try {
+        await narration.play()
+      } catch (error) {
+        const message = String(error instanceof Error ? error.message : 'narration_play_failed')
+        if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
+          return
+        }
+        setMediaError(message)
+      }
+      return
     }
 
-    window.addEventListener('pointerdown', unlockAndPlay, { passive: true })
-    window.addEventListener('keydown', unlockAndPlay)
-    return () => {
-      window.removeEventListener('pointerdown', unlockAndPlay)
-      window.removeEventListener('keydown', unlockAndPlay)
-    }
-  }, [tryStartNarration])
+    narration.pause()
+  }, [])
 
   useEffect(() => {
     const bgm = bgmAudioRef.current
@@ -424,9 +426,9 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               <span className="rounded bg-black/55 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
             </div>
 
-            {(isDegraded || loadError || mediaError || playHint) && (
+            {(isDegraded || loadError || mediaError) && (
               <div className="mt-2 rounded border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] text-red-100">
-                {loadError || mediaError || playHint || (language === 'zh'
+                {loadError || mediaError || (language === 'zh'
                   ? '数据降级：已启用轮询兜底。'
                   : 'Degraded stream: polling fallback active.')}
               </div>
@@ -457,6 +459,14 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               <div className="rounded border border-amber-300/40 bg-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-200">
                 {language === 'zh' ? '旁白循环播放' : 'Narration loop'}
               </div>
+
+              <button
+                type="button"
+                onClick={() => void toggleNarration()}
+                className="rounded border border-amber-300/40 bg-black/45 px-2 py-1 text-[11px] font-bold text-amber-200"
+              >
+                {narrationPlaying ? (language === 'zh' ? '暂停' : 'Pause') : (language === 'zh' ? '继续' : 'Resume')}
+              </button>
 
               <button
                 type="button"

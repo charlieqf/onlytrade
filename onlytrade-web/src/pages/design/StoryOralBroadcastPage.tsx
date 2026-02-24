@@ -163,7 +163,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   const [narrationTimeSec, setNarrationTimeSec] = useState(0)
   const [narrationDurationSec, setNarrationDurationSec] = useState(0)
-  const [narrationPlaying, setNarrationPlaying] = useState(true)
+  const [narrationPlaying, setNarrationPlaying] = useState(false)
 
   const [bgmEnabled, setBgmEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true
@@ -180,6 +180,18 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const narrationAudioRef = useRef<HTMLAudioElement | null>(null)
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null)
   const narrationRetryCountRef = useRef(0)
+  const manualPauseRef = useRef(false)
+
+  useEffect(() => {
+    const mediaNodes = Array.from(document.querySelectorAll<HTMLMediaElement>('audio, video'))
+    mediaNodes.forEach((node) => {
+      try {
+        node.pause()
+      } catch {
+        // ignore
+      }
+    })
+  }, [])
 
   const pathBase = useMemo(() => detectPathBase(), [])
   const storyRoot = `${pathBase}/story/zhaolaoge`
@@ -261,6 +273,19 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   }, [storyRoot])
 
   useEffect(() => {
+    const globalKey = '__onlytrade_story_audio__'
+    const previous = (window as unknown as Record<string, unknown>)[globalKey] as
+      | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
+      | undefined
+    if (previous?.narration) {
+      previous.narration.pause()
+      previous.narration.src = ''
+    }
+    if (previous?.bgm) {
+      previous.bgm.pause()
+      previous.bgm.src = ''
+    }
+
     const narration = new Audio(narrationSrc)
     narration.preload = 'auto'
     narration.loop = true
@@ -272,9 +297,10 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narrationAudioRef.current = narration
     bgmAudioRef.current = bgm
     narrationRetryCountRef.current = 0
+    manualPauseRef.current = false
     setNarrationTimeSec(0)
     setNarrationDurationSec(Math.max(0, manifest.duration_sec || 0))
-    setNarrationPlaying(true)
+    setNarrationPlaying(false)
     setMediaError('')
 
     const onLoadedMetadata = () => {
@@ -306,6 +332,9 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     }
     const onNarrationCanPlay = () => {
       setMediaError((prev) => (prev === 'narration_load_failed' ? '' : prev))
+      if (!manualPauseRef.current && narration.paused) {
+        void tryStartNarration()
+      }
     }
     const onBgmError = () => {
       setMediaError((prev) => prev || 'bgm_load_failed')
@@ -318,6 +347,8 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.addEventListener('error', onNarrationError)
     narration.addEventListener('canplay', onNarrationCanPlay)
     bgm.addEventListener('error', onBgmError)
+
+    ;(window as unknown as Record<string, unknown>)[globalKey] = { narration, bgm }
 
     narration.load()
     bgm.load()
@@ -334,6 +365,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       bgm.pause()
       narration.src = ''
       bgm.src = ''
+      const current = (window as unknown as Record<string, unknown>)[globalKey] as
+        | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
+        | undefined
+      if (current?.narration === narration && current?.bgm === bgm) {
+        delete (window as unknown as Record<string, unknown>)[globalKey]
+      }
       if (narrationAudioRef.current === narration) narrationAudioRef.current = null
       if (bgmAudioRef.current === bgm) bgmAudioRef.current = null
     }
@@ -346,20 +383,34 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       setNarrationPlaying(true)
       return
     }
-    setNarrationPlaying(true)
     try {
       narration.muted = false
       await narration.play()
     } catch (error) {
       const message = String(error instanceof Error ? error.message : 'narration_play_failed')
+      if (/AbortError|interrupted/i.test(message)) {
+        setTimeout(() => {
+          const current = narrationAudioRef.current
+          if (!current || !current.paused) return
+          current.play().catch(() => {})
+        }, 250)
+        return
+      }
       if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
         try {
           narration.muted = true
           await narration.play()
-          narration.muted = false
+          setNarrationPlaying(true)
+          setTimeout(() => {
+            const current = narrationAudioRef.current
+            if (!current) return
+            current.muted = false
+          }, 120)
+          return
         } catch {
-          // Keep optimistic playing state for default UI.
+          // Autoplay still blocked on this webview/browser.
         }
+        setNarrationPlaying(false)
         return
       }
       setMediaError(message)
@@ -370,17 +421,33 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     void tryStartNarration()
   }, [tryStartNarration, narrationSrc])
 
+  useEffect(() => {
+    const narration = narrationAudioRef.current
+    if (!narration) return
+    if (!narration.paused || manualPauseRef.current) return
+    const timer = window.setTimeout(() => {
+      if (!manualPauseRef.current) {
+        void tryStartNarration()
+      }
+    }, 450)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [tryStartNarration, narrationSrc])
+
   const toggleNarration = useCallback(async () => {
     const narration = narrationAudioRef.current
     if (!narration) return
 
-    if (narrationPlaying) {
+    if (!narration.paused) {
+      manualPauseRef.current = true
       narration.pause()
       setNarrationPlaying(false)
       return
     }
 
     if (narration.paused) {
+      manualPauseRef.current = false
       try {
         narration.muted = false
         await narration.play()
@@ -388,20 +455,13 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       } catch (error) {
         const message = String(error instanceof Error ? error.message : 'narration_play_failed')
         if (/NotAllowedError|play\(\) failed|AbortError|interrupted/i.test(message)) {
-          try {
-            narration.muted = true
-            await narration.play()
-            narration.muted = false
-            setNarrationPlaying(true)
-          } catch {
-            // Intentionally silent; user can try again.
-          }
+          setNarrationPlaying(false)
           return
         }
         setMediaError(message)
       }
     }
-  }, [narrationPlaying])
+  }, [])
 
   useEffect(() => {
     const bgm = bgmAudioRef.current

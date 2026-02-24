@@ -138,6 +138,9 @@ const AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT = Math.max(
   Math.min(1, Number(process.env.AGENT_PORTFOLIO_TURNOVER_THROTTLE_PCT || 0.35))
 )
 const AGENT_CANDIDATE_SYMBOL_LIMIT = Math.max(1, Math.min(20, Number(process.env.AGENT_CANDIDATE_SYMBOL_LIMIT || 12)))
+const AGENT_STRICT_SYMBOL_LOOP = String(
+  process.env.AGENT_STRICT_SYMBOL_LOOP || 'true'
+).toLowerCase() !== 'false'
 const CONTROL_API_TOKEN = process.env.CONTROL_API_TOKEN || ''
 const RESET_AGENT_MEMORY_ON_BOOT = String(process.env.RESET_AGENT_MEMORY_ON_BOOT || 'false').toLowerCase() === 'true'
 const MARKET_DAILY_HISTORY_DAYS = (() => {
@@ -2949,7 +2952,7 @@ function extractNewsTitles(payload) {
     const title = String(item?.title || item?.headline || item?.text || '').trim()
     if (!title) continue
     titles.push(title)
-    if (titles.length >= 6) break
+    if (titles.length >= 16) break
   }
   return titles
 }
@@ -2960,7 +2963,44 @@ function extractNewsCommentary(payload) {
   return lines
     .map((item) => String(item || '').trim())
     .filter(Boolean)
-    .slice(0, 6)
+    .slice(0, 12)
+}
+
+const DEFAULT_CASUAL_TOPICS = [
+  '行情快的时候先放慢手速，别被情绪带节奏。',
+  '先看风险再看收益，今天先把回撤守住。',
+  '喝口水，深呼吸，再决定要不要出手。',
+  '不确定就少做，这是职业交易员的耐心。',
+  '控制仓位比猜涨跌更重要。',
+  '连亏时先降频，先把状态找回来。',
+  '今天先做高确定性机会，其他都可以放过。',
+  '盘中也要留点余地，别一把梭哈。',
+]
+
+function simpleHash(value) {
+  const text = String(value || '')
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash)
+}
+
+function rotatePoolByKey(pool, key, limit = 8) {
+  const rows = Array.isArray(pool) ? pool.map((item) => String(item || '').trim()).filter(Boolean) : []
+  if (!rows.length) return []
+  const maxLen = Math.max(1, Math.floor(Number(limit) || 8))
+  const shift = simpleHash(key) % rows.length
+  const rotated = rows.slice(shift).concat(rows.slice(0, shift))
+  return rotated.slice(0, Math.min(maxLen, rotated.length))
+}
+
+function extractCasualTopics(payload, { dayKey = '', limit = 8 } = {}) {
+  const external = payload && typeof payload === 'object' && Array.isArray(payload.casual_prompts)
+    ? payload.casual_prompts
+    : []
+  const merged = [...external, ...DEFAULT_CASUAL_TOPICS]
+  return rotatePoolByKey(merged, dayKey || String(Date.now()), limit)
 }
 
 function newsCategoryLabel(category) {
@@ -3320,13 +3360,19 @@ async function getNewsDigestSnapshot(marketId) {
       minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
     })
     : null
+  const dayKey = payload && typeof payload === 'object'
+    ? String(payload.day_key || '').trim()
+    : ''
+  const casualTopics = extractCasualTopics(payload, { dayKey, limit: 8 })
 
   return {
     source_kind: payload ? 'digest_file' : 'empty',
     market,
+    day_key: dayKey || null,
     titles,
     commentary,
     categories,
+    casual_topics: casualTopics,
     burst_signal: burstSignal,
     status,
   }
@@ -3467,6 +3513,9 @@ async function buildRoomChatContext(roomId, {
     news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
     news_commentary: Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : [],
     news_categories: Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : [],
+    casual_topics: Array.isArray(effectiveDigest?.casual_topics)
+      ? effectiveDigest.casual_topics.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+      : DEFAULT_CASUAL_TOPICS.slice(0, 8),
     news_burst_signal: effectiveDigest?.burst_signal || null,
     market_breadth_summary: effectiveBreadth?.summary || '',
     market_breadth: effectiveBreadth?.breadth || null,
@@ -3607,58 +3656,97 @@ async function synthesizeOpenAITts({ text, voice }) {
 }
 
 function fallbackProactiveText({ roomContext, latestDecision }) {
-  const readiness = String(roomContext?.data_readiness?.level || '').toUpperCase() || ''
+  const now = Date.now()
   const symbolBrief = roomContext?.symbol_brief || null
   const marketBrief = String(roomContext?.market_overview_brief || '').trim()
   const breadthSummary = String(roomContext?.market_breadth_summary || '').trim()
   const burstSignal = roomContext?.news_burst_signal || null
   const newsTitles = Array.isArray(roomContext?.news_digest_titles)
-    ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 2)
+    ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12)
     : []
-  const newsCommentary = Array.isArray(roomContext?.news_commentary)
-    ? roomContext.news_commentary.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 1)
+  const casualTopics = Array.isArray(roomContext?.casual_topics)
+    ? roomContext.casual_topics.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
     : []
+
   const head = latestDecision?.decisions?.[0] || null
   const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
-  const action = String(symbolBrief?.action || head?.action || '').trim()
+  const action = String(symbolBrief?.action || head?.action || 'hold').trim().toUpperCase()
   const conf = Number.isFinite(Number(symbolBrief?.confidence ?? head?.confidence))
     ? Number(symbolBrief?.confidence ?? head?.confidence).toFixed(2)
     : ''
-  const thinking = String(symbolBrief?.reasoning || head?.reasoning || '').trim()
 
-  const bits = []
-  if (symbol && action) {
-    bits.push(`当前${symbol}倾向${String(action).toUpperCase()}`)
-  }
-  if (conf) {
-    bits.push(`置信度${conf}`)
-  }
-  if (thinking) {
-    bits.push(`思路${thinking.slice(0, 38)}`)
-  }
-  if (readiness) {
-    bits.push(`数据就绪${readiness}`)
-  }
-  if (marketBrief) {
-    bits.push(`盘面${marketBrief.slice(0, 40)}`)
-  }
-  if (breadthSummary) {
-    bits.push(`红蓝${breadthSummary.slice(0, 24)}`)
-  }
-  if (newsTitles.length) {
-    bits.push(`消息${newsTitles.join('；').slice(0, 46)}`)
-  }
-  if (newsCommentary.length) {
-    bits.push(`热点${newsCommentary[0].slice(0, 32)}`)
-  }
-  if (burstSignal?.title) {
-    const label = newsCategoryLabel(burstSignal.category)
-    bits.push(`快讯[${label}]${String(burstSignal.title).slice(0, 24)}`)
-  }
-  if (bits.length === 0) {
-    return '房间已连接，等待下一轮信号。'
-  }
-  return `${bits.join('，')}。`
+  const marketLine = marketBrief
+    ? marketBrief.slice(0, 40)
+    : (breadthSummary ? breadthSummary.slice(0, 28) : '盘面暂时偏均衡')
+
+  const topic = burstSignal?.title
+    ? String(burstSignal.title).trim().slice(0, 24)
+    : (newsTitles.length ? newsTitles[simpleHash(`${now}|news`) % newsTitles.length].slice(0, 24) : '')
+  const casual = casualTopics.length
+    ? casualTopics[simpleHash(`${now}|casual`) % casualTopics.length].slice(0, 24)
+    : ''
+
+  const actionSeed = simpleHash(`${now}|${symbol}|${action}`)
+  const holdTemplates = symbol
+    ? [
+      `我先继续观察${symbol}，等信号更一致再动作。`,
+      `${symbol}这边先不抢节奏，确认后再出手。`,
+      `当前我对${symbol}偏耐心，先看下一轮确认。`,
+    ]
+    : [
+      '我先看盘面和消息共振，不急着抢动作。',
+      '先把节奏稳住，等高确定性机会再动。',
+      '这轮先保持观察，避免在噪音里频繁切换。',
+    ]
+  const buyTemplates = symbol
+    ? [
+      `我继续盯${symbol}的延续性，顺势但不追高。`,
+      `${symbol}如果量价继续配合，我会跟着趋势推进。`,
+      `这轮对${symbol}偏积极，但会带着止损线做。`,
+    ]
+    : holdTemplates
+  const sellTemplates = symbol
+    ? [
+      `我先把${symbol}风险放前面，反弹不强就不恋战。`,
+      `${symbol}这里先防守，冲高乏力就继续收缩风险。`,
+      `这轮对${symbol}偏谨慎，先守住回撤再谈进攻。`,
+    ]
+    : holdTemplates
+  const actionPool = action === 'BUY' ? buyTemplates : (action === 'SELL' ? sellTemplates : holdTemplates)
+  const actionLine = actionPool[actionSeed % actionPool.length]
+
+  const compactMarketLine = String(marketLine || '')
+    .replace(/^A股概览：/, 'A股')
+    .replace(/^美股概览：/, '美股')
+    .replace(/\b[0-9]{6}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24)
+  const normalizedMarketLine = /\d{3,}|\//.test(compactMarketLine)
+    ? '指数窄幅波动，热点轮动'
+    : (compactMarketLine || '指数震荡，等待方向')
+  const marketTemplates = [
+    `盘面上看，${normalizedMarketLine}。`,
+    `从市场节奏看，${normalizedMarketLine}。`,
+    `我这边的盘面观察：${normalizedMarketLine}。`,
+  ]
+  const marketLineText = marketTemplates[simpleHash(`${now}|market`) % marketTemplates.length]
+  const topicLine = topic
+    ? `消息面我在盯：${topic.slice(0, 22)}。`
+    : ''
+  const casualLine = casual ? `${casual.slice(0, 22)}。` : ''
+  const chatterTail = [
+    '你们更关注哪个板块，评论区可以点名。',
+    '如果你们在看同一只票，我可以下一轮重点展开。',
+    '这段节奏我会继续盯着，有变化马上同步。',
+  ][simpleHash(`${now}|tail`) % 3]
+
+  const sentence1 = `${String(actionLine).replace(/[。！？!?]+$/g, '')}，${String(marketLineText).replace(/[。！？!?]+$/g, '')}。`
+  const sentence2 = topicLine
+    ? `${topicLine}${simpleHash(`${now}|tail-pick`) % 2 === 0 ? chatterTail : ''}`
+    : (casualLine || chatterTail)
+  const out = `${sentence1}${sentence2}`
+  return out || '房间在线，我先继续跟踪盘面和消息变化。'
 }
 
 async function maybeEmitProactivePublicMessageForRoom(roomId) {
@@ -3738,14 +3826,17 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     text = String(text || '').trim()
     if (!text) return false
 
-    const key = normalizeForProactiveDedupe(text)
+    let key = normalizeForProactiveDedupe(text)
     const recentKeys = Array.isArray(previous.recent_proactive_keys) ? previous.recent_proactive_keys : []
     if (key && recentKeys.includes(key)) {
-      roomPublicChatActivityByRoom.set(safeRoomId, {
-        ...previous,
-        last_proactive_emit_ms: now,
-      })
-      return false
+      const alt = fallbackProactiveText({ roomContext, latestDecision })
+      const altKey = normalizeForProactiveDedupe(alt)
+      if (alt && altKey && altKey !== key && !recentKeys.includes(altKey)) {
+        text = alt
+        key = altKey
+      } else {
+        return false
+      }
     }
 
     const message = buildProactiveAgentMessage({
@@ -4686,7 +4777,20 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     }
   }), trader)
 
-  const selectedSymbol = rankedCandidates[0]?.symbol || validCandidates[0]?.symbol || fallbackSymbol
+  const rankedTopSymbol = rankedCandidates[0]?.symbol || validCandidates[0]?.symbol || fallbackSymbol
+  let selectedSymbol = rankedTopSymbol
+  let loopSymbol = null
+
+  if (AGENT_STRICT_SYMBOL_LOOP) {
+    const nextLoopSymbol = pickTraderSymbol(trader, cycleNumber)
+    if (nextLoopSymbol) {
+      loopSymbol = nextLoopSymbol
+      if (validCandidates.some((item) => item.symbol === nextLoopSymbol)) {
+        selectedSymbol = nextLoopSymbol
+      }
+    }
+  }
+
   const selectedCandidate = validCandidates.find((item) => item.symbol === selectedSymbol) || validCandidates[0]
   const symbol = selectedCandidate?.symbol || selectedSymbol
   const latestEventTs = selectedCandidate?.latestEventTs
@@ -4708,6 +4812,9 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
   context.candidate_set = {
     symbols: rankedCandidates.map((item) => item.symbol),
     selected_symbol: symbol,
+    selected_by: AGENT_STRICT_SYMBOL_LOOP ? 'strict_loop' : 'rank_score',
+    loop_symbol: loopSymbol,
+    ranked_top_symbol: rankedTopSymbol,
     items: rankedCandidates.map((item) => ({
       symbol: item.symbol,
       latest_price: item.latest_price,
@@ -5707,6 +5814,9 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
     cycle_ms: derivedDecisionCycleMs(),
     metrics,
     decision_every_bars: agentDecisionEveryBars,
+    symbol_selection: {
+      strict_symbol_loop: AGENT_STRICT_SYMBOL_LOOP,
+    },
     market_session_guard: getMarketSessionGatePublicSnapshot(),
     market_overview_files: {
       cn_a: marketOverviewProviderCn.getStatus(),

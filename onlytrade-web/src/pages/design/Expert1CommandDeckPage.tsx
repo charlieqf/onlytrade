@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
+import { useRoomBgm } from '../../hooks/useRoomBgm'
 import { PhoneRealtimeKlineChart } from '../../components/PhoneRealtimeKlineChart'
 import {
   type FormalStreamDesignPageProps,
@@ -37,10 +38,17 @@ export default function Expert1CommandDeckPage(
     language,
   } = usePhoneStreamData(props)
   const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-expert1')
-  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice } = useAgentTtsAutoplay({
+  const { ttsAvailable, ttsAutoPlay, setTtsAutoPlay, ttsError, roomVoice, ttsSpeaking } = useAgentTtsAutoplay({
     roomId,
     publicMessages,
   })
+  const {
+    bgmAvailable,
+    bgmEnabled,
+    setBgmEnabled,
+    bgmTrackTitle,
+    bgmError,
+  } = useRoomBgm({ roomId, ducking: ttsSpeaking })
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
@@ -111,11 +119,25 @@ export default function Expert1CommandDeckPage(
             >
               {ttsAutoPlay ? 'voice on' : 'voice off'}
             </button>
+            <button
+              type="button"
+              onClick={() => setBgmEnabled((prev) => !prev)}
+              disabled={!bgmAvailable}
+              className={`rounded px-1.5 py-0.5 text-[9px] ${bgmEnabled ? 'bg-amber-500/70 text-black' : 'bg-black/55 text-white/80'} disabled:opacity-50`}
+            >
+              {bgmEnabled ? 'bgm on' : 'bgm off'}
+            </button>
           </div>
 
-          {(roomVoice || ttsError) && (
+          {(roomVoice || ttsError || bgmTrackTitle || bgmError) && (
             <div className="absolute right-2 top-14 z-20 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-mono text-white/80">
-              {ttsError ? `voice err` : `voice ${roomVoice}`}
+              {ttsError
+                ? 'voice err'
+                : bgmError
+                  ? 'bgm err'
+                  : bgmTrackTitle
+                    ? `voice ${roomVoice} · bgm ${bgmTrackTitle}`
+                    : `voice ${roomVoice}`}
             </div>
           )}
 
@@ -158,7 +180,7 @@ export default function Expert1CommandDeckPage(
 
           <PhoneAvatarSlot
             trader={selectedTrader}
-            sizePx={sizePx}
+            sizePx={Math.max(24, Math.round(sizePx / 4))}
             language={language}
             onDecrease={decrease}
             onIncrease={increase}

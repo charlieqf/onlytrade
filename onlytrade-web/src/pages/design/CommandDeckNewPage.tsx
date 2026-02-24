@@ -90,6 +90,43 @@ function getMessageVisual(msg: ChatMessage): MessageVisual {
   return AGENT_DEFAULT_STYLE
 }
 
+function localizePositionSide(side: string): string {
+  const normalized = String(side || '').trim().toUpperCase()
+  if (normalized === 'LONG') return '多头'
+  if (normalized === 'SHORT') return '空头'
+  return String(side || '--')
+}
+
+function localizeDecisionAction(action: string): string {
+  const normalized = String(action || '').trim().toUpperCase()
+  if (normalized === 'BUY') return '买入'
+  if (normalized === 'SELL') return '卖出'
+  if (normalized === 'HOLD') return '观望'
+  if (normalized === 'SHORT') return '开空'
+  return String(action || '--')
+}
+
+function localizeDecisionReasoning(reasoning: string): string {
+  const raw = String(reasoning || '').trim()
+  if (!raw) return '--'
+
+  const replacements: Array<[RegExp, string]> = [
+    [/data readiness error:\s*data_too_stale/gi, '数据就绪异常：数据过旧'],
+    [/data_too_stale/gi, '数据过旧'],
+    [/data readiness error/gi, '数据就绪异常'],
+    [/HOLD/gi, '观望'],
+    [/BUY/gi, '买入'],
+    [/SELL/gi, '卖出'],
+    [/SHORT/gi, '开空'],
+  ]
+
+  let text = raw
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement)
+  }
+  return text
+}
+
 export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
   useFullscreenLock()
   const pageLanguage: Language = 'zh'
@@ -301,7 +338,7 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                         <div key={`${pos.symbol}-${pos.side}`} className="rounded border border-white/10 bg-white/[0.03] p-2">
                           <div className="text-[11px] font-bold text-white">{pos.symbol}</div>
                           <div className="text-[9px] font-mono text-white/55">
-                            {pos.side} · {Number(pos.quantity).toLocaleString()} @ {pos.entry_price.toFixed(2)}
+                            {localizePositionSide(pos.side)} · {Number(pos.quantity).toLocaleString()} @ {pos.entry_price.toFixed(2)}
                           </div>
                           <div
                             className={`mt-1 text-[10px] font-mono font-bold ${pos.unrealized_pnl >= 0 ? 'text-red-400' : 'text-green-400'}`}
@@ -343,10 +380,10 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                           <div
                             className={`text-[11px] font-bold ${item.action === 'BUY' ? 'text-red-400' : item.action === 'SELL' ? 'text-green-400' : 'text-white/75'}`}
                           >
-                            {item.action} {item.symbol}
+                            {localizeDecisionAction(item.action)} {item.symbol}
                           </div>
                           <div className="mt-0.5 line-clamp-2 text-[9px] leading-snug text-white/55">
-                            {item.reasoning}
+                            {localizeDecisionReasoning(item.reasoning)}
                           </div>
                         </button>
                       ))}

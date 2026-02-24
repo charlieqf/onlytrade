@@ -259,36 +259,42 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
             <span>反对 {againstPct}%</span>
           </div>
 
-          <div className="mt-1 space-y-0.5 rounded border border-white/10 bg-white/[0.04] px-1.5 py-1 text-[9px]">
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">累计收益率</span>
-              <span className={`font-bold ${totalPnlPct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                {formatSignedPct(totalPnlPct)}
-              </span>
+          <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
+            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
+              <div className="flex items-center justify-between">
+                <span className="text-white/60">累计收益率</span>
+                <span className={`font-bold ${totalPnlPct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
+                  {formatSignedPct(totalPnlPct)}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">累计盈亏</span>
-              <span className={`font-bold ${totalPnl >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                {formatSignedMoney(totalPnl)}
-              </span>
+            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
+              <div className="flex items-center justify-between">
+                <span className="text-white/60">累计盈亏</span>
+                <span className={`font-bold ${totalPnl >= 0 ? 'text-red-300' : 'text-green-300'}`}>
+                  {formatSignedMoney(totalPnl)}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">较全体均值超额</span>
-              <span className={`font-bold ${outperformancePct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                {formatSignedPct(outperformancePct)}
-              </span>
+            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
+              <div className="flex items-center justify-between">
+                <span className="text-white/60">较全体均值超额</span>
+                <span className={`font-bold ${outperformancePct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
+                  {formatSignedPct(outperformancePct)}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">排名 / 击败率</span>
-              <span className="font-bold text-white/90">
-                {rank
-                  ? `${rank}/${Math.max(1, sortedByReturn.length)} · ${beatRate == null ? '--' : `${beatRate.toFixed(0)}%`}`
-                  : '--'}
-              </span>
+            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
+              <div className="flex items-center justify-between">
+                <span className="text-white/60">排名/击败率</span>
+                <span className="font-bold text-white/90">
+                  {rank
+                    ? `${rank}/${Math.max(1, sortedByReturn.length)} · ${beatRate == null ? '--' : `${beatRate.toFixed(0)}%`}`
+                    : '--'}
+                </span>
+              </div>
             </div>
           </div>
-
-          <div className="mt-1 text-[9px] text-white/55">K线周期: 1分钟（X轴显示时:分）</div>
         </div>
 
         <div
@@ -299,6 +305,7 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
             symbol={activeSymbol}
             symbolName={activeSymbolName}
             interval="1m"
+            intervalHint="1分钟（时:分）"
             limit={240}
             refreshMs={12_000}
             height="100%"

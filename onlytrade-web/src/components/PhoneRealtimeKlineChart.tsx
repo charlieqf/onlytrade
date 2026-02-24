@@ -71,6 +71,7 @@ export function PhoneRealtimeKlineChart({
   symbol,
   symbolName,
   interval = '1m',
+  intervalHint,
   limit = 240,
   height = '100%',
   refreshMs = 12000,
@@ -78,6 +79,7 @@ export function PhoneRealtimeKlineChart({
   symbol: string
   symbolName?: string
   interval?: string
+  intervalHint?: string
   limit?: number
   height?: string
   refreshMs?: number
@@ -220,7 +222,9 @@ export function PhoneRealtimeKlineChart({
         {symbolName ? (
           <span className="text-[12px] font-bold text-white/90">{symbolName}</span>
         ) : null}
-        <span className="text-[10px] font-bold text-nofx-text-muted">{interval}</span>
+        <span className="text-[10px] font-bold text-nofx-text-muted">
+          {intervalHint || interval}
+        </span>
       </div>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 

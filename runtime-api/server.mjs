@@ -1221,6 +1221,7 @@ function resolveRoomAgentForChat(roomId) {
     agentHandle: normalizeAgentHandle(trader.trader_name),
     agentName: trader.trader_name,
     isRunning: trader.is_running === true,
+    riskProfile: trader.risk_profile || '',
     personality: trader.personality || '',
     tradingStyle: trader.trading_style || '',
     stylePromptCn: trader.style_prompt_cn || '',
@@ -2763,6 +2764,7 @@ const roomStreamPacketBuildStateByRoom = new Map()
 const roomStreamPacketBuildGlobalStatsByRoom = new Map()
 const proactiveEmitInFlightByRoom = new Map()
 const proactiveBurstStateByRoom = new Map()
+const proactiveGenerationStatsByRoom = new Map()
 let proactiveLlmInFlight = 0
 const proactiveViewerTickStateByRoom = new Map()
 let proactiveViewerTickCursor = 0
@@ -3547,7 +3549,7 @@ chatService = createChatService({
       const msg = payload?.message
       if (!safeRoomId || !msg) return
       try {
-        const previous = roomPublicChatActivityByRoom.get(safeRoomId) || { last_public_append_ms: 0, last_proactive_emit_ms: 0, recent_proactive_keys: [] }
+        const previous = roomPublicChatActivityByRoom.get(safeRoomId) || createDefaultRoomPublicChatActivity()
         roomPublicChatActivityByRoom.set(safeRoomId, {
           ...previous,
           last_public_append_ms: Number(msg?.created_ts_ms) || Date.now(),
@@ -3573,6 +3575,81 @@ function normalizeForProactiveDedupe(value) {
     .replace(/\s+/g, '')
     .replace(/[，,。.!！?？:：;；~`'"“”‘’\-_=+()\[\]{}<>\/\\]/g, '')
     .trim()
+}
+
+function createDefaultRoomPublicChatActivity() {
+  return {
+    last_public_append_ms: 0,
+    last_proactive_emit_ms: 0,
+    recent_proactive_keys: [],
+    recent_proactive_openers: [],
+    recent_proactive_tones: [],
+  }
+}
+
+function createDefaultProactiveGenerationStats() {
+  return {
+    llm_ok: 0,
+    llm_empty: 0,
+    llm_error: 0,
+    llm_skipped_concurrency: 0,
+    llm_unavailable: 0,
+    fallback_used: 0,
+    opener_reroll: 0,
+    tone_counts: {
+      calm: 0,
+      focused: 0,
+      energetic: 0,
+      cautious: 0,
+      neutral: 0,
+    },
+    last_source: null,
+    last_reason: null,
+    last_error: null,
+    last_emit_ms: 0,
+  }
+}
+
+function updateProactiveGenerationStats(roomId, updater) {
+  const safeRoomId = String(roomId || '').trim()
+  if (!safeRoomId) return
+  const previous = proactiveGenerationStatsByRoom.get(safeRoomId) || createDefaultProactiveGenerationStats()
+  const next = typeof updater === 'function' ? updater({ ...previous }) : previous
+  proactiveGenerationStatsByRoom.set(safeRoomId, next || previous)
+}
+
+function getProactiveGenerationStatsPublicSnapshot() {
+  const perRoom = {}
+  const totals = createDefaultProactiveGenerationStats()
+  for (const trader of getRegisteredTraders()) {
+    const roomId = String(trader?.trader_id || '').trim()
+    if (!roomId) continue
+    const stats = proactiveGenerationStatsByRoom.get(roomId) || createDefaultProactiveGenerationStats()
+    perRoom[roomId] = {
+      ...stats,
+      tone_counts: { ...stats.tone_counts },
+    }
+    totals.llm_ok += Number(stats.llm_ok || 0)
+    totals.llm_empty += Number(stats.llm_empty || 0)
+    totals.llm_error += Number(stats.llm_error || 0)
+    totals.llm_skipped_concurrency += Number(stats.llm_skipped_concurrency || 0)
+    totals.llm_unavailable += Number(stats.llm_unavailable || 0)
+    totals.fallback_used += Number(stats.fallback_used || 0)
+    totals.opener_reroll += Number(stats.opener_reroll || 0)
+    for (const toneKey of Object.keys(totals.tone_counts)) {
+      totals.tone_counts[toneKey] += Number(stats.tone_counts?.[toneKey] || 0)
+    }
+    if ((stats.last_emit_ms || 0) > (totals.last_emit_ms || 0)) {
+      totals.last_emit_ms = Number(stats.last_emit_ms || 0)
+      totals.last_source = stats.last_source || null
+      totals.last_reason = stats.last_reason || null
+      totals.last_error = stats.last_error || null
+    }
+  }
+  return {
+    totals,
+    by_room: perRoom,
+  }
 }
 
 function sanitizeTtsText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
@@ -3655,65 +3732,163 @@ async function synthesizeOpenAITts({ text, voice }) {
   return Buffer.from(arrayBuffer)
 }
 
-function fallbackProactiveText({ roomContext, latestDecision }) {
+function pickFromPool(pool, seed, fallback = '') {
+  const rows = Array.isArray(pool) ? pool.map((item) => String(item || '').trim()).filter(Boolean) : []
+  if (!rows.length) return String(fallback || '')
+  return rows[simpleHash(seed) % rows.length] || String(fallback || '')
+}
+
+function proactiveOpenerStem(value) {
+  const text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return ''
+  const firstClause = text.split(/[，,。.!！?？:：;]/)[0] || text
+  return firstClause
+    .replace(/\b\d{6}\.(?:SZ|SH)\b/gi, '股票')
+    .replace(/[0-9A-Z_.-]/g, '')
+    .replace(/\s+/g, '')
+    .slice(0, 14)
+}
+
+function chooseProactiveTone({ action, burstSignal, riskProfile, previousTones, seed }) {
+  const base = []
+  const safeRisk = String(riskProfile || '').trim().toLowerCase()
+  if (burstSignal) {
+    base.push('focused', 'energetic')
+  }
+  if (action === 'SELL') {
+    base.push('cautious', 'focused', 'calm')
+  } else if (action === 'BUY') {
+    if (safeRisk === 'aggressive') {
+      base.push('energetic', 'focused')
+    } else {
+      base.push('focused', 'calm')
+    }
+  } else {
+    base.push(safeRisk === 'conservative' ? 'cautious' : 'calm', 'focused')
+  }
+  base.push('calm', 'focused', 'energetic', 'cautious')
+  const uniq = []
+  for (const tone of base) {
+    if (!uniq.includes(tone)) uniq.push(tone)
+  }
+  const recent = Array.isArray(previousTones)
+    ? previousTones.map((item) => String(item || '').trim()).filter(Boolean).slice(-2)
+    : []
+  const preferred = uniq.filter((tone) => !recent.includes(tone))
+  const pool = preferred.length ? preferred : uniq
+  return pickFromPool(pool, seed, 'calm')
+}
+
+function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previousActivity, salt = '' }) {
   const now = Date.now()
+  const seedBase = `${now}|${String(salt || '')}`
   const symbolBrief = roomContext?.symbol_brief || null
   const marketBrief = String(roomContext?.market_overview_brief || '').trim()
   const breadthSummary = String(roomContext?.market_breadth_summary || '').trim()
   const burstSignal = roomContext?.news_burst_signal || null
   const newsTitles = Array.isArray(roomContext?.news_digest_titles)
-    ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12)
+    ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 16)
     : []
   const casualTopics = Array.isArray(roomContext?.casual_topics)
-    ? roomContext.casual_topics.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+    ? roomContext.casual_topics.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10)
     : []
 
   const head = latestDecision?.decisions?.[0] || null
   const symbol = String(symbolBrief?.symbol || head?.symbol || '').trim()
   const action = String(symbolBrief?.action || head?.action || 'hold').trim().toUpperCase()
-  const conf = Number.isFinite(Number(symbolBrief?.confidence ?? head?.confidence))
-    ? Number(symbolBrief?.confidence ?? head?.confidence).toFixed(2)
-    : ''
+  const riskProfile = String(roomAgent?.riskProfile || '').trim().toLowerCase()
+  const tone = chooseProactiveTone({
+    action,
+    burstSignal,
+    riskProfile,
+    previousTones: previousActivity?.recent_proactive_tones,
+    seed: `${seedBase}|tone|${symbol}|${action}|${riskProfile}`,
+  })
 
   const marketLine = marketBrief
-    ? marketBrief.slice(0, 40)
-    : (breadthSummary ? breadthSummary.slice(0, 28) : '盘面暂时偏均衡')
+    ? marketBrief.slice(0, 42)
+    : (breadthSummary ? breadthSummary.slice(0, 30) : '指数震荡，热点轮动')
 
   const topic = burstSignal?.title
-    ? String(burstSignal.title).trim().slice(0, 24)
-    : (newsTitles.length ? newsTitles[simpleHash(`${now}|news`) % newsTitles.length].slice(0, 24) : '')
-  const casual = casualTopics.length
-    ? casualTopics[simpleHash(`${now}|casual`) % casualTopics.length].slice(0, 24)
-    : ''
+    ? String(burstSignal.title).trim().slice(0, 26)
+    : pickFromPool(newsTitles, `${seedBase}|topic`, '').slice(0, 26)
+  const casual = pickFromPool(casualTopics, `${seedBase}|casual`, '').slice(0, 26)
 
-  const actionSeed = simpleHash(`${now}|${symbol}|${action}`)
-  const holdTemplates = symbol
-    ? [
-      `我先继续观察${symbol}，等信号更一致再动作。`,
-      `${symbol}这边先不抢节奏，确认后再出手。`,
-      `当前我对${symbol}偏耐心，先看下一轮确认。`,
-    ]
-    : [
-      '我先看盘面和消息共振，不急着抢动作。',
-      '先把节奏稳住，等高确定性机会再动。',
-      '这轮先保持观察，避免在噪音里频繁切换。',
-    ]
-  const buyTemplates = symbol
-    ? [
-      `我继续盯${symbol}的延续性，顺势但不追高。`,
-      `${symbol}如果量价继续配合，我会跟着趋势推进。`,
-      `这轮对${symbol}偏积极，但会带着止损线做。`,
-    ]
-    : holdTemplates
-  const sellTemplates = symbol
-    ? [
-      `我先把${symbol}风险放前面，反弹不强就不恋战。`,
-      `${symbol}这里先防守，冲高乏力就继续收缩风险。`,
-      `这轮对${symbol}偏谨慎，先守住回撤再谈进攻。`,
-    ]
-    : holdTemplates
-  const actionPool = action === 'BUY' ? buyTemplates : (action === 'SELL' ? sellTemplates : holdTemplates)
-  const actionLine = actionPool[actionSeed % actionPool.length]
+  const holdTemplatesByTone = {
+    calm: [
+      symbol ? `${symbol}我先放在观察位，等下一次共振再确认。` : '这轮先稳住手速，等信号更整齐再动。',
+      symbol ? `先看${symbol}的确认K线，不急着抢一步。` : '先看盘面共振，不在噪音里频繁切换。',
+      symbol ? `${symbol}这边保持耐心，先让结构走清楚。` : '先把节奏放慢，高确定性机会再出手。',
+    ],
+    focused: [
+      symbol ? `我继续盯${symbol}的量价配合，确认后再执行。` : '我先对齐信号和风险，再决定动作。',
+      symbol ? `${symbol}先跟踪关键位，突破确认才推进。` : '我先看关键位是否站稳，再做下一步。',
+      symbol ? `当前${symbol}先观察，不满足条件就继续等待。` : '信号没齐之前我先按计划等待。',
+    ],
+    energetic: [
+      symbol ? `${symbol}这波有节奏感，但我先等确认再提速。` : '节奏开始加快，我先等确认再提速。',
+      symbol ? `这轮${symbol}先盯住盘口变化，机会出来就跟。` : '盘口在提速，我会盯住第一波有效信号。',
+      symbol ? `${symbol}先看下一根是否延续，确认再上动作。` : '节奏偏快，我先确认再执行。',
+    ],
+    cautious: [
+      symbol ? `${symbol}先以风控为先，信号不够就继续观望。` : '先把风险放第一位，宁可慢半拍。',
+      symbol ? `这轮${symbol}先防回撤，确认后再考虑参与。` : '先守回撤线，确认后再考虑动作。',
+      symbol ? `${symbol}先做防守观察，不急着增加敞口。` : '先防守，等更清晰的入场条件。',
+    ],
+  }
+  const buyTemplatesByTone = {
+    calm: [
+      symbol ? `${symbol}偏多但不追高，我会等回踩确认再跟。` : '偏多思路不变，等更舒服的位置推进。',
+      symbol ? `我对${symbol}保持顺势视角，仓位会循序增加。` : '顺势为主，先小步推进。',
+      symbol ? `${symbol}若延续量能，我会按计划逐步跟进。` : '量能延续再加速，先按计划执行。',
+    ],
+    focused: [
+      symbol ? `${symbol}若突破关键位并放量，我会直接跟随。` : '突破+放量才执行，不满足就等待。',
+      symbol ? `我盯${symbol}的延续确认，条件满足就推进。` : '我盯延续确认，条件到位立即执行。',
+      symbol ? `${symbol}这边看多，但必须看到结构确认。` : '看多但先要结构确认。',
+    ],
+    energetic: [
+      symbol ? `${symbol}节奏在变快，确认后我会果断推进。` : '节奏在提速，确认后我会果断执行。',
+      symbol ? `这轮${symbol}如果继续放量，我会积极跟上。` : '量能继续放大我就积极跟上。',
+      symbol ? `${symbol}只要不破关键位，我会继续顺势推进。` : '只要结构不破，我会继续顺势。',
+    ],
+    cautious: [
+      symbol ? `${symbol}方向偏多，但我会把止损线放前面。` : '偏多但先把风险边界锁住。',
+      symbol ? `我会先小仓试探${symbol}，确认后再加。` : '先小仓试探，确认后再加。',
+      symbol ? `${symbol}若冲高乏力我就不追，等回踩再说。` : '冲高不追，回踩确认再处理。',
+    ],
+  }
+  const sellTemplatesByTone = {
+    calm: [
+      symbol ? `${symbol}这里先收缩风险，反弹力度不足就继续减。` : '先降风险，反弹无力就继续收。',
+      symbol ? `我先降低${symbol}仓位，等结构稳定再评估。` : '先降仓，等结构稳定后再看。',
+      symbol ? `${symbol}这轮优先兑现，回撤控制放第一位。` : '先兑现一部分，把回撤控制住。',
+    ],
+    focused: [
+      symbol ? `${symbol}失守关键位我会继续减仓，不犹豫。` : '关键位失守就继续减仓。',
+      symbol ? `我先盯${symbol}反抽强度，弱反弹就不恋战。` : '弱反弹不恋战，优先防守。',
+      symbol ? `${symbol}先防守，等下一个稳定结构再考虑回补。` : '先防守，等稳定结构再说。',
+    ],
+    energetic: [
+      symbol ? `${symbol}这边我先快速降风险，先退出拥挤区。` : '先快速降风险，离开拥挤区。',
+      symbol ? `这轮${symbol}我会偏快处理，避免回撤放大。` : '这轮偏快处理，避免回撤扩大。',
+      symbol ? `${symbol}冲高承接弱的话，我会直接收缩仓位。` : '冲高承接弱就直接收缩仓位。',
+    ],
+    cautious: [
+      symbol ? `${symbol}先把风险敞口降下来，再观察反弹质量。` : '先降敞口，再看反弹质量。',
+      symbol ? `${symbol}这里先防守，不做情绪化硬扛。` : '先防守，不做情绪化硬扛。',
+      symbol ? `我会先守住止损纪律，${symbol}不强就继续减。` : '先守止损纪律，不强就继续减。',
+    ],
+  }
+
+  const holdPool = holdTemplatesByTone[tone] || holdTemplatesByTone.calm
+  const buyPool = buyTemplatesByTone[tone] || buyTemplatesByTone.calm
+  const sellPool = sellTemplatesByTone[tone] || sellTemplatesByTone.calm
+  const actionPool = action === 'BUY' ? buyPool : (action === 'SELL' ? sellPool : holdPool)
+  const actionLine = pickFromPool(actionPool, `${seedBase}|action|${symbol}|${action}|${tone}`, holdPool[0])
 
   const compactMarketLine = String(marketLine || '')
     .replace(/^A股概览：/, 'A股')
@@ -3723,31 +3898,76 @@ function fallbackProactiveText({ roomContext, latestDecision }) {
     .trim()
     .slice(0, 24)
   const normalizedMarketLine = /\d{3,}|\//.test(compactMarketLine)
-    ? '指数窄幅波动，热点轮动'
+    ? '指数窄幅震荡，热点轮动'
     : (compactMarketLine || '指数震荡，等待方向')
-  const marketTemplates = [
-    `盘面上看，${normalizedMarketLine}。`,
-    `从市场节奏看，${normalizedMarketLine}。`,
-    `我这边的盘面观察：${normalizedMarketLine}。`,
-  ]
-  const marketLineText = marketTemplates[simpleHash(`${now}|market`) % marketTemplates.length]
-  const topicLine = topic
-    ? `消息面我在盯：${topic.slice(0, 22)}。`
-    : ''
-  const casualLine = casual ? `${casual.slice(0, 22)}。` : ''
-  const chatterTail = [
-    '你们更关注哪个板块，评论区可以点名。',
-    '如果你们在看同一只票，我可以下一轮重点展开。',
-    '这段节奏我会继续盯着，有变化马上同步。',
-  ][simpleHash(`${now}|tail`) % 3]
 
-  const sentence1 = `${String(actionLine).replace(/[。！？!?]+$/g, '')}，${String(marketLineText).replace(/[。！？!?]+$/g, '')}。`
-  const sentence2 = topicLine
-    ? `${topicLine}${simpleHash(`${now}|tail-pick`) % 2 === 0 ? chatterTail : ''}`
-    : (casualLine || chatterTail)
-  const out = `${sentence1}${sentence2}`
-  return out || '房间在线，我先继续跟踪盘面和消息变化。'
+  const marketTemplates = [
+    `盘面节奏是：${normalizedMarketLine}。`,
+    `当前市场状态：${normalizedMarketLine}。`,
+    `盘口给我的感觉是：${normalizedMarketLine}。`,
+    `今天盘面主线偏${normalizedMarketLine}。`,
+    `市场侧重点看起来是${normalizedMarketLine}。`,
+    `资金节奏上，${normalizedMarketLine}。`,
+    `我这边看到的盘面是${normalizedMarketLine}。`,
+    `短线环境大概是${normalizedMarketLine}。`,
+  ]
+  const marketLineText = pickFromPool(marketTemplates, `${seedBase}|market|${tone}`, marketTemplates[0])
+
+  const topicTemplates = topic
+    ? [
+      `新闻端我会继续跟：${topic}。`,
+      `消息线暂时聚焦在：${topic}。`,
+      `我会把这条消息放进观察清单：${topic}。`,
+      `这条消息值得盯一盯：${topic}。`,
+      `今天的外部变量我先看这条：${topic}。`,
+      `消息面最新关注点是：${topic}。`,
+    ]
+    : []
+  const topicLine = topicTemplates.length
+    ? pickFromPool(topicTemplates, `${seedBase}|topicline|${tone}`, '')
+    : ''
+
+  const casualLine = casual ? `${casual.replace(/[。！？!?]+$/g, '')}。` : ''
+  const tailByTone = {
+    calm: [
+      '我会继续稳着跟，信号出来第一时间同步。',
+      '这一段先按计划走，别被噪音带跑。',
+      '先把节奏拿住，机会到了再提速。',
+    ],
+    focused: [
+      '下一轮我会重点看确认位，到了就给动作。',
+      '我会继续盯关键位和量能变化。',
+      '确认条件满足的话，我会直接给更新。',
+    ],
+    energetic: [
+      '这段节奏可能会加快，有变化我马上喊。',
+      '如果出现加速信号，我会立刻同步。',
+      '这一波我会盯得更紧，机会来了不拖。',
+    ],
+    cautious: [
+      '我先把风险边界守好，再等下一次机会。',
+      '不确定性还在，我先把防守做到位。',
+      '先稳住回撤，再考虑下一次进攻。',
+    ],
+  }
+  const chatterTail = pickFromPool(tailByTone[tone] || tailByTone.calm, `${seedBase}|tail|${tone}`, tailByTone.calm[0])
+
+  const sentence1 = `${String(actionLine).replace(/[。！？!?]+$/g, '')}，${String(marketLineText).replace(/[。！？!?]+$/g, '')}`
+  const sentence2 = topicLine || casualLine || chatterTail
+  const text = `${sentence1}。${sentence2}`.trim() || '房间在线，我先继续跟踪盘面和消息变化。'
+
+  return {
+    text,
+    tone,
+    opener_stem: proactiveOpenerStem(actionLine),
+  }
 }
+
+const PROACTIVE_LEGACY_OPENER_PREFIXES = [
+  '当前我对',
+  '盘面上看',
+  '消息面我在盯',
+]
 
 async function maybeEmitProactivePublicMessageForRoom(roomId) {
   if (!CHAT_PROACTIVE_VIEWER_TICK_ENABLED) return false
@@ -3772,11 +3992,7 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     const now = Date.now()
     const defaultIntervalMs = Math.max(10_000, Number(process.env.CHAT_PUBLIC_PROACTIVE_INTERVAL_MS || 18_000))
 
-    const previous = roomPublicChatActivityByRoom.get(safeRoomId) || {
-      last_public_append_ms: 0,
-      last_proactive_emit_ms: 0,
-      recent_proactive_keys: [],
-    }
+    const previous = roomPublicChatActivityByRoom.get(safeRoomId) || createDefaultRoomPublicChatActivity()
 
     const latest = agentRuntime?.getLatestDecisions?.(safeRoomId, 1) || []
     const latestDecision = latest[0] || null
@@ -3796,12 +4012,27 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     const lastProactive = Number(previous.last_proactive_emit_ms || 0)
     if (now - lastProactive < cadence.intervalMs) return false
 
-    if (CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0 && proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
-      return false
-    }
-
     let text = ''
-    if (chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0) {
+    let generationSource = 'fallback'
+    let generationReason = 'fallback_default'
+    let generationTone = 'neutral'
+    let openerStem = ''
+    let llmError = null
+
+    const llmEnabledForProactive = !!chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0
+    if (!llmEnabledForProactive) {
+      generationReason = chatLlmResponder ? 'llm_concurrency_disabled' : 'llm_unavailable'
+      updateProactiveGenerationStats(safeRoomId, (stats) => {
+        if (!chatLlmResponder) stats.llm_unavailable += 1
+        return stats
+      })
+    } else if (proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
+      generationReason = 'llm_skipped_concurrency'
+      updateProactiveGenerationStats(safeRoomId, (stats) => {
+        stats.llm_skipped_concurrency += 1
+        return stats
+      })
+    } else {
       proactiveLlmInFlight += 1
       try {
         const raw = await chatLlmResponder({
@@ -3813,27 +4044,123 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
           inboundMessage: null,
         })
         text = String(raw || '').trim()
-      } catch {
+        if (text) {
+          generationSource = 'llm'
+          generationReason = 'llm_ok'
+          updateProactiveGenerationStats(safeRoomId, (stats) => {
+            stats.llm_ok += 1
+            return stats
+          })
+        } else {
+          generationReason = 'llm_empty'
+          updateProactiveGenerationStats(safeRoomId, (stats) => {
+            stats.llm_empty += 1
+            return stats
+          })
+        }
+      } catch (error) {
         text = ''
+        llmError = String(error instanceof Error ? error.message : 'llm_error')
+        generationReason = 'llm_error'
+        updateProactiveGenerationStats(safeRoomId, (stats) => {
+          stats.llm_error += 1
+          return stats
+        })
       } finally {
         proactiveLlmInFlight = Math.max(0, proactiveLlmInFlight - 1)
       }
     }
 
     if (!text) {
-      text = fallbackProactiveText({ roomContext, latestDecision })
+      const fallback = fallbackProactiveText({
+        roomContext,
+        latestDecision,
+        roomAgent,
+        previousActivity: previous,
+        salt: generationReason,
+      })
+      text = String(fallback?.text || '').trim()
+      generationTone = String(fallback?.tone || 'neutral').trim().toLowerCase() || 'neutral'
+      openerStem = String(fallback?.opener_stem || '').trim()
+      generationSource = 'fallback'
+      updateProactiveGenerationStats(safeRoomId, (stats) => {
+        stats.fallback_used += 1
+        return stats
+      })
+    } else {
+      openerStem = proactiveOpenerStem(text)
     }
+
     text = String(text || '').trim()
     if (!text) return false
+
+    const recentOpeners = Array.isArray(previous.recent_proactive_openers)
+      ? previous.recent_proactive_openers.map((item) => String(item || '').trim()).filter(Boolean).slice(-8)
+      : []
+    const stemConflict = openerStem
+      && (
+        recentOpeners.includes(openerStem)
+        || PROACTIVE_LEGACY_OPENER_PREFIXES.some((prefix) => {
+          if (!openerStem.startsWith(prefix)) return false
+          return recentOpeners.some((item) => String(item || '').startsWith(prefix))
+        })
+      )
+
+    if (stemConflict) {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const alt = fallbackProactiveText({
+          roomContext,
+          latestDecision,
+          roomAgent,
+          previousActivity: {
+            ...previous,
+            recent_proactive_openers: recentOpeners,
+          },
+          salt: `${generationReason}|reroll|${attempt}`,
+        })
+        const altText = String(alt?.text || '').trim()
+        const altStem = String(alt?.opener_stem || '').trim()
+        if (!altText || !altStem) continue
+        if (recentOpeners.includes(altStem)) continue
+        text = altText
+        openerStem = altStem
+        generationTone = String(alt?.tone || generationTone || 'neutral').trim().toLowerCase() || 'neutral'
+        const switchedFromLlm = generationSource !== 'fallback'
+        generationSource = 'fallback'
+        generationReason = 'fallback_opener_reroll'
+        updateProactiveGenerationStats(safeRoomId, (stats) => {
+          if (switchedFromLlm) stats.fallback_used += 1
+          stats.opener_reroll += 1
+          return stats
+        })
+        break
+      }
+    }
 
     let key = normalizeForProactiveDedupe(text)
     const recentKeys = Array.isArray(previous.recent_proactive_keys) ? previous.recent_proactive_keys : []
     if (key && recentKeys.includes(key)) {
-      const alt = fallbackProactiveText({ roomContext, latestDecision })
-      const altKey = normalizeForProactiveDedupe(alt)
-      if (alt && altKey && altKey !== key && !recentKeys.includes(altKey)) {
-        text = alt
+      const alt = fallbackProactiveText({
+        roomContext,
+        latestDecision,
+        roomAgent,
+        previousActivity: previous,
+        salt: `${generationReason}|dedupe`,
+      })
+      const altText = String(alt?.text || '').trim()
+      const altKey = normalizeForProactiveDedupe(altText)
+      if (altText && altKey && altKey !== key && !recentKeys.includes(altKey)) {
+        text = altText
         key = altKey
+        openerStem = String(alt?.opener_stem || openerStem || '').trim()
+        generationTone = String(alt?.tone || generationTone || 'neutral').trim().toLowerCase() || 'neutral'
+        const switchedFromLlm = generationSource !== 'fallback'
+        generationSource = 'fallback'
+        generationReason = 'fallback_dedupe_reroll'
+        updateProactiveGenerationStats(safeRoomId, (stats) => {
+          if (switchedFromLlm) stats.fallback_used += 1
+          return stats
+        })
       } else {
         return false
       }
@@ -3847,12 +4174,34 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
       maxChars: CHAT_AGENT_MAX_CHARS,
       maxSentences: CHAT_AGENT_MAX_SENTENCES,
     })
+    message.generation_source = generationSource
+    message.generation_reason = generationReason
+    message.generation_tone = generationTone
 
     await chatStore.appendPublic(safeRoomId, message)
     roomPublicChatActivityByRoom.set(safeRoomId, {
+      ...previous,
       last_public_append_ms: Number(message?.created_ts_ms) || now,
       last_proactive_emit_ms: now,
       recent_proactive_keys: key ? [...recentKeys, key].slice(-8) : recentKeys.slice(-8),
+      recent_proactive_openers: openerStem
+        ? [...recentOpeners, openerStem].slice(-8)
+        : recentOpeners.slice(-8),
+      recent_proactive_tones: generationTone
+        ? [...(Array.isArray(previous.recent_proactive_tones) ? previous.recent_proactive_tones : []), generationTone].slice(-8)
+        : (Array.isArray(previous.recent_proactive_tones) ? previous.recent_proactive_tones.slice(-8) : []),
+    })
+
+    updateProactiveGenerationStats(safeRoomId, (stats) => {
+      const toneKey = Object.prototype.hasOwnProperty.call(stats.tone_counts || {}, generationTone)
+        ? generationTone
+        : 'neutral'
+      stats.tone_counts[toneKey] = Number(stats.tone_counts[toneKey] || 0) + 1
+      stats.last_source = generationSource
+      stats.last_reason = generationReason
+      stats.last_error = llmError
+      stats.last_emit_ms = now
+      return stats
     })
 
     broadcastRoomEvent(safeRoomId, 'chat_public_append', {
@@ -3886,6 +4235,9 @@ function tickChatProactiveForRoomsWithViewers() {
     }
     for (const key of Array.from(proactiveBurstStateByRoom.keys())) {
       if (!active.has(key)) proactiveBurstStateByRoom.delete(key)
+    }
+    for (const key of Array.from(proactiveGenerationStatsByRoom.keys())) {
+      if (!active.has(key)) proactiveGenerationStatsByRoom.delete(key)
     }
   }
 
@@ -4050,7 +4402,7 @@ async function maybeEmitDecisionNarration({ trader, decision, context }) {
   try {
     await chatStore.appendPublic(roomId, message)
     try {
-      const previous = roomPublicChatActivityByRoom.get(roomId) || { last_public_append_ms: 0, last_proactive_emit_ms: 0, recent_proactive_keys: [] }
+      const previous = roomPublicChatActivityByRoom.get(roomId) || createDefaultRoomPublicChatActivity()
       roomPublicChatActivityByRoom.set(roomId, {
         ...previous,
         last_public_append_ms: Number(message?.created_ts_ms) || now,
@@ -5839,8 +6191,12 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       proactive_news_burst_cooldown_ms: CHAT_PROACTIVE_NEWS_BURST_COOLDOWN_MS,
       proactive_news_burst_fresh_ms: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
       proactive_news_burst_min_priority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
+      proactive_llm_enabled: !!chatLlmResponder,
+      proactive_llm_max_concurrency: CHAT_PROACTIVE_LLM_MAX_CONCURRENCY,
+      proactive_llm_in_flight: proactiveLlmInFlight,
       agent_max_chars: CHAT_AGENT_MAX_CHARS,
       agent_max_sentences: CHAT_AGENT_MAX_SENTENCES,
+      proactive_generation_stats: getProactiveGenerationStatsPublicSnapshot(),
       decision_narration_enabled: CHAT_DECISION_NARRATION_ENABLED,
       decision_narration_use_llm: CHAT_DECISION_NARRATION_USE_LLM,
       decision_narration_min_interval_ms: CHAT_DECISION_NARRATION_MIN_INTERVAL_MS,

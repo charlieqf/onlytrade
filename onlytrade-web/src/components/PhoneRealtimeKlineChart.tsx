@@ -69,12 +69,14 @@ function toCandles(frames: RawFrame[]): CandlePoint[] {
 
 export function PhoneRealtimeKlineChart({
   symbol,
+  symbolName,
   interval = '1m',
   limit = 240,
   height = '100%',
   refreshMs = 12000,
 }: {
   symbol: string
+  symbolName?: string
   interval?: string
   limit?: number
   height?: string
@@ -215,6 +217,9 @@ export function PhoneRealtimeKlineChart({
     <div style={{ height, position: 'relative', background: '#0B0E11' }}>
       <div className="absolute left-2 top-1 z-10 inline-flex items-center gap-1 rounded border border-white/10 bg-black/40 px-1.5 py-0.5">
         <span className="text-[10px] font-mono text-nofx-text-main">{symbol}</span>
+        {symbolName ? (
+          <span className="text-[10px] text-white/85">{symbolName}</span>
+        ) : null}
         <span className="text-[9px] font-mono text-nofx-text-muted">{interval}</span>
       </div>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />

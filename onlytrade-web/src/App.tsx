@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Expert1CommandDeckPage from './pages/design/Expert1CommandDeckPage'
+import CommandDeckNewPage from './pages/design/CommandDeckNewPage'
 import Expert2MobileBroadcastPage from './pages/design/Expert2MobileBroadcastPage'
 import Expert3StudioTimelinePage from './pages/design/Expert3StudioTimelinePage'
 import StoryOralBroadcastPage from './pages/design/StoryOralBroadcastPage'
@@ -44,6 +45,7 @@ type Page =
   | 'leaderboard'
   | 'login'
   | 'register'
+  | 'commandDeckNew'
   | 'expert1'
   | 'expert2'
   | 'expert3'
@@ -89,6 +91,8 @@ function App() {
     if (path === '/stream' || path === '/streaming-room') return 'stream'
     if (path === '/stream-only' || path === '/stream-standalone')
       return 'streamOnly'
+    if (path === '/stream/command-deck-new')
+      return 'commandDeckNew'
     if (path === '/design/expert-1' || path === '/stream/command-deck')
       return 'expert1'
     if (path === '/design/expert-2' || path === '/stream/mobile-broadcast')
@@ -119,6 +123,7 @@ function App() {
       leaderboard: '/leaderboard',
       login: '/login',
       register: '/register',
+      commandDeckNew: '/stream/command-deck-new',
       expert1: '/stream/command-deck',
       expert2: '/stream/mobile-broadcast',
       expert3: '/stream/studio-timeline',
@@ -196,6 +201,11 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/stream/command-deck-new') {
+        setCurrentPage('commandDeckNew')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       } else if (path === '/design/expert-1' || path === '/stream/command-deck') {
         setCurrentPage('expert1')
         if (traderParam) {
@@ -264,6 +274,7 @@ function App() {
       (currentPage === 'room' ||
         currentPage === 'stream' ||
         currentPage === 'streamOnly' ||
+        currentPage === 'commandDeckNew' ||
         currentPage === 'expert1' ||
         currentPage === 'expert2' ||
         currentPage === 'expert3' ||
@@ -284,6 +295,7 @@ function App() {
     (currentPage === 'room' ||
       currentPage === 'stream' ||
       currentPage === 'streamOnly' ||
+      currentPage === 'commandDeckNew' ||
       currentPage === 'expert1' ||
       currentPage === 'expert2' ||
       currentPage === 'expert3' ||
@@ -366,6 +378,7 @@ function App() {
         || currentPage === 'room'
         || currentPage === 'stream'
         || currentPage === 'streamOnly'
+        || currentPage === 'commandDeckNew'
         || currentPage === 'expert1'
         || currentPage === 'expert2'
         || currentPage === 'expert3'
@@ -470,6 +483,8 @@ function App() {
       setCurrentPage('stream')
     } else if (route === '/stream-only' || route === '/stream-standalone') {
       setCurrentPage('streamOnly')
+    } else if (route === '/stream/command-deck-new') {
+      setCurrentPage('commandDeckNew')
     } else if (route === '/design/expert-1' || route === '/stream/command-deck') {
       setCurrentPage('expert1')
     } else if (route === '/design/expert-2' || route === '/stream/mobile-broadcast') {
@@ -515,6 +530,26 @@ function App() {
   if (currentPage === 'expert1') {
     return selectedTrader ? (
       <Expert1CommandDeckPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'commandDeckNew') {
+    return selectedTrader ? (
+      <CommandDeckNewPage
         selectedTrader={selectedTrader}
         streamPacket={streamPacket}
         roomSseState={roomSseState}

@@ -677,6 +677,8 @@ export function PhoneAvatarSlot({
   sizePx,
   language,
   className = '',
+  showPlaceholderLabel = true,
+  showTraderName = false,
   onDecrease,
   onIncrease,
 }: {
@@ -684,6 +686,8 @@ export function PhoneAvatarSlot({
   sizePx: number
   language: Language
   className?: string
+  showPlaceholderLabel?: boolean
+  showTraderName?: boolean
   onDecrease: () => void
   onIncrease: () => void
 }) {
@@ -704,9 +708,16 @@ export function PhoneAvatarSlot({
           size={sizePx}
           className="rounded-xl border border-white/15"
         />
-        <div className="mt-1 text-[10px] font-mono text-nofx-text-muted text-center">
-          {language === 'zh' ? '数字人占位 / TTS 预留' : 'Digital human slot / TTS ready'}
-        </div>
+        {showTraderName && (
+          <div className="mt-1 text-center text-[10px] font-semibold text-white/90">
+            {trader.trader_name}
+          </div>
+        )}
+        {showPlaceholderLabel && (
+          <div className="mt-1 text-[10px] font-mono text-nofx-text-muted text-center">
+            {language === 'zh' ? '数字人占位 / TTS 预留' : 'Digital human slot / TTS ready'}
+          </div>
+        )}
 
         <div className="absolute -top-2 -right-2 flex gap-1">
           <button

@@ -92,6 +92,8 @@ Commands:
   agent-stop <agent_id>           Mark agent stopped
   decisions [trader_id] [limit]   Fetch latest decisions
   memory [trader_id]              Fetch agent memory snapshot(s)
+  stream-monitor <room_id> [limit]
+                                  Monitor room stream freshness + SSE probe
   watch [seconds]                 Poll status repeatedly (default 3s)
 
 Env vars:
@@ -389,6 +391,150 @@ watch_status() {
     show_status
     sleep "$interval"
   done
+}
+
+stream_monitor() {
+  local room_id="$1"
+  local decision_limit="${2:-5}"
+  local packet_json
+  local replay_json
+  local sse_headers
+
+  packet_json="$(curl_get "/api/rooms/$room_id/stream-packet?decision_limit=$decision_limit")"
+  replay_json="$(curl_get "/api/replay/runtime/status" || printf '{}')"
+  sse_headers="$(curl -sS -I --max-time 5 "$API_BASE/api/rooms/$room_id/events?decision_limit=$decision_limit" 2>/dev/null || true)"
+
+  local py_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    py_bin="python"
+  else
+    echo "[ops] ERROR: python/python3 not found for stream-monitor" >&2
+    exit 1
+  fi
+
+  "$py_bin" - "$room_id" "$packet_json" "$replay_json" "$sse_headers" <<'PY'
+import json
+import re
+import sys
+from datetime import datetime
+
+
+def parse_json(raw: str):
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def parse_iso_to_ms(value):
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        if text.endswith('Z'):
+            text = text[:-1] + '+00:00'
+        dt = datetime.fromisoformat(text)
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def age_ms(now_ms, ts_ms):
+    if ts_ms is None:
+        return None
+    return max(0, int(now_ms - ts_ms))
+
+
+def freshness_label(value, fresh_ms, warm_ms):
+    if value is None:
+        return 'unknown'
+    if value < fresh_ms:
+        return 'fresh'
+    if value < warm_ms:
+        return 'warm'
+    return 'stale'
+
+
+room_id = sys.argv[1]
+packet = parse_json(sys.argv[2])
+replay = parse_json(sys.argv[3])
+sse_headers = sys.argv[4]
+now_ms = int(datetime.now().timestamp() * 1000)
+
+packet_data = packet.get('data') if isinstance(packet.get('data'), dict) else packet
+replay_data = replay.get('data') if isinstance(replay.get('data'), dict) else replay
+
+packet_ts_ms = int(packet_data.get('ts_ms') or 0) if isinstance(packet_data, dict) else 0
+decisions = packet_data.get('decisions_latest') if isinstance(packet_data, dict) else []
+if not isinstance(decisions, list):
+    decisions = []
+decision_ts_ms = None
+if decisions:
+    decision_ts_ms = parse_iso_to_ms(decisions[0].get('timestamp'))
+if decision_ts_ms is None:
+    latest = packet_data.get('decision_latest') if isinstance(packet_data, dict) else None
+    if isinstance(latest, dict):
+        decision_ts_ms = parse_iso_to_ms(latest.get('timestamp'))
+
+chat_preview = packet_data.get('public_chat_preview') if isinstance(packet_data, dict) else {}
+chat_ts_ms = None
+if isinstance(chat_preview, dict):
+    last_ts = chat_preview.get('last_ts_ms')
+    if isinstance(last_ts, (int, float)):
+        chat_ts_ms = int(last_ts)
+    elif isinstance(last_ts, str) and last_ts.isdigit():
+        chat_ts_ms = int(last_ts)
+    if chat_ts_ms is None:
+        messages = chat_preview.get('messages')
+        if isinstance(messages, list) and messages:
+            last_message = messages[-1]
+            if isinstance(last_message, dict):
+                msg_ts = last_message.get('created_ts_ms')
+                if isinstance(msg_ts, (int, float)):
+                    chat_ts_ms = int(msg_ts)
+
+packet_age = age_ms(now_ms, packet_ts_ms if packet_ts_ms > 0 else None)
+decision_age = age_ms(now_ms, decision_ts_ms)
+chat_age = age_ms(now_ms, chat_ts_ms)
+
+status_code = None
+content_type = ''
+if sse_headers:
+    first_line = sse_headers.splitlines()[0] if sse_headers.splitlines() else ''
+    match = re.search(r'\s(\d{3})\s', first_line)
+    if match:
+        status_code = int(match.group(1))
+    for line in sse_headers.splitlines():
+        if line.lower().startswith('content-type:'):
+            content_type = line.split(':', 1)[1].strip()
+            break
+
+output = {
+    'room_id': room_id,
+    'now_ts_ms': now_ms,
+    'data_mode': replay_data.get('data_mode'),
+    'replay_running': replay_data.get('running'),
+    'sse_probe': {
+        'status_code': status_code,
+        'content_type': content_type,
+        'ok': status_code == 200 and 'text/event-stream' in content_type.lower(),
+    },
+    'ages_ms': {
+        'packet': packet_age,
+        'decision': decision_age,
+        'chat': chat_age,
+    },
+    'freshness': {
+        'packet': freshness_label(packet_age, 15_000, 60_000),
+        'decision': freshness_label(decision_age, 60_000, 180_000),
+        'chat': freshness_label(chat_age, 30_000, 120_000),
+    },
+}
+
+print(json.dumps(output, ensure_ascii=False))
+PY
 }
 
 akshare_run_once() {
@@ -1067,6 +1213,15 @@ main() {
       else
         curl_get "/api/agent/memory" | json_pretty
       fi
+      ;;
+    stream-monitor)
+      local room_id="${1:-}"
+      local limit="${2:-5}"
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: stream-monitor requires <room_id>" >&2
+        exit 1
+      fi
+      stream_monitor "$room_id" "$limit" | json_pretty
       ;;
     watch)
       local seconds="${1:-3}"

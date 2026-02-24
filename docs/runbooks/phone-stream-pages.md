@@ -4,6 +4,14 @@ This document tracks the 4 formal phone-first stream pages, their routes, and th
 
 ## Pages and Routes
 
+- Command Deck New (concise, user-first)
+  - Route: `/stream/command-deck-new?trader=<trader_id>`
+  - File: `onlytrade-web/src/pages/design/CommandDeckNewPage.tsx`
+  - Notes:
+    - Removes runtime transport/freshness badges from UI
+    - Uses top thin support/against bar (viewer sentiment mock)
+    - Defaults page copy to Chinese
+
 - Command Deck
   - Route: `/stream/command-deck?trader=<trader_id>`
   - Legacy alias: `/design/expert-1?trader=<trader_id>`
@@ -139,4 +147,10 @@ curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" \
   "http://<host>:8000/onlytrade/api/rooms/t_003/events?decision_limit=5"
 curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" \
   "http://<host>:8000/onlytrade/api/rooms/t_003/stream-packet?decision_limit=5"
+```
+
+Operator command alternative (without exposing status badges in UI):
+
+```bash
+bash scripts/onlytrade-ops.sh stream-monitor t_003
 ```

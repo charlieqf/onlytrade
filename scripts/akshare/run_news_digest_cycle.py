@@ -21,6 +21,19 @@ from scripts.akshare.hot_news_module import collect_hot_news_bundle
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
 
+CASUAL_PROMPT_POOL = [
+    "盘中先稳住节奏，别被情绪牵着走。",
+    "先看风险，再看收益，今天先守回撤。",
+    "喝口水，深呼吸，再决定是否加仓。",
+    "不确定就少做，这是职业化的一部分。",
+    "今天优先做高确定性机会，其他可以放过。",
+    "连续亏损时先降频，保护状态最重要。",
+    "仓位要留余地，别在噪音里重仓硬扛。",
+    "有信号才出手，没信号就耐心等待。",
+    "交易像马拉松，不是每分钟都要冲刺。",
+    "先把计划写清楚，再执行会更稳。",
+]
+
 
 def _safe_text(value: object, max_len: int = 240) -> str:
     text = str(value or "").strip()
@@ -69,10 +82,10 @@ def main() -> int:
         "--canonical-path", default="data/live/onlytrade/news_digest.cn-a.json"
     )
     parser.add_argument("--symbols", default="600519,000001,300750,601318")
-    parser.add_argument("--limit-per-symbol", type=int, default=6)
-    parser.add_argument("--limit-total", type=int, default=20)
-    parser.add_argument("--hot-limit-per-category", type=int, default=4)
-    parser.add_argument("--hot-limit-total", type=int, default=20)
+    parser.add_argument("--limit-per-symbol", type=int, default=10)
+    parser.add_argument("--limit-total", type=int, default=36)
+    parser.add_argument("--hot-limit-per-category", type=int, default=8)
+    parser.add_argument("--hot-limit-total", type=int, default=36)
     args = parser.parse_args()
 
     symbols = [s.strip() for s in str(args.symbols or "").split(",") if s.strip()]
@@ -98,6 +111,11 @@ def main() -> int:
         if str(x or "").strip()
     ]
 
+    now = datetime.now(SH_TZ)
+    day_seed = int(now.strftime("%j"))
+    rotate = day_seed % len(CASUAL_PROMPT_POOL)
+    casual_prompts = (CASUAL_PROMPT_POOL[rotate:] + CASUAL_PROMPT_POOL[:rotate])[:8]
+
     for item in hot_bundle.get("headlines") or []:
         title = str(item.get("title") or "").strip()
         if not title or title in seen:
@@ -119,7 +137,6 @@ def main() -> int:
             if len(headlines) >= limit_total:
                 break
 
-    now = datetime.now(SH_TZ)
     payload = {
         "schema_version": "news.digest.v1",
         "market": "CN-A",
@@ -136,6 +153,7 @@ def main() -> int:
         "categories": hot_categories,
         "commentary": hot_commentary,
         "titles": hot_titles,
+        "casual_prompts": casual_prompts,
     }
     atomic_write_json(args.canonical_path, payload)
     print(

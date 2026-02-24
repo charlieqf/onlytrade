@@ -70,6 +70,49 @@ function clipText(value: string, maxLen: number): string {
   return `${text.slice(0, maxLen)}...`
 }
 
+function normalizeTtsText(value: unknown, maxLen = 140): string {
+  let text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!text) return ''
+
+  text = text
+    .replace(/\b\d{6}\.(SZ|SH)\b/gi, '这只票')
+    .replace(/-?\d+(?:\.\d+)?\s*[%％]/g, '')
+    .replace(/\b\d+(?:\.\d+)?\b/g, '')
+    .replace(/[,:：;；]{2,}/g, '，')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (!text) return ''
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text
+}
+
+function fallbackTtsText(kind: ChatMessage['agent_message_kind']): string {
+  if (kind === 'reply') return ''
+  return '我在持续跟踪盘面，等信号更清晰再提示你。'
+}
+
+function toneHash(value: string): number {
+  let out = 0
+  const text = String(value || '')
+  for (let i = 0; i < text.length; i += 1) {
+    out = ((out << 5) - out + text.charCodeAt(i)) | 0
+  }
+  return Math.abs(out)
+}
+
+function resolveMessageTtsTone(message: ChatMessage): 'calm' | 'focused' | 'energetic' | 'cautious' {
+  const raw = String(message?.generation_tone || '').trim().toLowerCase()
+  if (raw === 'calm' || raw === 'focused' || raw === 'energetic' || raw === 'cautious') {
+    return raw
+  }
+  const seed = `${String(message?.id || '')}|${String(message?.agent_message_kind || '')}|${String(message?.created_ts_ms || '')}`
+  const options: Array<'focused' | 'calm' | 'energetic' | 'cautious'> = ['focused', 'calm', 'energetic', 'cautious']
+  return options[toneHash(seed) % options.length]
+}
+
 function pickLatestChatTsMs(messages: ChatMessage[]): number {
   if (!Array.isArray(messages) || messages.length === 0) return 0
   return messages.reduce((maxTs, msg) => {
@@ -189,11 +232,17 @@ export function usePhoneStreamData({
 }: FormalStreamDesignPageProps) {
   const roomId = selectedTrader.trader_id
   const [nowMs, setNowMs] = useState<number>(() => Date.now())
+  const [lastPacketRxMs, setLastPacketRxMs] = useState<number>(0)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!streamPacket) return
+    setLastPacketRxMs(Date.now())
+  }, [streamPacket])
 
   const { data: apiPublicMessages = [] } = useSWR<ChatMessage[]>(
     roomId ? ['room-public-chat', roomId] : null,
@@ -260,7 +309,12 @@ export function usePhoneStreamData({
 
   const modeLabel = replayRuntimeStatus?.running ? 'REPLAY' : 'LIVE'
   const packetTs = Number(streamPacket?.ts_ms || 0)
-  const packetFreshMs = packetTs > 0 ? nowMs - packetTs : Number.POSITIVE_INFINITY
+  const packetEventTs = Number(roomSseState?.last_event_ts_ms || 0)
+  const packetFreshMs = packetEventTs > 0
+    ? nowMs - packetEventTs
+    : lastPacketRxMs > 0
+      ? nowMs - lastPacketRxMs
+      : Number.POSITIVE_INFINITY
   const freshnessLabel = classifyFreshness(packetFreshMs, 15_000, 60_000)
 
   const apiLatestChatTsMs = pickLatestChatTsMs(apiPublicMessages)
@@ -288,16 +342,24 @@ export function usePhoneStreamData({
   const lastSseEventAgeMs = roomSseState?.last_event_ts_ms
     ? nowMs - roomSseState.last_event_ts_ms
     : Number.POSITIVE_INFINITY
-  const sseHealthy = roomSseState?.status === 'connected' && lastSseEventAgeMs <= 15_000
+  const hasRecentSseEvent = Number.isFinite(lastSseEventAgeMs) && lastSseEventAgeMs <= 30_000
+  const sseHealthy = hasRecentSseEvent && roomSseState?.status !== 'error'
   const transportLabel = sseHealthy ? 'SSE' : 'POLL'
 
   const staleFlags = {
-    transport: transportLabel === 'POLL',
+    transport:
+      roomSseState?.status === 'error'
+      && lastSseEventAgeMs > 45_000,
     packet: freshnessLabel === 'stale',
     decision: decisionFreshnessLabel === 'stale',
     chat: mergedPublicMessages.length > 0 && chatFreshnessLabel === 'stale',
   }
-  const isDegraded = staleFlags.transport || staleFlags.packet || staleFlags.decision || staleFlags.chat
+  const isDegradedRaw = staleFlags.transport || staleFlags.packet
+  const suppressDegradedBanner =
+    typeof window !== 'undefined'
+    && (window.location.pathname === '/onlytrade'
+      || window.location.pathname.startsWith('/onlytrade/'))
+  const isDegraded = suppressDegradedBanner ? false : isDegradedRaw
 
   const breadthRaw = (streamPacket as any)?.market_breadth?.breadth
     || (streamPacket as any)?.room_context?.market_breadth
@@ -351,6 +413,7 @@ export function useAgentTtsAutoplay({
 }) {
   const [ttsAutoPlay, setTtsAutoPlay] = useState<boolean>(true)
   const [ttsError, setTtsError] = useState<string>('')
+  const [ttsSpeaking, setTtsSpeaking] = useState<boolean>(false)
 
   const { data: chatTtsConfig } = useSWR(
     ['chat-tts-config'],
@@ -370,20 +433,45 @@ export function useAgentTtsAutoplay({
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
   const ttsObjectUrlRef = useRef<string | null>(null)
 
+  const speakWithBrowserTts = useCallback(async (text: string) => {
+    if (
+      typeof window === 'undefined'
+      || !('speechSynthesis' in window)
+      || typeof SpeechSynthesisUtterance === 'undefined'
+    ) {
+      throw new Error('browser_tts_unavailable')
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = 'zh-CN'
+      utterance.rate = 1
+      utterance.pitch = 1
+      utterance.onend = () => resolve()
+      utterance.onerror = () => reject(new Error('browser_tts_failed'))
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(utterance)
+    })
+  }, [])
+
   const playQueuedTts = useCallback(async () => {
     if (!ttsAutoPlay || !ttsAvailable) return
     if (ttsPlayingRef.current) return
     const next = ttsQueueRef.current.shift()
     if (!next) return
 
-    const text = String(next.text || '').trim().slice(0, 220)
+    const normalized = normalizeTtsText(next.text, 140)
+    const text = normalized || fallbackTtsText(next.agent_message_kind)
     if (!text) return
 
     ttsPlayingRef.current = true
+    setTtsSpeaking(true)
     try {
       const blob = await api.synthesizeRoomSpeech({
         room_id: roomId,
         text,
+        tone: resolveMessageTtsTone(next),
+        message_id: String(next.id || ''),
       })
       if (!blob || blob.size <= 0) {
         throw new Error('tts_empty_audio')
@@ -408,26 +496,43 @@ export function useAgentTtsAutoplay({
       setTtsError('')
     } catch (error) {
       const message = String(error instanceof Error ? error.message : 'tts_play_failed')
+
+      if (
+        /openai_tts_http_429|chat_tts_unavailable|chat_tts_disabled|openai_tts_http_5\d\d/i
+          .test(message)
+      ) {
+        try {
+          await speakWithBrowserTts(text)
+          setTtsError('')
+          return
+        } catch {
+          // fall through and keep original backend error message
+        }
+      }
+
       setTtsError(message)
       if (/NotAllowedError|play\(\) failed/i.test(message)) {
         setTtsAutoPlay(false)
       }
     } finally {
       ttsPlayingRef.current = false
+      setTtsSpeaking(false)
       if (ttsQueueRef.current.length > 0) {
         void playQueuedTts()
       }
     }
-  }, [roomId, ttsAutoPlay, ttsAvailable])
+  }, [roomId, ttsAutoPlay, ttsAvailable, speakWithBrowserTts])
 
   useEffect(() => {
     ttsSeenMessageIdsRef.current.clear()
     ttsQueueRef.current = []
     ttsPlayingRef.current = false
+    setTtsSpeaking(false)
     setTtsError('')
     if (ttsAudioRef.current) {
       ttsAudioRef.current.pause()
       ttsAudioRef.current = null
+      setTtsSpeaking(false)
     }
     if (ttsObjectUrlRef.current) {
       URL.revokeObjectURL(ttsObjectUrlRef.current)
@@ -457,11 +562,19 @@ export function useAgentTtsAutoplay({
 
     for (const row of publicMessages.slice(-30)) {
       if (row.sender_type !== 'agent') continue
-      if (!(row.agent_message_kind === 'proactive' || row.agent_message_kind === 'narration')) {
+      if (
+        !(
+          row.agent_message_kind === 'reply' ||
+          row.agent_message_kind === 'proactive' ||
+          row.agent_message_kind === 'narration'
+        )
+      ) {
         continue
       }
       const id = String(row.id || '').trim()
       if (!id || seen.has(id)) continue
+      const text = String(row.text || '').trim()
+      if (!text) continue
       seen.add(id)
       queue.push(row)
       appended += 1
@@ -477,6 +590,7 @@ export function useAgentTtsAutoplay({
     ttsAutoPlay,
     setTtsAutoPlay,
     ttsError,
+    ttsSpeaking,
     roomVoice,
   }
 }

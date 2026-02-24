@@ -9,6 +9,7 @@ import {
   resolveTraderAvatarImageUrls,
 } from '../components/TraderAvatar'
 import { RoomClockBadge } from '../components/RoomClockBadge'
+import { useRoomBgm } from '../hooks/useRoomBgm'
 import { formatPrice, formatQuantity } from '../utils/format'
 import type {
   ChatMessage,
@@ -187,6 +188,49 @@ function safeText(value: unknown, maxLen = 160) {
     .trim()
   if (!text) return ''
   return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text
+}
+
+function normalizeTtsText(value: unknown, maxLen = 140) {
+  let text = String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!text) return ''
+
+  text = text
+    .replace(/\b\d{6}\.(SZ|SH)\b/gi, '这只票')
+    .replace(/-?\d+(?:\.\d+)?\s*[%％]/g, '')
+    .replace(/\b\d+(?:\.\d+)?\b/g, '')
+    .replace(/[,:：;；]{2,}/g, '，')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (!text) return ''
+  return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text
+}
+
+function fallbackTtsText(kind: ChatMessage['agent_message_kind']) {
+  if (kind === 'reply') return ''
+  return '我在持续跟踪盘面，等信号更清晰再提示你。'
+}
+
+function toneHash(value: string): number {
+  let out = 0
+  const text = String(value || '')
+  for (let i = 0; i < text.length; i += 1) {
+    out = ((out << 5) - out + text.charCodeAt(i)) | 0
+  }
+  return Math.abs(out)
+}
+
+function resolveMessageTtsTone(message: ChatMessage): 'calm' | 'focused' | 'energetic' | 'cautious' {
+  const raw = String(message?.generation_tone || '').trim().toLowerCase()
+  if (raw === 'calm' || raw === 'focused' || raw === 'energetic' || raw === 'cautious') {
+    return raw
+  }
+  const seed = `${String(message?.id || '')}|${String(message?.agent_message_kind || '')}|${String(message?.created_ts_ms || '')}`
+  const options: Array<'focused' | 'calm' | 'energetic' | 'cautious'> = ['focused', 'calm', 'energetic', 'cautious']
+  return options[toneHash(seed) % options.length]
 }
 
 type StreamReaction = {
@@ -1096,6 +1140,7 @@ export function StreamingRoomPage({
   const [giftNotice, setGiftNotice] = useState<string>('')
   const [ttsAutoPlay, setTtsAutoPlay] = useState<boolean>(true)
   const [ttsError, setTtsError] = useState<string>('')
+  const [ttsSpeaking, setTtsSpeaking] = useState<boolean>(false)
 
   const streamingParams = useMemo(() => parseStreamingParams(), [])
   const [digitalPerson, setDigitalPerson] = useState<DigitalPersonState>(
@@ -1212,6 +1257,15 @@ export function StreamingRoomPage({
   )
   const ttsAvailable = chatTtsConfig?.enabled === true
   const roomVoice = String(chatTtsConfig?.voice_map?.[roomId] || '').trim()
+  const {
+    bgmAvailable,
+    bgmEnabled,
+    setBgmEnabled,
+    bgmVolume,
+    setBgmVolume,
+    bgmTrackTitle,
+    bgmError,
+  } = useRoomBgm({ roomId, ducking: ttsSpeaking })
 
   const {
     data: betMarket,
@@ -1290,14 +1344,18 @@ export function StreamingRoomPage({
     const next = ttsQueueRef.current.shift()
     if (!next) return
 
-    const text = safeText(next.text, 220)
+    const normalized = normalizeTtsText(next.text, 140)
+    const text = normalized || fallbackTtsText(next.agent_message_kind)
     if (!text) return
 
     ttsPlayingRef.current = true
+    setTtsSpeaking(true)
     try {
       const blob = await api.synthesizeRoomSpeech({
         room_id: roomId,
         text,
+        tone: resolveMessageTtsTone(next),
+        message_id: String(next.id || ''),
       })
 
       if (!blob || blob.size <= 0) {
@@ -1338,6 +1396,7 @@ export function StreamingRoomPage({
       }
     } finally {
       ttsPlayingRef.current = false
+      setTtsSpeaking(false)
       if (ttsQueueRef.current.length > 0) {
         void playQueuedTts()
       }
@@ -1348,6 +1407,7 @@ export function StreamingRoomPage({
     ttsSeenMessageIdsRef.current.clear()
     ttsQueueRef.current = []
     ttsPlayingRef.current = false
+    setTtsSpeaking(false)
     setTtsError('')
     if (ttsAudioRef.current) {
       ttsAudioRef.current.pause()
@@ -1370,6 +1430,7 @@ export function StreamingRoomPage({
       if (row.sender_type !== 'agent') continue
       if (
         !(
+          row.agent_message_kind === 'reply' ||
           row.agent_message_kind === 'proactive' ||
           row.agent_message_kind === 'narration'
         )
@@ -1378,6 +1439,8 @@ export function StreamingRoomPage({
       }
       const id = String(row.id || '').trim()
       if (!id || seen.has(id)) continue
+      const text = String(row.text || '').trim()
+      if (!text) continue
       seen.add(id)
       queue.push(row)
       appended += 1
@@ -2270,12 +2333,80 @@ export function StreamingRoomPage({
 
                     <div className="mt-2 text-[11px] text-nofx-text-muted">
                       {language === 'zh'
-                        ? '仅播报 agent 的主动消息与解说消息（proactive/narration）。'
-                        : 'Only proactive and narration agent messages are voiced.'}
+                        ? '播报 agent 的回复、主动消息与解说（reply/proactive/narration）。'
+                        : 'Voices agent reply, proactive, and narration messages.'}
                     </div>
 
                     {ttsError ? (
                       <div className="mt-1 text-[11px] text-nofx-red break-all">{ttsError}</div>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold text-nofx-text-main">
+                        {language === 'zh' ? '房间背景音乐（BGM）' : 'Room Background Music'}
+                      </div>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded border font-mono ${bgmAvailable ? 'border-nofx-green/35 text-nofx-green bg-nofx-green/10' : 'border-white/20 text-nofx-text-muted bg-black/35'}`}
+                      >
+                        {bgmAvailable
+                          ? language === 'zh'
+                            ? '可用'
+                            : 'READY'
+                          : language === 'zh'
+                            ? '无曲目'
+                            : 'NO TRACK'}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBgmEnabled((prev) => !prev)}
+                        disabled={!bgmAvailable}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border disabled:opacity-45 disabled:cursor-not-allowed ${bgmEnabled ? 'border-nofx-gold/45 bg-nofx-gold/15 text-nofx-gold' : 'border-white/20 bg-black/40 text-nofx-text-muted'}`}
+                      >
+                        {bgmEnabled
+                          ? language === 'zh'
+                            ? '背景音乐：开'
+                            : 'BGM: ON'
+                          : language === 'zh'
+                            ? '背景音乐：关'
+                            : 'BGM: OFF'}
+                      </button>
+                      <div className="text-[11px] font-mono text-nofx-text-muted text-right">
+                        {bgmTrackTitle ? `track=${bgmTrackTitle}` : ''}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[11px] text-nofx-text-muted">vol</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.35}
+                        step={0.01}
+                        value={bgmVolume}
+                        disabled={!bgmAvailable}
+                        onChange={(event) => {
+                          setBgmVolume(Number(event.target.value || 0))
+                        }}
+                        className="w-full accent-nofx-gold"
+                      />
+                      <span className="text-[11px] font-mono text-nofx-text-muted">
+                        {Math.round((bgmVolume || 0) * 100)}%
+                      </span>
+                    </div>
+
+                    <div className="mt-2 text-[11px] text-nofx-text-muted">
+                      {language === 'zh'
+                        ? 'TTS 说话时会自动降低背景音乐音量。'
+                        : 'BGM is auto-ducked while TTS is speaking.'}
+                    </div>
+
+                    {bgmError ? (
+                      <div className="mt-1 text-[11px] text-nofx-red break-all">{bgmError}</div>
                     ) : null}
                   </div>
 

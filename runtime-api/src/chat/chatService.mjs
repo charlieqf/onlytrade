@@ -51,6 +51,49 @@ function isRoomAgentRunning(roomAgent) {
   return roomAgent?.isRunning === true || roomAgent?.is_running === true
 }
 
+function pickStable(items, keySeed = '', fallback = '') {
+  const rows = Array.isArray(items)
+    ? items.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+  if (!rows.length) return fallback
+  const key = String(keySeed || '')
+  let hash = 0
+  for (let i = 0; i < key.length; i += 1) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0
+  }
+  const idx = Math.abs(hash) % rows.length
+  return rows[idx] || fallback
+}
+
+function buildFallbackReplyText({ roomAgent, inboundMessage, roomContext, latestDecision, nowMs }) {
+  const sender = String(inboundMessage?.sender_name || '').trim() || '朋友'
+  const symbol = String(
+    latestDecision?.decisions?.[0]?.symbol
+    || roomContext?.symbol_brief?.symbol
+    || ''
+  ).trim()
+  const action = String(
+    latestDecision?.decisions?.[0]?.action
+    || roomContext?.symbol_brief?.action
+    || 'hold'
+  ).trim().toUpperCase()
+  const newsTitle = pickStable(roomContext?.news_digest_titles, `${sender}|news|${nowMs}`, '')
+  const casual = pickStable(roomContext?.casual_topics, `${sender}|casual|${nowMs}`, '')
+
+  const tradeLine = symbol
+    ? (action === 'BUY'
+      ? `我会继续跟踪${symbol}的量价配合，确认后再进攻。`
+      : action === 'SELL'
+        ? `我先把${symbol}风险放在第一位，反弹不强就不恋战。`
+        : `我对${symbol}先保持观察，等更清晰信号再动。`)
+    : '我先把风险和节奏放前面，不着急抢动作。'
+
+  const newsLine = newsTitle ? `另外这条消息也要盯：${newsTitle.slice(0, 24)}。` : ''
+  const casualLine = casual ? `${casual.slice(0, 22)}。` : '我们先稳住节奏，机会会有。'
+
+  return `@${sender} ${tradeLine}${newsLine || casualLine}`
+}
+
 function dayKeyInTimeZone(tsMs, timeZone = 'Asia/Shanghai') {
   const dtf = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -331,7 +374,7 @@ export function createChatService({
         roomContext = await resolveRoomContextSafe(roomId)
       }
 
-      const generatedText = await generateAgentText({
+      let generatedText = await generateAgentText({
         kind: 'proactive',
         roomAgent,
         roomId,
@@ -345,13 +388,25 @@ export function createChatService({
       }
 
       // Basic dedupe: avoid repeating similar proactive lines.
-      const candidateKey = normalizeForDedupe(generatedText)
+      let candidateKey = normalizeForDedupe(generatedText)
       const recentProactives = todayMessages
         .filter((item) => item?.sender_type === 'agent' && item?.agent_message_kind === 'proactive')
         .slice(-8)
       for (const msg of recentProactives) {
         if (normalizeForDedupe(msg?.text) === candidateKey) {
-          proactiveStateByRoom.set(roomId, now)
+          const casual = Array.isArray(roomContext?.casual_topics)
+            ? roomContext.casual_topics.map((item) => String(item || '').trim()).filter(Boolean)
+            : []
+          const pick = casual.length ? casual[now % casual.length] : ''
+          const alt = pick
+            ? `${String(generatedText).replace(/[。！？!?]+$/g, '')}。${pick}`
+            : ''
+          const altKey = normalizeForDedupe(alt)
+          if (alt && altKey && altKey !== candidateKey) {
+            generatedText = alt
+            candidateKey = altKey
+            break
+          }
           return
         }
       }
@@ -436,11 +491,12 @@ export function createChatService({
       && shouldAgentReply({ messageType: safeMessageType, random: random(), threshold: safePublicReplyRate })
     ) {
       const historyContext = await readTodayContext(safeRoomId, safeUserSessionId, safeVisibility)
-      const generatedText = await generateAgentText({
+      const roomContextForReply = await resolveRoomContextSafe(safeRoomId)
+      let generatedText = await generateAgentText({
         kind: 'reply',
         roomAgent,
         roomId: safeRoomId,
-        roomContext: await resolveRoomContextSafe(safeRoomId),
+        roomContext: roomContextForReply,
         inboundMessage: userMessage,
         latestDecision: resolveLatestDecision(safeRoomId),
         historyContext,
@@ -450,6 +506,15 @@ export function createChatService({
       // Mentions/DMs are expected to get an agent response. If the LLM
       // returns empty/errored, still emit a short fallback reply.
       const forceReply = safeMessageType === 'public_mention_agent' || safeMessageType === 'private_agent_dm'
+      if (!generatedText && forceReply) {
+        generatedText = buildFallbackReplyText({
+          roomAgent,
+          inboundMessage: userMessage,
+          roomContext: roomContextForReply,
+          latestDecision: resolveLatestDecision(safeRoomId),
+          nowMs: now,
+        })
+      }
       if (generatedText || forceReply) {
         const nowReply = nowMs()
         agentReply = buildAgentReply({

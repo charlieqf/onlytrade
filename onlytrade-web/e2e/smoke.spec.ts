@@ -2,6 +2,9 @@ import { test, expect } from '@playwright/test'
 import crypto from 'node:crypto'
 
 const baseURL = process.env.E2E_BASE_URL
+const streamTraderSlug = String(
+  process.env.E2E_STREAM_TRADER_SLUG || process.env.E2E_TRADER_SLUG || ''
+).trim()
 
 function unwrapApiPayload<T>(json: any): T {
   if (
@@ -148,6 +151,42 @@ test('room loads with a known trader', async ({ page }) => {
   })
   await expect(page.getByTestId('trader-dashboard')).toBeVisible()
   await expect(page.getByTestId('room-empty-state')).toHaveCount(0)
+})
+
+test('stream command deck loads with telemetry', async ({ page }) => {
+  test.skip(!streamTraderSlug, 'Set E2E_STREAM_TRADER_SLUG (or E2E_TRADER_SLUG)')
+
+  await page.goto(`/stream/command-deck?trader=${encodeURIComponent(streamTraderSlug)}`, {
+    waitUntil: 'domcontentloaded',
+  })
+
+  await expect(page).toHaveURL(/\/stream\/command-deck(\?|$)/)
+  await expect(page.locator('text=/pkt\s+(--|\d+s|\d+m|\d+h)/').first()).toBeVisible()
+  await expect(page.locator('text=/dec\s+(--|\d+s|\d+m|\d+h)/').first()).toBeVisible()
+})
+
+test('stream mobile broadcast loads with telemetry', async ({ page }) => {
+  test.skip(!streamTraderSlug, 'Set E2E_STREAM_TRADER_SLUG (or E2E_TRADER_SLUG)')
+
+  await page.goto(`/stream/mobile-broadcast?trader=${encodeURIComponent(streamTraderSlug)}`, {
+    waitUntil: 'domcontentloaded',
+  })
+
+  await expect(page).toHaveURL(/\/stream\/mobile-broadcast(\?|$)/)
+  await expect(page.locator('text=/pkt\s+(--|\d+s|\d+m|\d+h)/').first()).toBeVisible()
+  await expect(page.locator('text=/chat\s+(--|\d+s|\d+m|\d+h)/').first()).toBeVisible()
+})
+
+test('stream studio timeline loads with telemetry', async ({ page }) => {
+  test.skip(!streamTraderSlug, 'Set E2E_STREAM_TRADER_SLUG (or E2E_TRADER_SLUG)')
+
+  await page.goto(`/stream/studio-timeline?trader=${encodeURIComponent(streamTraderSlug)}`, {
+    waitUntil: 'domcontentloaded',
+  })
+
+  await expect(page).toHaveURL(/\/stream\/studio-timeline(\?|$)/)
+  await expect(page.locator('text=timeline').first()).toBeVisible()
+  await expect(page.locator('text=/pkt\s+(--|\d+s|\d+m|\d+h)/').first()).toBeVisible()
 })
 
 test('login via email/password + TOTP sets auth_token', async ({ page }) => {

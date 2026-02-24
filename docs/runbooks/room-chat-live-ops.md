@@ -4,6 +4,8 @@
 
 Operate and troubleshoot room chat backed by append-only JSONL files under `data/chat/rooms/...`.
 
+This runbook also covers pre-open stream chatter (news and casual talk) when market is not open yet.
+
 ## Preflight
 
 1. Backend health:
@@ -19,6 +21,18 @@ curl -fsS -X POST "http://127.0.0.1:18080/api/chat/session/bootstrap"
 ```
 
 3. Confirm room exists (`room_id == trader_id`, example `t_001`).
+
+4. Confirm TTS config is available (for stream voice):
+
+```bash
+curl -fsS "http://127.0.0.1:18080/api/chat/tts/config"
+```
+
+5. Confirm CN news digest is fresh enough for proactive chat:
+
+```bash
+bash scripts/onlytrade-ssh-ops.sh news-digest-cn-run-once
+```
 
 ## Message path checks
 
@@ -68,3 +82,44 @@ curl -fsS -X POST "http://127.0.0.1:18080/api/chat/rooms/t_001/messages" \
   -H "Content-Type: application/json" \
   -d '{"user_session_id":"usr_sess_xxx","visibility":"public","message_type":"public_mention_agent","text":"@agent status?"}'
 ```
+
+## Pre-Open Chatter Mode (t_003 / t_004)
+
+When market is not open, you can still keep room streams active for commentary.
+
+1. Ensure runtime is in live-file mode with guard disabled:
+
+```bash
+curl -fsS "http://127.0.0.1:18080/api/replay/runtime/status"
+curl -fsS "http://127.0.0.1:18080/api/agent/runtime/status"
+```
+
+Expected:
+
+- `data_mode: live_file`
+- `market_session_guard.enabled: false`
+
+2. Keep target agents running:
+
+```bash
+bash scripts/onlytrade-ssh-ops.sh agent-start t_003
+bash scripts/onlytrade-ssh-ops.sh agent-start t_004
+```
+
+3. Verify new public messages are advancing:
+
+```bash
+curl -fsS "http://127.0.0.1:18080/api/chat/rooms/t_003/public?limit=5"
+curl -fsS "http://127.0.0.1:18080/api/chat/rooms/t_004/public?limit=5"
+```
+
+4. If stream voice is silent, test backend synthesis directly:
+
+```bash
+curl -fsS -X POST "http://127.0.0.1:18080/api/chat/tts" \
+  -H "Content-Type: application/json" \
+  -d '{"room_id":"t_003","text":"语音连通测试"}' \
+  -o /tmp/t_003_test.mp3
+```
+
+If this returns HTTP 429 (`openai_tts_http_429`), recharge/fix OpenAI billing first.

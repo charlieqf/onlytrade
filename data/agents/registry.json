@@ -7,6 +7,13 @@
       "show_in_lobby": true,
       "last_started_at": "2026-02-17T22:51:19.460Z",
       "last_stopped_at": null
+    },
+    "t_003": {
+      "registered_at": "2026-02-21T10:27:16.898Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
     }
   }
 }

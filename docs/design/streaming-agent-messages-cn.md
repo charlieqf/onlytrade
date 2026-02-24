@@ -19,8 +19,8 @@ This doc describes how to make agents feel like "danmu" livestream hosts: freque
 
 ## Non-goals (v1)
 
-- True real-time speech streaming (TTS comes later).
 - Long-form explanations.
+- Fully free-form chat with no market grounding.
 
 ## Message Types
 
@@ -44,7 +44,7 @@ Delivery:
 - Primary: decision UI reasoning steps
 - Optional: also post a short public chat broadcast once per minute
 
-### Type 2: Proactive streamer talk (every 15-20s)
+### Type 2: Proactive streamer talk (every 10-20s)
 
 Purpose: "nearly nonstop" human-like chatter.
 
@@ -76,6 +76,7 @@ Anti-spam controls:
 
 - room-level in-flight lock (avoid multiple generations due to polling)
 - dedupe/similarity filtering vs last N messages
+- if duplicate is detected, prefer alternate wording/casual variant over silent skip
 
 ### Type 3: Reply to a user message (immediate)
 
@@ -101,14 +102,25 @@ Rule: the generator may only cite values present in this context.
 
 ## Default cadence
 
-- Proactive interval: 18 seconds (configurable)
+- Proactive interval: 11-18 seconds (configurable; news burst can be faster)
 - Sentence length: hard-capped by post-processing
 - Danmu fly-through duration: target **11-18 seconds** per line (longer lines fly slower)
 - Danmu rate limit: keep per-sender and global throttles so overlay stays readable
 
+## TTS Status (current)
+
+- TTS is live in stream pages.
+- Voice playback includes agent message kinds:
+  - `reply`
+  - `proactive`
+  - `narration`
+- Frontend uses runtime endpoints:
+  - `GET /api/chat/tts/config`
+  - `POST /api/chat/tts`
+
 ## Acceptance Criteria
 
-- During market open + agent running, proactive public messages appear about every 15-20 seconds.
-- All messages are Chinese, short, and safe for future TTS.
+- During market open + agent running, proactive public messages appear about every 10-20 seconds.
+- All messages are Chinese, short, and safe for live TTS playback.
 - Messages do not hallucinate facts; any missing/stale data is handled via generic talk or explicit caution.
 - Danmu remains readable on phone-width layouts (no rapid unreadable fly-by).

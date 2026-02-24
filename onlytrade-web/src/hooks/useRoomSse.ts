@@ -31,6 +31,15 @@ const INITIAL_ROOM_SSE_STATE: RoomSseState = {
   last_event_ts_ms: null,
 }
 
+function detectPathBase(): string {
+  if (typeof window === 'undefined') return ''
+  const pathname = String(window.location.pathname || '')
+  if (pathname === '/onlytrade' || pathname.startsWith('/onlytrade/')) {
+    return '/onlytrade'
+  }
+  return ''
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object'
 }
@@ -102,7 +111,8 @@ export function useRoomSse({
     }
 
     const limit = Math.max(1, Math.min(Number(decisionsLimit) || 5, 20))
-    const url = `/api/rooms/${encodeURIComponent(safeRoomId)}/events?decision_limit=${encodeURIComponent(String(limit))}`
+    const pathBase = detectPathBase()
+    const url = `${pathBase}/api/rooms/${encodeURIComponent(safeRoomId)}/events?decision_limit=${encodeURIComponent(String(limit))}`
 
     setRoomSseState(INITIAL_ROOM_SSE_STATE)
     const es = new EventSource(url)

@@ -162,7 +162,7 @@ test('mention replies even when llm returns empty', async () => {
   assert.equal(Boolean(result.agent_reply), true)
   assert.equal(result.agent_reply.sender_type, 'agent')
   assert.equal(result.agent_reply.agent_message_kind, 'reply')
-  assert.match(result.agent_reply.text, /收到|noted|ok/i)
+  assert.match(result.agent_reply.text, /收到|noted|ok|风险|节奏|观察/i)
 })
 
 test('agent reply uses today chat history context', async () => {

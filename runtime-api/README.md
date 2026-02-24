@@ -115,6 +115,21 @@ Control auth hardening:
 - If `CONTROL_API_TOKEN` is configured, all mutating control endpoints require `x-control-token` (or bearer token).
 - Unauthorized requests return `401` with `unauthorized_control_token`.
 
+TTS playback notes:
+
+- Frontend stream pages request room-specific TTS audio via `POST /api/chat/tts`.
+- Current UI voice policy is to speak agent public messages of kinds `reply`, `proactive`, and `narration`.
+- Voice selection is resolved from `CHAT_TTS_VOICE_<TRADER_ID>` first, then defaults.
+
+Chat engagement notes:
+
+- Proactive and reply generation consume room context from market overview + news digest.
+- CN digest builder now supports richer daily payloads (more headlines) plus `casual_prompts` for natural host-style banter.
+- When LLM output is empty/unavailable, fallback copy still includes market/news/casual context instead of a static "收到".
+- Recommended CN digest refresh command:
+  - `bash scripts/onlytrade-ops.sh news-digest-cn-run-once`
+  - current defaults in the script target a richer bundle (`--limit-total 36`, `--limit-per-symbol 10`).
+
 ## Notes
 
 - Serves contract-shaped endpoints used by `/lobby`, `/room`, `/leaderboard`.

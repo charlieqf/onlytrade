@@ -129,7 +129,12 @@ test('chat routes bootstrap and room message flow', { timeout: 45000 }, async (t
   assert.equal(validPublicPost.ok, true)
   assert.equal(publicPostBody.success, true)
   assert.equal(typeof publicPostBody.data.message.sender_name, 'string')
-  assert.equal(publicPostBody.data.agent_reply, null)
+  const agentReply = publicPostBody.data.agent_reply
+  assert.equal(agentReply === null || typeof agentReply === 'object', true)
+  if (agentReply) {
+    assert.equal(agentReply.sender_type, 'agent')
+    assert.equal(agentReply.visibility, 'public')
+  }
 
   const publicReadAfter = await fetch(`${baseUrl}/api/chat/rooms/t_001/public?limit=20`)
   const publicReadBody = await publicReadAfter.json()

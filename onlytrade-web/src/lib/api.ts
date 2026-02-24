@@ -241,6 +241,8 @@ export const api = {
       speed: number
       max_chars: number
       voice_map: Record<string, string>
+      tone_modes?: string[]
+      tone_speed_map?: Record<string, number>
     }>(`${API_BASE}/chat/tts/config`)
     if (!result.success || !result.data) {
       throw new Error(result.message || '获取语音配置失败')
@@ -251,6 +253,8 @@ export const api = {
   async synthesizeRoomSpeech(payload: {
     room_id: string
     text: string
+    tone?: string
+    message_id?: string
   }): Promise<Blob> {
     const res = await fetch(`${API_BASE}/chat/tts`, {
       method: 'POST',

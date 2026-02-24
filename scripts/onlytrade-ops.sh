@@ -516,14 +516,14 @@ news_digest_us_run_once() {
 
 news_digest_cn_run_once() {
   if [ -x "$AKSHARE_PYTHON" ]; then
-    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+    "$AKSHARE_PYTHON" "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json" --limit-total 36 --limit-per-symbol 10 --hot-limit-per-category 8 --hot-limit-total 36
     return
   fi
   if command -v python3 >/dev/null 2>&1; then
-    python3 "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+    python3 "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json" --limit-total 36 --limit-per-symbol 10 --hot-limit-per-category 8 --hot-limit-total 36
     return
   fi
-  python "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json"
+  python "$REPO_ROOT/scripts/akshare/run_news_digest_cycle.py" --canonical-path "data/live/onlytrade/news_digest.cn-a.json" --limit-total 36 --limit-per-symbol 10 --hot-limit-per-category 8 --hot-limit-total 36
 }
 
 red_blue_cn_run_once() {

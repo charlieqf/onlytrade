@@ -200,6 +200,13 @@ export interface RoomStreamPacket {
   positions: Position[]
   decisions_latest: DecisionRecord[]
   decision_latest: DecisionRecord | null
+  public_chat_preview?: {
+    room_id: string
+    visibility: 'public'
+    messages: ChatMessage[]
+    count: number
+    last_ts_ms: number | null
+  }
   decision_audit_preview?: any
   decision_meta?: any
   market_overview?: {
@@ -520,6 +527,9 @@ export interface ChatMessage {
   visibility: ChatVisibility
   message_type: ChatMessageType
   agent_message_kind?: 'reply' | 'proactive' | 'narration'
+  generation_source?: string
+  generation_reason?: string
+  generation_tone?: 'calm' | 'focused' | 'energetic' | 'cautious' | 'neutral' | string
   text: string
   created_ts_ms: number
 }

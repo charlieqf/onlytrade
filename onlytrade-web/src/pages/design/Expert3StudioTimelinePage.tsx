@@ -215,12 +215,6 @@ export default function Expert3StudioTimelinePage(
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 overflow-y-auto px-3 py-2">
-            <div className="mb-2 rounded-lg border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-[11px] leading-snug text-white/85">
-              {language === 'zh'
-                ? '时间线聚合决策与聊天事件。点击决策事件可锁定图表 symbol 20 秒。'
-                : 'Timeline merges decisions and chat events. Tap decision events to lock chart symbol for 20s.'}
-            </div>
-
             <div className="space-y-1.5">
               {timeline.map((event, idx) => (
                 <button

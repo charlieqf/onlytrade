@@ -8,7 +8,18 @@ import { OFFICIAL_LINKS } from '../constants/branding'
 import { getDemoMode, isStaticDemoMode } from '../demo/staticDemo'
 import { isRegistrationEnabled } from '../lib/config'
 
-type Page = 'lobby' | 'room' | 'stream' | 'leaderboard' | 'login' | 'register'
+type Page =
+  | 'lobby'
+  | 'room'
+  | 'stream'
+  | 'streamOnly'
+  | 'leaderboard'
+  | 'login'
+  | 'register'
+  | 'expert1'
+  | 'expert2'
+  | 'expert3'
+  | 'story'
 
 interface HeaderBarProps {
   onLoginClick?: () => void

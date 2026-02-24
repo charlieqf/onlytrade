@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Expert1CommandDeckPage from './pages/design/Expert1CommandDeckPage'
 import Expert2MobileBroadcastPage from './pages/design/Expert2MobileBroadcastPage'
 import Expert3StudioTimelinePage from './pages/design/Expert3StudioTimelinePage'
+import StoryOralBroadcastPage from './pages/design/StoryOralBroadcastPage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -46,6 +47,7 @@ type Page =
   | 'expert1'
   | 'expert2'
   | 'expert3'
+  | 'story'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
@@ -93,6 +95,8 @@ function App() {
       return 'expert2'
     if (path === '/design/expert-3' || path === '/stream/studio-timeline')
       return 'expert3'
+    if (path === '/design/story-broadcast' || path === '/stream/story-broadcast')
+      return 'story'
     return 'lobby'
   }
 
@@ -118,6 +122,7 @@ function App() {
       expert1: '/stream/command-deck',
       expert2: '/stream/mobile-broadcast',
       expert3: '/stream/studio-timeline',
+      story: '/stream/story-broadcast',
     }
     const path = pathMap[page]
     if (path) {
@@ -145,6 +150,9 @@ function App() {
 
   // 从 slug 解析并匹配 trader
   const findTraderBySlug = (slug: string, traderList: TraderInfo[]) => {
+    const direct = traderList.find((t) => t.trader_id === slug)
+    if (direct) return direct
+
     // slug 格式: name-xxxx (xxxx 是 ID 前 4 位)
     const lastDashIndex = slug.lastIndexOf('-')
     if (lastDashIndex === -1) {
@@ -203,6 +211,11 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/design/story-broadcast' || path === '/stream/story-broadcast') {
+        setCurrentPage('story')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       }
       setRoute(path)
     }
@@ -253,7 +266,8 @@ function App() {
         currentPage === 'streamOnly' ||
         currentPage === 'expert1' ||
         currentPage === 'expert2' ||
-        currentPage === 'expert3') &&
+        currentPage === 'expert3' ||
+        currentPage === 'story') &&
         selectedTraderId
         ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
         : null,
@@ -272,7 +286,8 @@ function App() {
       currentPage === 'streamOnly' ||
       currentPage === 'expert1' ||
       currentPage === 'expert2' ||
-      currentPage === 'expert3') &&
+      currentPage === 'expert3' ||
+      currentPage === 'story') &&
     !!selectedTraderId
   const lastRoomStreamPacketEventTsRef = useRef<number>(0)
 
@@ -354,6 +369,7 @@ function App() {
         || currentPage === 'expert1'
         || currentPage === 'expert2'
         || currentPage === 'expert3'
+        || currentPage === 'story'
         ? 'replay-runtime-status'
         : null,
       api.getReplayRuntimeStatus,
@@ -460,6 +476,8 @@ function App() {
       setCurrentPage('expert2')
     } else if (route === '/design/expert-3' || route === '/stream/studio-timeline') {
       setCurrentPage('expert3')
+    } else if (route === '/design/story-broadcast' || route === '/stream/story-broadcast') {
+      setCurrentPage('story')
     }
   }, [route])
 
@@ -537,6 +555,26 @@ function App() {
   if (currentPage === 'expert3') {
     return selectedTrader ? (
       <Expert3StudioTimelinePage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'story') {
+    return selectedTrader ? (
+      <StoryOralBroadcastPage
         selectedTrader={selectedTrader}
         streamPacket={streamPacket}
         roomSseState={roomSseState}

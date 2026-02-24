@@ -47,6 +47,26 @@ type Page =
   | 'expert2'
   | 'expert3'
 
+const PATH_BASE =
+  window.location.pathname === '/onlytrade' ||
+  window.location.pathname.startsWith('/onlytrade/')
+    ? '/onlytrade'
+    : ''
+
+function toAppPath(pathname: string): string {
+  const raw = String(pathname || '')
+  if (!PATH_BASE) return raw || '/'
+  if (!raw.startsWith(PATH_BASE)) return raw || '/'
+  const rest = raw.slice(PATH_BASE.length)
+  if (!rest) return '/'
+  return rest.startsWith('/') ? rest : `/${rest}`
+}
+
+function toBrowserPath(appPath: string): string {
+  const normalized = appPath.startsWith('/') ? appPath : `/${appPath}`
+  return PATH_BASE ? `${PATH_BASE}${normalized}` : normalized
+}
+
 function App() {
   const { language, setLanguage } = useLanguage()
   const { user, logout, isLoading } = useAuth()
@@ -55,11 +75,11 @@ function App() {
   const loginRequired =
     (import.meta.env.VITE_REQUIRE_LOGIN || 'false').toLowerCase() === 'true'
   const hasRuntimeAccess = !loginRequired || !!user
-  const [route, setRoute] = useState(window.location.pathname)
+  const [route, setRoute] = useState(toAppPath(window.location.pathname))
 
   // Resolve page from current path.
   const getInitialPage = (): Page => {
-    const path = window.location.pathname
+    const path = toAppPath(window.location.pathname)
 
     if (path === '/' || path === '' || path === '/lobby') return 'lobby'
     if (path === '/leaderboard' || path === '/competition') return 'leaderboard'
@@ -101,7 +121,7 @@ function App() {
     }
     const path = pathMap[page]
     if (path) {
-      window.history.pushState({}, '', path)
+      window.history.pushState({}, '', toBrowserPath(path))
       setRoute(path)
       setCurrentPage(page)
     }
@@ -145,7 +165,7 @@ function App() {
   // Keep page state in sync with URL.
   useEffect(() => {
     const handleRouteChange = () => {
-      const path = window.location.pathname
+      const path = toAppPath(window.location.pathname)
       const params = new URLSearchParams(window.location.search)
       const traderParam = params.get('trader')
 
@@ -621,7 +641,7 @@ function App() {
                     }
                   }}
                   onNavigateToLobby={() => {
-                    window.history.pushState({}, '', '/lobby')
+                    window.history.pushState({}, '', toBrowserPath('/lobby'))
                     setRoute('/lobby')
                     setCurrentPage('lobby')
                   }}

@@ -465,6 +465,24 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               >
                 {bgmEnabled ? 'BGM on' : 'BGM off'}
               </button>
+              <input
+                type="range"
+                min={0}
+                max={0.45}
+                step={0.01}
+                value={Math.max(0, Math.min(bgmVolume, 0.45))}
+                onInput={(event) => {
+                  const target = event.target as HTMLInputElement
+                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
+                }}
+                onChange={(event) => {
+                  const target = event.target as HTMLInputElement
+                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
+                }}
+                className="h-4 w-20 accent-cyan-300"
+                style={{ touchAction: 'pan-x' }}
+                aria-label="BGM volume"
+              />
               <div className="ml-auto text-[10px] font-mono text-white/70">
                 {Math.round(Math.max(0, Math.min(bgmVolume, 0.45)) * 100)}%
               </div>
@@ -490,50 +508,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
                 aria-label="Narration progress"
               />
             </div>
-
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-[10px] font-mono text-white/70">BGM</span>
-              <input
-                type="range"
-                min={0}
-                max={0.45}
-                step={0.01}
-                value={Math.max(0, Math.min(bgmVolume, 0.45))}
-                onInput={(event) => {
-                  const target = event.target as HTMLInputElement
-                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
-                }}
-                onChange={(event) => {
-                  const target = event.target as HTMLInputElement
-                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
-                }}
-                className="h-4 w-28 accent-cyan-300"
-                style={{ touchAction: 'pan-x' }}
-                aria-label="BGM volume"
-              />
-              <span className="text-[10px] font-mono text-white/65">
-                {formatClock(narrationTimeSec)} / {formatClock(narrationDurationSec || manifest.duration_sec)}
-              </span>
+            <div className="mt-2 text-right text-[10px] font-mono text-white/65">
+              {formatClock(narrationTimeSec)} / {formatClock(narrationDurationSec || manifest.duration_sec)}
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-hidden bg-[#0d0d0d]">
-            <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/45">
-              <span>{language === 'zh' ? '房间模式' : 'Room mode'}</span>
-              <span>{language === 'zh' ? '说书专场' : 'Story only'}</span>
-            </div>
-            <div className="h-[calc(100%-30px)] overflow-y-auto px-3 py-3">
-              <div className="rounded border border-white/10 bg-white/[0.03] p-3 text-[11px] text-white/75">
-                <div className="font-mono text-[10px] uppercase tracking-wider text-white/45">
-                  Story Assets
-                </div>
-                <div className="mt-1">scene set: {sceneFiles.length}</div>
-                <div>subtitle cues: {subtitleCues.length}</div>
-                <div>narration: {manifest.narration_file}</div>
-                <div>bgm: {manifest.bgm_file}</div>
-              </div>
-            </div>
-          </div>
+          <div className="min-h-0 flex-1 bg-[#0d0d0d]" />
         </div>
       </div>
     </div>

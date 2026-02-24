@@ -105,7 +105,7 @@ export function PhoneRealtimeKlineChart({
       rightPriceScale: {
         borderColor: '#2B3139',
         borderVisible: false,
-        scaleMargins: { top: 0.06, bottom: 0.22 },
+        scaleMargins: { top: 0.06, bottom: 0.3 },
       },
       timeScale: {
         borderVisible: false,
@@ -127,13 +127,19 @@ export function PhoneRealtimeKlineChart({
       borderDownColor: '#00B070',
       wickUpColor: '#FF4444',
       wickDownColor: '#00B070',
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     })
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
-      priceScaleId: '',
+      priceScaleId: 'volume',
       lastValueVisible: false,
       priceLineVisible: false,
+    })
+
+    chart.priceScale('volume').applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.72, bottom: 0 },
     })
 
     const ro = new ResizeObserver((entries) => {

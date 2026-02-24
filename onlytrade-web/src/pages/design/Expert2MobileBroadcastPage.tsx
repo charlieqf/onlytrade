@@ -86,9 +86,9 @@ export default function Expert2MobileBroadcastPage(
         <div className="relative" style={{ height: '56vh' }}>
           <PhoneRealtimeKlineChart
             symbol={focusedSymbol}
-            interval="1d"
-            limit={30}
-            refreshMs={30_000}
+            interval="1m"
+            limit={240}
+            refreshMs={12_000}
             height="100%"
           />
 

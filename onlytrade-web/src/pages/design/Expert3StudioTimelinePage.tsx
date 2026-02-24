@@ -199,9 +199,9 @@ export default function Expert3StudioTimelinePage(
         <div className="relative shrink-0 border-b border-white/5" style={{ height: '30vh' }}>
           <PhoneRealtimeKlineChart
             symbol={activeSymbol}
-            interval="1d"
-            limit={30}
-            refreshMs={30_000}
+            interval="1m"
+            limit={240}
+            refreshMs={12_000}
             height="100%"
           />
           <PhoneAvatarSlot

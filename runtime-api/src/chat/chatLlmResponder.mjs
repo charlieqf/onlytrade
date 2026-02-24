@@ -19,6 +19,11 @@ function trimGeneratedText(value, maxLen = 600) {
   return cleaned.slice(0, Math.max(16, maxLen))
 }
 
+function supportsTemperature(model) {
+  const name = String(model || '').trim().toLowerCase()
+  return !name.startsWith('gpt-5')
+}
+
 function styleHint(roomAgent) {
   const bits = []
   const tradingStyle = String(roomAgent?.tradingStyle || '').trim()
@@ -49,6 +54,10 @@ function buildSystemPrompt({ roomAgent, kind }) {
   const holdReasonRule = (kind === 'proactive' || kind === 'narration')
     ? 'When latest_decision.action is hold, explain your thinking process briefly (signal + risk), not only "hold".'
     : ''
+  const varietyRule = 'Avoid repeating the same opener style used in recent_agent_messages; vary angle and wording naturally.'
+  const casualRule = (kind === 'reply' || kind === 'proactive')
+    ? 'You may add one light casual host line (mindset/life rhythm/risk discipline) in about 30% of messages, while keeping market relevance first when news/context exists.'
+    : ''
   const style = styleHint(roomAgent)
 
   return [
@@ -60,6 +69,8 @@ function buildSystemPrompt({ roomAgent, kind }) {
     topicRule,
     positionRule,
     holdReasonRule,
+    varietyRule,
+    casualRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
 }
@@ -137,6 +148,9 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
               : null,
           }
           : null,
+        casual_topics: Array.isArray(ctx.casual_topics)
+          ? ctx.casual_topics.map((t) => String(t || '').slice(0, 60)).filter(Boolean).slice(0, 8)
+          : [],
       }
       : null,
     history_tail: Array.isArray(historyContext)
@@ -144,6 +158,12 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
         sender_type: item?.sender_type,
         text: String(item?.text || '').slice(0, 80),
       }))
+      : [],
+    recent_agent_messages: Array.isArray(historyContext)
+      ? historyContext
+        .filter((item) => String(item?.sender_type || '').toLowerCase() === 'agent')
+        .slice(-6)
+        .map((item) => String(item?.text || '').slice(0, 80))
       : [],
   }
   return JSON.stringify(payload)
@@ -156,6 +176,9 @@ export function createOpenAIChatResponder({
   timeoutMs = 7000,
   maxOutputTokens = 140,
   maxTextLen = 600,
+  temperatureReply = 0.56,
+  temperatureProactive = 0.68,
+  temperatureNarration = 0.45,
 } = {}) {
   if (!apiKey) return null
 
@@ -172,17 +195,20 @@ export function createOpenAIChatResponder({
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 7000))
 
+    let temperature = Number(temperatureReply)
+    if (kind === 'proactive') {
+      temperature = Number(temperatureProactive)
+    } else if (kind === 'narration') {
+      temperature = Number(temperatureNarration)
+    }
+    if (!Number.isFinite(temperature)) temperature = 0.56
+    temperature = Math.max(0.1, Math.min(temperature, 1))
+
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
+      const callModel = async (maxCompletionTokens) => {
+        const requestBody = {
           model,
-          temperature: 0.4,
-          max_completion_tokens: Math.max(80, Math.floor(toNumber(maxOutputTokens, 140))),
+          max_completion_tokens: Math.max(80, Math.floor(toNumber(maxCompletionTokens, maxOutputTokens))),
           messages: [
             { role: 'system', content: buildSystemPrompt({ roomAgent, kind }) },
             {
@@ -197,18 +223,46 @@ export function createOpenAIChatResponder({
               }),
             },
           ],
-        }),
-        signal: controller.signal,
-      })
+        }
+        if (supportsTemperature(model)) {
+          requestBody.temperature = temperature
+        }
 
-      const text = await response.text()
-      if (!response.ok) {
-        throw new Error(`openai_http_${response.status}:${text.slice(0, 160)}`)
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        })
+
+        const text = await response.text()
+        if (!response.ok) {
+          throw new Error(`openai_http_${response.status}:${text.slice(0, 160)}`)
+        }
+        const parsed = parseJson(text)
+        const choice = parsed?.choices?.[0] || null
+        const content = choice?.message?.content
+        const finishReason = String(choice?.finish_reason || '').trim().toLowerCase()
+        return {
+          content: typeof content === 'string' ? content : '',
+          finishReason,
+        }
       }
 
-      const parsed = parseJson(text)
-      const content = parsed?.choices?.[0]?.message?.content
-      if (typeof content !== 'string' || !content.trim()) {
+      const baseMaxTokens = Math.max(80, Math.floor(toNumber(maxOutputTokens, 140)))
+      let result = await callModel(baseMaxTokens)
+      if (!String(result?.content || '').trim()) {
+        const isGpt5Family = String(model || '').trim().toLowerCase().startsWith('gpt-5')
+        if (isGpt5Family && result?.finishReason === 'length') {
+          result = await callModel(Math.min(1800, Math.max(baseMaxTokens + 120, baseMaxTokens * 2)))
+        }
+      }
+
+      const content = String(result?.content || '').trim()
+      if (!content) {
         throw new Error('openai_empty_message')
       }
 

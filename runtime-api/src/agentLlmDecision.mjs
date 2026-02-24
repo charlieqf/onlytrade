@@ -7,6 +7,16 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+function supportsTemperature(model) {
+  const name = String(model || '').trim().toLowerCase()
+  return !name.startsWith('gpt-5')
+}
+
+function supportsJsonSchemaResponseFormat(model) {
+  const name = String(model || '').trim().toLowerCase()
+  return !name.startsWith('gpt-5')
+}
+
 function toAction(value) {
   const normalized = String(value || '').trim().toLowerCase()
   if (normalized === 'buy' || normalized === 'sell' || normalized === 'hold') {
@@ -468,11 +478,13 @@ export function createOpenAIAgentDecider({
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs))
 
+    const requiresManualJsonMode = !supportsJsonSchemaResponseFormat(model)
     const systemPrompt = [
       universalInstruction({ tokenSaver: devTokenSaver }),
       styleInstructionForTrader(trader, { tokenSaver: devTokenSaver }),
       'Return exactly one decision inside decisions[0].',
       'Do not include markdown fences.',
+      requiresManualJsonMode ? 'Output must be valid JSON object only with key "decisions".' : '',
     ].join(' ')
 
     const candidateSymbols = Array.isArray(payload?.candidate_set?.symbols)
@@ -550,28 +562,34 @@ export function createOpenAIAgentDecider({
     }
 
     try {
+      const requestBody = {
+        model,
+        max_completion_tokens: Math.max(80, Math.floor(toNumber(maxOutputTokens, 180))),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: userPrompt,
+          },
+        ],
+      }
+      if (supportsJsonSchemaResponseFormat(model)) {
+        requestBody.response_format = {
+          type: 'json_schema',
+          json_schema: decisionSchema,
+        }
+      }
+      if (supportsTemperature(model)) {
+        requestBody.temperature = devTokenSaver ? 0 : 0.15
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model,
-          temperature: devTokenSaver ? 0 : 0.15,
-          max_completion_tokens: Math.max(80, Math.floor(toNumber(maxOutputTokens, 180))),
-          response_format: {
-            type: 'json_schema',
-            json_schema: decisionSchema,
-          },
-          messages: [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: userPrompt,
-            },
-          ],
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
 

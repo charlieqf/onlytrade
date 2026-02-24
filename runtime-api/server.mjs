@@ -118,6 +118,8 @@ const ROOM_EVENTS_PACKET_BUILD_DELAY_MS = ROOM_EVENTS_TEST_MODE
 const ROOM_EVENTS_COLLECT_STATS = ROOM_EVENTS_TEST_MODE
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+const AGENT_OPENAI_MODEL = process.env.AGENT_OPENAI_MODEL || OPENAI_MODEL
+const CHAT_OPENAI_MODEL = process.env.CHAT_OPENAI_MODEL || OPENAI_MODEL
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
 const AGENT_LLM_TIMEOUT_MS = Math.max(1000, Number(process.env.AGENT_LLM_TIMEOUT_MS || 7000))
 const AGENT_LLM_ENABLED = String(process.env.AGENT_LLM_ENABLED || 'true').toLowerCase() !== 'false'
@@ -2823,7 +2825,7 @@ let killSwitchState = {
 const llmDecider = AGENT_LLM_ENABLED
   ? createOpenAIAgentDecider({
     apiKey: OPENAI_API_KEY,
-    model: OPENAI_MODEL,
+    model: AGENT_OPENAI_MODEL,
     baseUrl: OPENAI_BASE_URL,
     timeoutMs: AGENT_LLM_TIMEOUT_MS,
     devTokenSaver: AGENT_LLM_DEV_TOKEN_SAVER,
@@ -2833,7 +2835,7 @@ const llmDecider = AGENT_LLM_ENABLED
 const chatLlmResponder = CHAT_LLM_ENABLED
   ? createOpenAIChatResponder({
     apiKey: OPENAI_API_KEY,
-    model: OPENAI_MODEL,
+    model: CHAT_OPENAI_MODEL,
     baseUrl: OPENAI_BASE_URL,
     timeoutMs: CHAT_LLM_TIMEOUT_MS,
     maxOutputTokens: CHAT_LLM_MAX_OUTPUT_TOKENS,
@@ -6192,6 +6194,7 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       proactive_news_burst_fresh_ms: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
       proactive_news_burst_min_priority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
       proactive_llm_enabled: !!chatLlmResponder,
+      proactive_llm_model: chatLlmResponder ? CHAT_OPENAI_MODEL : null,
       proactive_llm_max_concurrency: CHAT_PROACTIVE_LLM_MAX_CONCURRENCY,
       proactive_llm_in_flight: proactiveLlmInFlight,
       agent_max_chars: CHAT_AGENT_MAX_CHARS,
@@ -6214,7 +6217,7 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
     llm: {
       enabled: !!llmDecider,
       effective_enabled: !!llmDecider && !killSwitchState.active,
-      model: llmDecider ? OPENAI_MODEL : null,
+      model: llmDecider ? AGENT_OPENAI_MODEL : null,
       token_saver: llmDecider ? AGENT_LLM_DEV_TOKEN_SAVER : null,
       max_output_tokens: llmDecider ? AGENT_LLM_MAX_OUTPUT_TOKENS : null,
     },
@@ -7025,7 +7028,7 @@ app.listen(PORT, () => {
   const killSwitchInfo = `kill_switch=${killSwitchState.active ? 'ACTIVE' : 'inactive'}`
   const resetInfo = `memory_reset_on_boot=${RESET_AGENT_MEMORY_ON_BOOT}`
   const llmInfo = llmDecider
-    ? `llm=openai model=${OPENAI_MODEL} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
+    ? `llm=openai decision_model=${AGENT_OPENAI_MODEL} chat_model=${chatLlmResponder ? CHAT_OPENAI_MODEL : 'disabled'} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
   const ttsInfo = CHAT_TTS_ENABLED && OPENAI_API_KEY
     ? `chat_tts=enabled model=${CHAT_TTS_MODEL} format=${CHAT_TTS_RESPONSE_FORMAT} speed=${CHAT_TTS_SPEED}`

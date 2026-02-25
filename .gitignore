@@ -19,6 +19,9 @@ yarn-error.log*
 # runtime memory snapshots
 data/agent-memory/*.json
 data/runtime/*.json
+data/audit/decision_audit/
+data/decisions/
+runtime-api/data/
 
 # live data outputs (generated)
 data/live/

@@ -124,6 +124,46 @@ All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneS
   - `GET /api/chat/tts/config`
   - `POST /api/chat/tts` with body `{ "room_id": "<trader_id>", "text": "..." }`
 
+### Provider routing (room-level)
+
+- Room TTS provider can be switched without UI controls using ops CLI only.
+- Supported providers:
+  - `openai`
+  - `selfhosted` (`http://101.227.82.130:13002/tts`, default media type `wav`)
+- Persisted profile endpoint set:
+  - `GET /api/chat/tts/profile?room_id=<trader_id>`
+  - `POST /api/chat/tts/profile` (token-protected)
+  - `DELETE /api/chat/tts/profile?room_id=<trader_id>` (token-protected)
+- Runtime response headers for observability:
+  - `x-tts-provider`
+  - `x-tts-voice`
+  - `x-tts-speed`
+  - `x-tts-model`
+
+### Hosted TTS validation baseline (2026-02-26)
+
+- Endpoint: `http://101.227.82.130:13002/tts`
+- Payload mode: `streaming_mode=true`, voice `xuanyijiangjie`
+- Format results:
+  - `media_type=wav` -> `HTTP 200`, `audio/wav`, first-byte ~`1.30s`, non-empty stream
+  - `media_type=raw` -> `HTTP 200`, `audio/raw`, first-byte ~`1.47s`, non-empty stream
+  - `media_type=mp3` -> `HTTP 400` (unsupported in current backend)
+- Runtime default for self-hosted path is `wav`.
+- Known good room voice id for self-hosted routing: `xuanyijiangjie` (override per room with `tts-set --voice`).
+
+### Ops commands (local / SSH wrapper)
+
+```bash
+bash scripts/onlytrade-ops.sh tts-status t_003
+bash scripts/onlytrade-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
+bash scripts/onlytrade-ops.sh tts-test t_003 --text "语音连通测试"
+bash scripts/onlytrade-ops.sh tts-clear t_003
+
+bash scripts/onlytrade-ssh-ops.sh tts-status t_003
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
+bash scripts/onlytrade-ssh-ops.sh tts-test t_003
+```
+
 ## WeCom Browser Notes
 
 - WeCom webview can block autoplay until first interaction.

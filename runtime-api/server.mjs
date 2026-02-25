@@ -220,6 +220,9 @@ const CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY = Math.max(
   Math.min(5, Number(process.env.CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY || 3))
 )
 const CHAT_TTS_ENABLED = String(process.env.CHAT_TTS_ENABLED || 'false').toLowerCase() === 'true'
+const CHAT_TTS_PROVIDER_DEFAULT = String(process.env.CHAT_TTS_PROVIDER_DEFAULT || 'openai').trim().toLowerCase() === 'selfhosted'
+  ? 'selfhosted'
+  : 'openai'
 const CHAT_TTS_MODEL = String(process.env.CHAT_TTS_MODEL || 'tts-1-hd').trim() || 'tts-1-hd'
 const CHAT_TTS_RESPONSE_FORMAT = String(process.env.CHAT_TTS_RESPONSE_FORMAT || 'mp3').trim().toLowerCase()
 const CHAT_TTS_MAX_CHARS = Math.max(48, Math.min(600, Math.floor(Number(process.env.CHAT_TTS_MAX_CHARS || 220))))
@@ -252,6 +255,19 @@ const CHAT_TTS_VOICE_FEMALE_1 = String(process.env.CHAT_TTS_VOICE_FEMALE_1 || 'n
 const CHAT_TTS_VOICE_FEMALE_2 = String(process.env.CHAT_TTS_VOICE_FEMALE_2 || 'shimmer').trim() || 'shimmer'
 const CHAT_TTS_VOICE_MALE_1 = String(process.env.CHAT_TTS_VOICE_MALE_1 || 'onyx').trim() || 'onyx'
 const CHAT_TTS_VOICE_MALE_2 = String(process.env.CHAT_TTS_VOICE_MALE_2 || 'echo').trim() || 'echo'
+const CHAT_TTS_SELFHOSTED_URL = String(process.env.CHAT_TTS_SELFHOSTED_URL || 'http://101.227.82.130:13002/tts').trim()
+const CHAT_TTS_SELFHOSTED_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.CHAT_TTS_SELFHOSTED_TIMEOUT_MS || 8000)
+)
+const CHAT_TTS_SELFHOSTED_MEDIA_TYPE = (() => {
+  const mediaType = String(process.env.CHAT_TTS_SELFHOSTED_MEDIA_TYPE || 'wav').trim().toLowerCase()
+  if (mediaType === 'raw' || mediaType === 'mp3' || mediaType === 'wav') {
+    return mediaType
+  }
+  return 'wav'
+})()
+const CHAT_TTS_SELFHOSTED_VOICE_DEFAULT = String(process.env.CHAT_TTS_SELFHOSTED_VOICE_DEFAULT || 'xuanyijiangjie').trim() || 'xuanyijiangjie'
 
 const MARKET_OVERVIEW_PATH_CN = path.resolve(
   ROOT_DIR,
@@ -332,6 +348,10 @@ const DAILY_HISTORY_PATH = path.join(
 )
 
 const KILL_SWITCH_PATH = path.join(ROOT_DIR, 'data', 'runtime', 'kill-switch.json')
+const CHAT_TTS_PROFILE_PATH = path.resolve(
+  __dirname,
+  process.env.CHAT_TTS_PROFILE_PATH || path.join('data', 'chat', 'tts_profiles.json')
+)
 
 const AGENTS_DIR = path.resolve(
   ROOT_DIR,
@@ -2790,6 +2810,7 @@ let betsLedgerState = {
   days: {},
   credits_by_session: {},
 }
+let ttsProfilesState = createDefaultTtsProfilesState()
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
 const roomEventBufferByRoom = new Map()
@@ -3707,10 +3728,36 @@ function sanitizeTtsText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
 function ttsContentType(format) {
   const key = String(format || '').trim().toLowerCase()
   if (key === 'wav') return 'audio/wav'
+  if (key === 'raw') return 'audio/raw'
   if (key === 'opus') return 'audio/ogg'
   if (key === 'aac') return 'audio/aac'
   if (key === 'flac') return 'audio/flac'
   return 'audio/mpeg'
+}
+
+function clampTtsSpeed(value, fallback = CHAT_TTS_SPEED) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    const safeFallback = Number(fallback)
+    if (Number.isFinite(safeFallback)) return Math.max(0.25, Math.min(safeFallback, 4))
+    return 1
+  }
+  return Math.max(0.25, Math.min(parsed, 4))
+}
+
+function normalizeTtsProvider(value, fallback = CHAT_TTS_PROVIDER_DEFAULT) {
+  const provider = String(value || '').trim().toLowerCase()
+  if (provider === 'selfhosted') return 'selfhosted'
+  if (provider === 'openai') return 'openai'
+  if (!fallback) return ''
+  return fallback === 'selfhosted' ? 'selfhosted' : 'openai'
+}
+
+function normalizeTtsFallbackProvider(value, fallback = 'none') {
+  const provider = String(value || '').trim().toLowerCase()
+  if (provider === 'openai') return 'openai'
+  if (provider === 'none') return 'none'
+  return fallback === 'openai' ? 'openai' : 'none'
 }
 
 function ttsVoiceEnvKeyByTraderId(traderId) {
@@ -3719,6 +3766,14 @@ function ttsVoiceEnvKeyByTraderId(traderId) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '_')
   return safe ? `CHAT_TTS_VOICE_${safe}` : ''
+}
+
+function ttsSelfHostedVoiceEnvKeyByTraderId(traderId) {
+  const safe = String(traderId || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '_')
+  return safe ? `CHAT_TTS_SELFHOSTED_VOICE_${safe}` : ''
 }
 
 function normalizeTtsTone(value) {
@@ -3754,10 +3809,18 @@ function resolveTtsVoiceForTraderId(traderId) {
   return CHAT_TTS_VOICE_FEMALE_1
 }
 
+function resolveSelfHostedTtsVoiceForTraderId(traderId) {
+  const safeTraderId = String(traderId || '').trim().toLowerCase()
+  const dynamicKey = ttsSelfHostedVoiceEnvKeyByTraderId(safeTraderId)
+  const dynamicVoice = dynamicKey ? String(process.env[dynamicKey] || '').trim() : ''
+  if (dynamicVoice) return dynamicVoice
+  return CHAT_TTS_SELFHOSTED_VOICE_DEFAULT
+}
+
 function resolveTtsProfileForMessage({ traderId, tone = '', seed = '' } = {}) {
   void tone
   const baseVoice = resolveTtsVoiceForTraderId(traderId)
-  const safeSeed = String(seed || '').trim() || `${Date.now()}|${Math.random().toString(36).slice(2, 8)}`
+  const safeSeed = String(seed || '').trim() || String(traderId || 'room').trim() || 'room'
   const derivedTone = 'energetic'
   const baseSpeed = Number(CHAT_TTS_TONE_SPEED_ENERGETIC || CHAT_TTS_SPEED || 1)
   const speedJitter = ((simpleHash(`${safeSeed}|tts-energy`) % 5) - 2) * 0.01
@@ -3769,20 +3832,203 @@ function resolveTtsProfileForMessage({ traderId, tone = '', seed = '' } = {}) {
   }
 }
 
-function ttsVoicesSummary() {
+function createDefaultTtsProfilesState() {
   return {
-    t_001: resolveTtsVoiceForTraderId('t_001'),
-    t_002: resolveTtsVoiceForTraderId('t_002'),
-    t_003: resolveTtsVoiceForTraderId('t_003'),
-    t_004: resolveTtsVoiceForTraderId('t_004'),
+    schema_version: 'chat.tts.profile.v1',
+    global_default_provider: CHAT_TTS_PROVIDER_DEFAULT,
+    rooms: {},
+    updated_ts_ms: Date.now(),
+  }
+}
+
+function normalizeTtsRoomOverride(value) {
+  if (!value || typeof value !== 'object') return null
+  const provider = normalizeTtsProvider(value.provider, '')
+  if (provider !== 'openai' && provider !== 'selfhosted') return null
+
+  const voice = String(value.voice || '').trim()
+  let speed = null
+  if (value.speed !== null && value.speed !== undefined && String(value.speed).trim() !== '') {
+    const parsedSpeed = Number(value.speed)
+    speed = Number.isFinite(parsedSpeed) ? clampTtsSpeed(parsedSpeed, CHAT_TTS_SPEED) : null
+  }
+  const fallbackProvider = normalizeTtsFallbackProvider(value.fallback_provider, provider === 'selfhosted' ? 'openai' : 'none')
+
+  return {
+    provider,
+    voice,
+    speed,
+    fallback_provider: fallbackProvider,
+    updated_ts_ms: Number.isFinite(Number(value.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+function normalizeTtsProfilesState(value) {
+  const fallback = createDefaultTtsProfilesState()
+  if (!value || typeof value !== 'object') return fallback
+
+  const rooms = {}
+  if (value.rooms && typeof value.rooms === 'object') {
+    for (const [roomIdRaw, row] of Object.entries(value.rooms)) {
+      const roomId = String(roomIdRaw || '').trim().toLowerCase()
+      if (!roomId) continue
+      const normalized = normalizeTtsRoomOverride(row)
+      if (!normalized) continue
+      rooms[roomId] = normalized
+    }
+  }
+
+  return {
+    schema_version: 'chat.tts.profile.v1',
+    global_default_provider: normalizeTtsProvider(value.global_default_provider, CHAT_TTS_PROVIDER_DEFAULT),
+    rooms,
+    updated_ts_ms: Number.isFinite(Number(value.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+function ttsProviderCapabilities() {
+  return {
+    openai: {
+      enabled: CHAT_TTS_ENABLED && !!OPENAI_API_KEY,
+      model: CHAT_TTS_MODEL,
+      response_format: CHAT_TTS_RESPONSE_FORMAT,
+    },
+    selfhosted: {
+      enabled: CHAT_TTS_ENABLED && !!CHAT_TTS_SELFHOSTED_URL,
+      model: 'selfhosted',
+      response_format: CHAT_TTS_SELFHOSTED_MEDIA_TYPE,
+      timeout_ms: CHAT_TTS_SELFHOSTED_TIMEOUT_MS,
+      endpoint: CHAT_TTS_SELFHOSTED_URL,
+    },
+  }
+}
+
+function isTtsProviderEnabled(provider) {
+  const capabilities = ttsProviderCapabilities()
+  if (provider === 'selfhosted') return !!capabilities.selfhosted.enabled
+  return !!capabilities.openai.enabled
+}
+
+function effectiveTtsDefaultProvider() {
+  const preferred = normalizeTtsProvider(ttsProfilesState.global_default_provider, CHAT_TTS_PROVIDER_DEFAULT)
+  if (isTtsProviderEnabled(preferred)) return preferred
+  if (isTtsProviderEnabled('openai')) return 'openai'
+  if (isTtsProviderEnabled('selfhosted')) return 'selfhosted'
+  return preferred
+}
+
+function knownTtsRoomIds() {
+  const ids = new Set()
+  for (const trader of DEFAULT_TRADERS) {
+    const roomId = String(trader?.trader_id || '').trim().toLowerCase()
+    if (roomId) ids.add(roomId)
+  }
+  for (const trader of getRegisteredTraders()) {
+    const roomId = String(trader?.trader_id || '').trim().toLowerCase()
+    if (roomId) ids.add(roomId)
+  }
+  for (const roomId of Object.keys(ttsProfilesState.rooms || {})) {
+    const safeRoomId = String(roomId || '').trim().toLowerCase()
+    if (safeRoomId) ids.add(safeRoomId)
+  }
+  return [...ids].sort((a, b) => a.localeCompare(b))
+}
+
+function resolveDefaultVoiceByProvider({ provider, roomId, tone = '', seed = '' } = {}) {
+  if (provider === 'selfhosted') {
+    return resolveSelfHostedTtsVoiceForTraderId(roomId)
+  }
+  const openAiProfile = resolveTtsProfileForMessage({ traderId: roomId, tone, seed: seed || roomId })
+  return openAiProfile.voice
+}
+
+function resolveEffectiveTtsProfileForRoom({ roomId, tone = '', seed = '' } = {}) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const openAiProfile = resolveTtsProfileForMessage({
+    traderId: safeRoomId,
+    tone,
+    seed: seed || safeRoomId,
+  })
+  const defaultProvider = effectiveTtsDefaultProvider()
+  const defaultFallback = defaultProvider === 'selfhosted' ? 'openai' : 'none'
+  const override = safeRoomId ? normalizeTtsRoomOverride(ttsProfilesState.rooms?.[safeRoomId]) : null
+
+  const provider = normalizeTtsProvider(override?.provider, defaultProvider)
+  const hasOverrideSpeed = override
+    && override.speed !== null
+    && override.speed !== undefined
+    && String(override.speed).trim() !== ''
+  const speed = hasOverrideSpeed
+    ? clampTtsSpeed(override.speed, openAiProfile.speed)
+    : openAiProfile.speed
+  const voice = String(override?.voice || '').trim() || resolveDefaultVoiceByProvider({
+    provider,
+    roomId: safeRoomId,
+    tone,
+    seed: seed || safeRoomId,
+  })
+  const fallbackProvider = normalizeTtsFallbackProvider(override?.fallback_provider, defaultFallback)
+
+  return {
+    room_id: safeRoomId,
+    provider,
+    voice,
+    speed,
+    tone: openAiProfile.tone,
+    fallback_provider: fallbackProvider,
+    default_provider: defaultProvider,
+    model: provider === 'selfhosted' ? 'selfhosted' : CHAT_TTS_MODEL,
+    response_format: provider === 'selfhosted' ? CHAT_TTS_SELFHOSTED_MEDIA_TYPE : CHAT_TTS_RESPONSE_FORMAT,
+    override,
+  }
+}
+
+function ttsVoicesSummary() {
+  const summary = {}
+  for (const roomId of knownTtsRoomIds()) {
+    const profile = resolveEffectiveTtsProfileForRoom({ roomId, seed: roomId })
+    summary[roomId] = profile.voice
+  }
+  return summary
+}
+
+function ttsRoomProfilesSummary() {
+  const summary = {}
+  for (const roomId of knownTtsRoomIds()) {
+    const profile = resolveEffectiveTtsProfileForRoom({ roomId, seed: roomId })
+    summary[roomId] = {
+      provider: profile.provider,
+      voice: profile.voice,
+      speed: profile.speed,
+      fallback_provider: profile.fallback_provider,
+      model: profile.model,
+      response_format: profile.response_format,
+      has_override: !!profile.override,
+    }
+  }
+  return summary
+}
+
+async function persistTtsProfilesState() {
+  const dir = path.dirname(CHAT_TTS_PROFILE_PATH)
+  await mkdir(dir, { recursive: true })
+  const tmpPath = `${CHAT_TTS_PROFILE_PATH}.tmp`
+  await writeFile(tmpPath, JSON.stringify(ttsProfilesState, null, 2), 'utf8')
+  await rename(tmpPath, CHAT_TTS_PROFILE_PATH)
+}
+
+async function loadTtsProfilesState() {
+  try {
+    const raw = await readFile(CHAT_TTS_PROFILE_PATH, 'utf8')
+    ttsProfilesState = normalizeTtsProfilesState(JSON.parse(raw))
+  } catch {
+    ttsProfilesState = createDefaultTtsProfilesState()
   }
 }
 
 async function synthesizeOpenAITts({ text, voice, speed = CHAT_TTS_SPEED }) {
   const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/audio/speech`
-  const safeSpeed = Number.isFinite(Number(speed))
-    ? Math.max(0.25, Math.min(Number(speed), 4))
-    : CHAT_TTS_SPEED
+  const safeSpeed = clampTtsSpeed(speed, CHAT_TTS_SPEED)
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -3808,7 +4054,146 @@ async function synthesizeOpenAITts({ text, voice, speed = CHAT_TTS_SPEED }) {
     throw new Error('openai_tts_empty_audio')
   }
 
-  return Buffer.from(arrayBuffer)
+  return {
+    audioBuffer: Buffer.from(arrayBuffer),
+    contentType: ttsContentType(CHAT_TTS_RESPONSE_FORMAT),
+    model: CHAT_TTS_MODEL,
+    response_format: CHAT_TTS_RESPONSE_FORMAT,
+  }
+}
+
+function buildSelfHostedTtsPayload({ text, voice, speed }) {
+  const safeText = (() => {
+    const base = String(text || '').trim()
+    if (base.length >= 10) return base
+    const padded = `${base}。继续关注盘面变化。`.trim()
+    return padded.slice(0, Math.max(24, CHAT_TTS_MAX_CHARS))
+  })()
+
+  return {
+    text: safeText,
+    text_lang: 'zh',
+    prompt_lang: 'zh',
+    top_k: 30,
+    top_p: 1,
+    temperature: 1,
+    text_split_method: 'cut5',
+    batch_size: 32,
+    batch_threshold: 0.75,
+    split_bucket: true,
+    speed_factor: clampTtsSpeed(speed, CHAT_TTS_SPEED),
+    media_type: CHAT_TTS_SELFHOSTED_MEDIA_TYPE,
+    streaming_mode: true,
+    seed: 100,
+    parallel_infer: true,
+    repetition_penalty: 1.35,
+    sample_steps: 32,
+    super_sampling: false,
+    sample_rate: 32000,
+    fragment_interval: 0.01,
+    voice_id: String(voice || '').trim() || CHAT_TTS_SELFHOSTED_VOICE_DEFAULT,
+  }
+}
+
+async function synthesizeSelfHostedTts({ text, voice, speed = CHAT_TTS_SPEED }) {
+  if (!CHAT_TTS_SELFHOSTED_URL) {
+    throw new Error('selfhosted_tts_unavailable')
+  }
+
+  const controller = new AbortController()
+  const timeoutHandle = setTimeout(() => controller.abort(), CHAT_TTS_SELFHOSTED_TIMEOUT_MS)
+  let response
+  try {
+    response = await fetch(CHAT_TTS_SELFHOSTED_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildSelfHostedTtsPayload({ text, voice, speed })),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`selfhosted_tts_timeout_${CHAT_TTS_SELFHOSTED_TIMEOUT_MS}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutHandle)
+  }
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '')
+    throw new Error(`selfhosted_tts_http_${response.status}:${String(errText || '').slice(0, 160)}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  if (!arrayBuffer || arrayBuffer.byteLength <= 0) {
+    throw new Error('selfhosted_tts_empty_audio')
+  }
+
+  return {
+    audioBuffer: Buffer.from(arrayBuffer),
+    contentType: String(response.headers.get('content-type') || '').trim() || ttsContentType(CHAT_TTS_SELFHOSTED_MEDIA_TYPE),
+    model: 'selfhosted',
+    response_format: CHAT_TTS_SELFHOSTED_MEDIA_TYPE,
+  }
+}
+
+async function synthesizeTtsWithProviderRouting({ roomId, text, tone = '', seed = '', profile = null } = {}) {
+  const effectiveProfile = profile || resolveEffectiveTtsProfileForRoom({
+    roomId,
+    tone,
+    seed,
+  })
+  const requestedProvider = normalizeTtsProvider(effectiveProfile.provider, effectiveTtsDefaultProvider())
+  const fallbackProvider = normalizeTtsFallbackProvider(
+    effectiveProfile.fallback_provider,
+    requestedProvider === 'selfhosted' ? 'openai' : 'none'
+  )
+  const providerOrder = [requestedProvider]
+  if (fallbackProvider !== 'none' && fallbackProvider !== requestedProvider) {
+    providerOrder.push(fallbackProvider)
+  }
+
+  const openAiFallbackProfile = resolveTtsProfileForMessage({
+    traderId: roomId,
+    tone,
+    seed: seed || roomId,
+  })
+  const errors = []
+
+  for (const provider of providerOrder) {
+    if (!isTtsProviderEnabled(provider)) {
+      errors.push(`${provider}:provider_unavailable`)
+      continue
+    }
+
+    const voice = provider === requestedProvider
+      ? String(effectiveProfile.voice || '').trim()
+      : resolveDefaultVoiceByProvider({ provider, roomId, tone, seed: seed || roomId })
+    const speed = provider === requestedProvider
+      ? clampTtsSpeed(effectiveProfile.speed, CHAT_TTS_SPEED)
+      : clampTtsSpeed(openAiFallbackProfile.speed, CHAT_TTS_SPEED)
+
+    try {
+      const synthesis = provider === 'selfhosted'
+        ? await synthesizeSelfHostedTts({ text, voice, speed })
+        : await synthesizeOpenAITts({ text, voice, speed })
+
+      return {
+        ...synthesis,
+        provider,
+        voice,
+        speed,
+        requested_provider: requestedProvider,
+        fallback_used: provider !== requestedProvider,
+      }
+    } catch (error) {
+      errors.push(`${provider}:${String(error?.message || 'tts_failed')}`)
+    }
+  }
+
+  throw new Error(`chat_tts_dispatch_failed:${errors.join('|').slice(0, 240)}`)
 }
 
 function pickFromPool(pool, seed, fallback = '') {
@@ -5651,19 +6036,189 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
 })
 
 app.get('/api/chat/tts/config', (_req, res) => {
+  const capabilities = ttsProviderCapabilities()
+  const defaultProvider = effectiveTtsDefaultProvider()
+  const defaultModel = defaultProvider === 'selfhosted' ? 'selfhosted' : CHAT_TTS_MODEL
+  const defaultResponseFormat = defaultProvider === 'selfhosted'
+    ? CHAT_TTS_SELFHOSTED_MEDIA_TYPE
+    : CHAT_TTS_RESPONSE_FORMAT
   res.json(ok({
-    enabled: CHAT_TTS_ENABLED && !!OPENAI_API_KEY,
-    provider: 'openai',
-    model: CHAT_TTS_MODEL,
-    response_format: CHAT_TTS_RESPONSE_FORMAT,
+    enabled: CHAT_TTS_ENABLED && (capabilities.openai.enabled || capabilities.selfhosted.enabled),
+    provider: defaultProvider,
+    model: defaultModel,
+    response_format: defaultResponseFormat,
     speed: CHAT_TTS_SPEED,
     max_chars: CHAT_TTS_MAX_CHARS,
     voice_map: ttsVoicesSummary(),
+    room_profiles: ttsRoomProfilesSummary(),
+    providers: capabilities,
+    default_provider: defaultProvider,
     tone_modes: ['energetic'],
     tone_speed_map: {
       energetic: CHAT_TTS_TONE_SPEED_ENERGETIC,
     },
   }))
+})
+
+app.get('/api/chat/tts/profile', (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || '').trim().toLowerCase()
+    if (roomId) {
+      const trader = getRegisteredTraderStrict(roomId)
+      if (!trader) {
+        res.status(404).json({ success: false, error: 'room_not_found' })
+        return
+      }
+      const profile = resolveEffectiveTtsProfileForRoom({ roomId, seed: roomId })
+      res.json(ok({
+        room_id: roomId,
+        profile: {
+          provider: profile.provider,
+          voice: profile.voice,
+          speed: profile.speed,
+          fallback_provider: profile.fallback_provider,
+          model: profile.model,
+          response_format: profile.response_format,
+          has_override: !!profile.override,
+        },
+        override: profile.override,
+        global_default_provider: effectiveTtsDefaultProvider(),
+      }))
+      return
+    }
+
+    const overrides = {}
+    for (const [id, row] of Object.entries(ttsProfilesState.rooms || {})) {
+      const safeId = String(id || '').trim().toLowerCase()
+      const normalized = normalizeTtsRoomOverride(row)
+      if (!safeId || !normalized) continue
+      overrides[safeId] = {
+        provider: normalized.provider,
+        voice: normalized.voice,
+        speed: normalized.speed,
+        fallback_provider: normalized.fallback_provider,
+        updated_ts_ms: normalized.updated_ts_ms,
+      }
+    }
+
+    res.json(ok({
+      global_default_provider: effectiveTtsDefaultProvider(),
+      room_overrides: overrides,
+      room_profiles: ttsRoomProfilesSummary(),
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'chat_tts_profile_read_failed' })
+  }
+})
+
+app.post('/api/chat/tts/profile', async (req, res) => {
+  if (!requireControlAuthorization(req, res, { action: 'chat.tts.profile.set', target: String(req.body?.room_id || '').trim() || null })) return
+
+  try {
+    const roomId = String(req.body?.room_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    const providerRaw = String(req.body?.provider || '').trim().toLowerCase()
+    if (providerRaw !== 'openai' && providerRaw !== 'selfhosted') {
+      res.status(400).json({ success: false, error: 'provider_required' })
+      return
+    }
+    const provider = normalizeTtsProvider(providerRaw, effectiveTtsDefaultProvider())
+    const fallbackRaw = String(req.body?.fallback_provider ?? req.body?.fallback ?? '').trim().toLowerCase()
+    if (fallbackRaw && fallbackRaw !== 'openai' && fallbackRaw !== 'none') {
+      res.status(400).json({ success: false, error: 'invalid_fallback_provider' })
+      return
+    }
+    const fallbackProvider = normalizeTtsFallbackProvider(
+      fallbackRaw,
+      provider === 'selfhosted' ? 'openai' : 'none'
+    )
+    const voice = String(req.body?.voice || '').trim()
+
+    let speed = null
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'speed')) {
+      const parsedSpeed = Number(req.body.speed)
+      if (!Number.isFinite(parsedSpeed)) {
+        res.status(400).json({ success: false, error: 'invalid_speed' })
+        return
+      }
+      speed = clampTtsSpeed(parsedSpeed, CHAT_TTS_SPEED)
+    }
+
+    ttsProfilesState.rooms[roomId] = {
+      provider,
+      voice,
+      speed,
+      fallback_provider: fallbackProvider,
+      updated_ts_ms: Date.now(),
+    }
+    ttsProfilesState.updated_ts_ms = Date.now()
+    await persistTtsProfilesState()
+
+    const profile = resolveEffectiveTtsProfileForRoom({ roomId, seed: roomId })
+    res.json(ok({
+      room_id: roomId,
+      profile: {
+        provider: profile.provider,
+        voice: profile.voice,
+        speed: profile.speed,
+        fallback_provider: profile.fallback_provider,
+        model: profile.model,
+        response_format: profile.response_format,
+        has_override: !!profile.override,
+      },
+      override: profile.override,
+      persisted: true,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'chat_tts_profile_write_failed' })
+  }
+})
+
+app.delete('/api/chat/tts/profile', async (req, res) => {
+  if (!requireControlAuthorization(req, res, { action: 'chat.tts.profile.clear', target: String(req.query.room_id || '').trim() || null })) return
+
+  try {
+    const roomId = String(req.query.room_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    delete ttsProfilesState.rooms[roomId]
+    ttsProfilesState.updated_ts_ms = Date.now()
+    await persistTtsProfilesState()
+
+    const profile = resolveEffectiveTtsProfileForRoom({ roomId, seed: roomId })
+    res.json(ok({
+      room_id: roomId,
+      profile: {
+        provider: profile.provider,
+        voice: profile.voice,
+        speed: profile.speed,
+        fallback_provider: profile.fallback_provider,
+        model: profile.model,
+        response_format: profile.response_format,
+        has_override: !!profile.override,
+      },
+      override_cleared: true,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'chat_tts_profile_clear_failed' })
+  }
 })
 
 app.post('/api/chat/tts', async (req, res) => {
@@ -5672,7 +6227,8 @@ app.post('/api/chat/tts', async (req, res) => {
       res.status(503).json({ success: false, error: 'chat_tts_disabled' })
       return
     }
-    if (!OPENAI_API_KEY) {
+    const capabilities = ttsProviderCapabilities()
+    if (!capabilities.openai.enabled && !capabilities.selfhosted.enabled) {
       res.status(503).json({ success: false, error: 'chat_tts_unavailable' })
       return
     }
@@ -5696,20 +6252,25 @@ app.post('/api/chat/tts', async (req, res) => {
 
     const tone = normalizeTtsTone(req.body?.tone)
     const seed = String(req.body?.message_id || '').trim() || text
-    const ttsProfile = resolveTtsProfileForMessage({ traderId: roomId, tone, seed })
-    const audioBuffer = await synthesizeOpenAITts({
+    const ttsProfile = resolveEffectiveTtsProfileForRoom({ roomId, tone, seed })
+    const synthesis = await synthesizeTtsWithProviderRouting({
+      roomId,
       text,
-      voice: ttsProfile.voice,
-      speed: ttsProfile.speed,
+      tone,
+      seed,
+      profile: ttsProfile,
     })
 
-    res.set('Content-Type', ttsContentType(CHAT_TTS_RESPONSE_FORMAT))
+    res.set('Content-Type', synthesis.contentType)
     res.set('Cache-Control', 'no-store')
-    res.set('x-tts-model', CHAT_TTS_MODEL)
-    res.set('x-tts-voice', ttsProfile.voice)
-    res.set('x-tts-speed', String(ttsProfile.speed))
+    res.set('x-tts-provider', synthesis.provider)
+    res.set('x-tts-provider-requested', synthesis.requested_provider)
+    res.set('x-tts-fallback-used', synthesis.fallback_used ? 'true' : 'false')
+    res.set('x-tts-model', synthesis.model)
+    res.set('x-tts-voice', synthesis.voice)
+    res.set('x-tts-speed', String(synthesis.speed))
     res.set('x-tts-tone', ttsProfile.tone)
-    res.send(audioBuffer)
+    res.send(synthesis.audioBuffer)
   } catch (error) {
     res.status(502).json({ success: false, error: error?.message || 'chat_tts_failed' })
   }
@@ -6295,6 +6856,12 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
     successfulCycles: 0,
     failedCycles: 0,
   }
+  const ttsCapabilities = ttsProviderCapabilities()
+  const ttsDefaultProvider = effectiveTtsDefaultProvider()
+  const ttsDefaultModel = ttsDefaultProvider === 'selfhosted' ? 'selfhosted' : CHAT_TTS_MODEL
+  const ttsDefaultFormat = ttsDefaultProvider === 'selfhosted'
+    ? CHAT_TTS_SELFHOSTED_MEDIA_TYPE
+    : CHAT_TTS_RESPONSE_FORMAT
 
   res.json(ok({
     ...state,
@@ -6338,10 +6905,11 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       decision_narration_min_interval_ms: CHAT_DECISION_NARRATION_MIN_INTERVAL_MS,
       decision_narration_hold_interval_ms: CHAT_DECISION_NARRATION_HOLD_INTERVAL_MS,
       decision_narration_conservative_hold_interval_ms: CHAT_DECISION_NARRATION_CONSERVATIVE_HOLD_INTERVAL_MS,
-      tts_enabled: CHAT_TTS_ENABLED && !!OPENAI_API_KEY,
-      tts_provider: 'openai',
-      tts_model: CHAT_TTS_MODEL,
-      tts_response_format: CHAT_TTS_RESPONSE_FORMAT,
+      tts_enabled: CHAT_TTS_ENABLED && (ttsCapabilities.openai.enabled || ttsCapabilities.selfhosted.enabled),
+      tts_provider: ttsDefaultProvider,
+      tts_provider_default: ttsDefaultProvider,
+      tts_model: ttsDefaultModel,
+      tts_response_format: ttsDefaultFormat,
       tts_speed: CHAT_TTS_SPEED,
       tts_tone_modes: ['energetic'],
       tts_tone_speed_map: {
@@ -6349,6 +6917,8 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       },
       tts_max_chars: CHAT_TTS_MAX_CHARS,
       tts_voice_map: ttsVoicesSummary(),
+      tts_provider_capabilities: ttsCapabilities,
+      tts_room_profiles: ttsRoomProfilesSummary(),
     },
     kill_switch: killSwitchPublicState(),
     llm: {
@@ -6956,6 +7526,7 @@ app.use('/api', (_req, res) => {
 })
 
 await loadKillSwitchState()
+await loadTtsProfilesState()
 await loadReplayBatch()
 await loadDailyHistoryBatch()
 await loadBetsLedgerState()
@@ -7167,9 +7738,13 @@ app.listen(PORT, () => {
   const llmInfo = llmDecider
     ? `llm=openai decision_model=${AGENT_OPENAI_MODEL} chat_model=${chatLlmResponder ? CHAT_OPENAI_MODEL : 'disabled'} timeout_ms=${AGENT_LLM_TIMEOUT_MS} token_saver=${AGENT_LLM_DEV_TOKEN_SAVER} max_output_tokens=${AGENT_LLM_MAX_OUTPUT_TOKENS}`
     : 'llm=disabled (set OPENAI_API_KEY to enable gpt-4o-mini)'
-  const ttsInfo = CHAT_TTS_ENABLED && OPENAI_API_KEY
-    ? `chat_tts=enabled model=${CHAT_TTS_MODEL} format=${CHAT_TTS_RESPONSE_FORMAT} speed=${CHAT_TTS_SPEED}`
-    : `chat_tts=disabled enabled_flag=${CHAT_TTS_ENABLED} openai_key=${OPENAI_API_KEY ? 'configured' : 'missing'}`
+  const startupTtsCapabilities = ttsProviderCapabilities()
+  const startupTtsDefaultProvider = effectiveTtsDefaultProvider()
+  const ttsEnabledAtBoot = CHAT_TTS_ENABLED
+    && (startupTtsCapabilities.openai.enabled || startupTtsCapabilities.selfhosted.enabled)
+  const ttsInfo = ttsEnabledAtBoot
+    ? `chat_tts=enabled default_provider=${startupTtsDefaultProvider} openai=${startupTtsCapabilities.openai.enabled ? 'on' : 'off'} selfhosted=${startupTtsCapabilities.selfhosted.enabled ? 'on' : 'off'} model=${startupTtsDefaultProvider === 'selfhosted' ? 'selfhosted' : CHAT_TTS_MODEL} format=${startupTtsDefaultProvider === 'selfhosted' ? CHAT_TTS_SELFHOSTED_MEDIA_TYPE : CHAT_TTS_RESPONSE_FORMAT} speed=${CHAT_TTS_SPEED}`
+    : `chat_tts=disabled enabled_flag=${CHAT_TTS_ENABLED} openai_key=${OPENAI_API_KEY ? 'configured' : 'missing'} selfhosted_url=${CHAT_TTS_SELFHOSTED_URL ? 'configured' : 'missing'}`
   const replayRuntimeInfo = RUNTIME_DATA_MODE === 'live_file'
     ? `data_mode=live_file live_frames_cn=${LIVE_FRAMES_PATH_CN} live_frames_us=${LIVE_FRAMES_PATH_US} refresh_ms=${LIVE_FILE_REFRESH_MS} stale_ms=${LIVE_FILE_STALE_MS}`
     : (replayEngine?.getStatus?.()

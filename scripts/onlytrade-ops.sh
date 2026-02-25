@@ -81,10 +81,16 @@ Commands:
                                    Options: --frames-path --output-path --day-key YYYY-MM-DD
   overview-status                  Show overview + digest file statuses
   chat-status <room_id> [user_session_id]
-                                  Show chat file status for room/private
+                                   Show chat file status for room/private
   chat-tail-public <room_id>     Tail room public chat JSONL
   chat-tail-private <room_id> <user_session_id>
-                                  Tail room private chat JSONL
+                                   Tail room private chat JSONL
+  tts-status [room_id]             Show TTS config/profile status
+  tts-set <room_id> --provider openai|selfhosted --voice <id> [--speed N] [--fallback openai|none]
+                                   Persist room TTS provider profile
+  tts-clear <room_id>              Clear persisted room TTS override
+  tts-test <room_id> [--text "..."]
+                                   Probe room TTS and report provider/latency/bytes
   agents-available                List folder-discovered agents
   agents-registered               List registered agents (registry)
   agent-register <agent_id>       Register an available agent
@@ -137,6 +143,18 @@ json_pretty() {
   fi
 }
 
+pick_python_cmd() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3'
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf 'python'
+    return 0
+  fi
+  return 1
+}
+
 curl_get() {
   local path="$1"
   curl -fsS "$API_BASE$path"
@@ -155,6 +173,60 @@ curl_post() {
     curl -fsS -X POST "$API_BASE$path" \
       -H "Content-Type: application/json" \
       -d "$payload"
+  fi
+}
+
+curl_delete() {
+  local path="$1"
+
+  if [ -n "$CONTROL_TOKEN" ]; then
+    curl -fsS -X DELETE "$API_BASE$path" \
+      -H "x-control-token: $CONTROL_TOKEN"
+  else
+    curl -fsS -X DELETE "$API_BASE$path"
+  fi
+}
+
+json_escape_py() {
+  local value="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$value" <<'PY'
+import json
+import sys
+print(json.dumps(sys.argv[1], ensure_ascii=False))
+PY
+    return
+  fi
+  if command -v python >/dev/null 2>&1; then
+    python - "$value" <<'PY'
+import json
+import sys
+print(json.dumps(sys.argv[1], ensure_ascii=False))
+PY
+    return
+  fi
+  printf '"%s"' "$value"
+}
+
+build_tts_set_payload() {
+  local room_id="$1"
+  local provider="$2"
+  local voice="$3"
+  local speed="$4"
+  local fallback="$5"
+
+  local room_json provider_json voice_json fallback_json
+  room_json="$(json_escape_py "$room_id")"
+  provider_json="$(json_escape_py "$provider")"
+  voice_json="$(json_escape_py "$voice")"
+  fallback_json="$(json_escape_py "$fallback")"
+
+  if [ -n "$speed" ]; then
+    printf '{"room_id":%s,"provider":%s,"voice":%s,"speed":%s,"fallback_provider":%s}' \
+      "$room_json" "$provider_json" "$voice_json" "$speed" "$fallback_json"
+  else
+    printf '{"room_id":%s,"provider":%s,"voice":%s,"fallback_provider":%s}' \
+      "$room_json" "$provider_json" "$voice_json" "$fallback_json"
   fi
 }
 
@@ -860,6 +932,111 @@ chat_tail_private() {
   tail -n 40 -f "$file_path"
 }
 
+tts_status() {
+  local room_id="${1:-}"
+  echo "[ops] tts config"
+  curl_get "/api/chat/tts/config" | json_pretty
+  if [ -n "$room_id" ]; then
+    echo
+    echo "[ops] tts profile room=$room_id"
+    curl_get "/api/chat/tts/profile?room_id=$room_id" | json_pretty
+  fi
+}
+
+tts_set_profile() {
+  local room_id="$1"
+  local provider="$2"
+  local voice="$3"
+  local speed="$4"
+  local fallback="$5"
+  local payload
+  payload="$(build_tts_set_payload "$room_id" "$provider" "$voice" "$speed" "$fallback")"
+  curl_post "/api/chat/tts/profile" "$payload"
+}
+
+tts_clear_profile() {
+  local room_id="$1"
+  curl_delete "/api/chat/tts/profile?room_id=$room_id"
+}
+
+tts_test() {
+  local room_id="$1"
+  local text="$2"
+  local py_bin=""
+  py_bin="$(pick_python_cmd || true)"
+  if [ -z "$py_bin" ]; then
+    echo "[ops] ERROR: python/python3 not found for tts-test" >&2
+    return 1
+  fi
+  local text_json
+  text_json="$(json_escape_py "$text")"
+
+  local payload
+  payload="{\"room_id\":$(json_escape_py "$room_id"),\"text\":$text_json}"
+
+  local tmp_headers
+  local tmp_audio
+  tmp_headers="$(mktemp)"
+  tmp_audio="$(mktemp)"
+
+  local metrics
+  metrics="$(curl -sS -X POST "$API_BASE/api/chat/tts" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    -D "$tmp_headers" \
+    -o "$tmp_audio" \
+    -w '{"http_code":%{http_code},"first_byte_s":%{time_starttransfer},"total_s":%{time_total},"bytes":%{size_download},"content_type":"%{content_type}"}')"
+
+  local status_code
+  status_code="$("$py_bin" - "$metrics" <<'PY'
+import json
+import sys
+data = json.loads(sys.argv[1])
+print(int(data.get('http_code', 0) or 0))
+PY
+ 2>/dev/null || printf '0')"
+
+  local provider voice speed model requested fallback_used
+  provider="$(grep -i '^x-tts-provider:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+  requested="$(grep -i '^x-tts-provider-requested:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+  fallback_used="$(grep -i '^x-tts-fallback-used:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+  voice="$(grep -i '^x-tts-voice:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+  speed="$(grep -i '^x-tts-speed:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+  model="$(grep -i '^x-tts-model:' "$tmp_headers" | tail -n 1 | cut -d':' -f2- | tr -d '\r' | xargs || true)"
+
+  if [ "$status_code" -ge 400 ]; then
+    echo "[ops] ERROR: tts-test failed status=$status_code"
+    cat "$tmp_audio"
+    rm -f "$tmp_headers" "$tmp_audio"
+    return 1
+  fi
+
+  "$py_bin" - "$metrics" "$room_id" "$provider" "$requested" "$fallback_used" "$voice" "$speed" "$model" <<'PY'
+import json
+import sys
+
+metrics = json.loads(sys.argv[1])
+room_id, provider, requested, fallback_used, voice, speed, model = sys.argv[2:]
+payload = {
+    'room_id': room_id,
+    'provider': provider or None,
+    'requested_provider': requested or None,
+    'fallback_used': fallback_used or None,
+    'voice': voice or None,
+    'speed': speed or None,
+    'model': model or None,
+    'http_code': int(metrics.get('http_code', 0) or 0),
+    'content_type': metrics.get('content_type') or None,
+    'first_byte_s': float(metrics.get('first_byte_s', 0) or 0),
+    'total_s': float(metrics.get('total_s', 0) or 0),
+    'bytes': int(metrics.get('bytes', 0) or 0),
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+
+  rm -f "$tmp_headers" "$tmp_audio"
+}
+
 agents_available() {
   curl_get "/api/agents/available"
 }
@@ -1227,6 +1404,108 @@ main() {
         exit 1
       fi
       chat_tail_private "$room_id" "$user_session_id"
+      ;;
+    tts-status)
+      local room_id="${1:-}"
+      tts_status "$room_id"
+      ;;
+    tts-set)
+      local room_id="${1:-}"
+      shift || true
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: tts-set requires <room_id>" >&2
+        exit 1
+      fi
+      local provider=""
+      local voice=""
+      local speed=""
+      local fallback=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --provider)
+            provider="${2:-}"
+            shift 2
+            ;;
+          --voice)
+            voice="${2:-}"
+            shift 2
+            ;;
+          --speed)
+            speed="${2:-}"
+            shift 2
+            ;;
+          --fallback)
+            fallback="${2:-}"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown tts-set option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [ -z "$provider" ]; then
+        echo "[ops] ERROR: tts-set requires --provider openai|selfhosted" >&2
+        exit 1
+      fi
+      case "$provider" in
+        openai|selfhosted)
+          ;;
+        *)
+          echo "[ops] ERROR: --provider must be openai|selfhosted" >&2
+          exit 1
+          ;;
+      esac
+      if [ -z "$voice" ]; then
+        echo "[ops] ERROR: tts-set requires --voice <id>" >&2
+        exit 1
+      fi
+      if [ -z "$fallback" ]; then
+        if [ "$provider" = "selfhosted" ]; then
+          fallback="openai"
+        else
+          fallback="none"
+        fi
+      fi
+      case "$fallback" in
+        openai|none)
+          ;;
+        *)
+          echo "[ops] ERROR: --fallback must be openai|none" >&2
+          exit 1
+          ;;
+      esac
+      tts_set_profile "$room_id" "$provider" "$voice" "$speed" "$fallback" | json_pretty
+      ;;
+    tts-clear)
+      local room_id="${1:-}"
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: tts-clear requires <room_id>" >&2
+        exit 1
+      fi
+      tts_clear_profile "$room_id" | json_pretty
+      ;;
+    tts-test)
+      local room_id="${1:-}"
+      shift || true
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: tts-test requires <room_id>" >&2
+        exit 1
+      fi
+      local text="语音连通测试"
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --text)
+            text="${2:-}"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown tts-test option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      tts_test "$room_id" "$text"
       ;;
     agents-available)
       agents_available | json_pretty

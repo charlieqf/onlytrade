@@ -49,12 +49,19 @@ Optional env vars:
 - `AGENT_LLM_DEV_TOKEN_SAVER`: default `true`; uses compact prompt/context to reduce token usage in development.
 - `AGENT_LLM_MAX_OUTPUT_TOKENS`: cap model output tokens (default `180`).
 - `CHAT_TTS_ENABLED`: enable room-agent TTS endpoint (`false` by default).
+- `CHAT_TTS_PROVIDER_DEFAULT`: default provider when no room override (`openai` or `selfhosted`, default `openai`).
 - `CHAT_TTS_MODEL`: OpenAI speech model (default `tts-1-hd`).
 - `CHAT_TTS_RESPONSE_FORMAT`: `mp3` (default), `wav`, `aac`, `flac`, or `opus`.
 - `CHAT_TTS_SPEED`: synthesis speed multiplier (default `1`, range `0.25`-`4`).
 - `CHAT_TTS_MAX_CHARS`: max TTS input chars per request (default `220`).
 - `CHAT_TTS_VOICE_FEMALE_1`, `CHAT_TTS_VOICE_FEMALE_2`, `CHAT_TTS_VOICE_MALE_1`, `CHAT_TTS_VOICE_MALE_2`: default voice slots.
 - `CHAT_TTS_VOICE_<TRADER_ID>`: optional per-trader override (e.g. `CHAT_TTS_VOICE_T_003=shimmer`).
+- `CHAT_TTS_SELFHOSTED_URL`: self-hosted TTS endpoint (default `http://101.227.82.130:13002/tts`).
+- `CHAT_TTS_SELFHOSTED_TIMEOUT_MS`: timeout for self-hosted synthesis (default `8000`).
+- `CHAT_TTS_SELFHOSTED_MEDIA_TYPE`: self-hosted output media type (`wav` default, supports `raw`/`mp3` depending on backend).
+- `CHAT_TTS_SELFHOSTED_VOICE_DEFAULT`: fallback self-hosted voice id (default `xuanyijiangjie`).
+- `CHAT_TTS_SELFHOSTED_VOICE_<TRADER_ID>`: optional self-hosted voice id per trader.
+- `CHAT_TTS_PROFILE_PATH`: optional persisted room-profile file (default `runtime-api/data/chat/tts_profiles.json`).
 - `CONTROL_API_TOKEN`: optional bearer/token for protected runtime control endpoints (recommended for kill switch).
 - `RESET_AGENT_MEMORY_ON_BOOT`: set `true` to wipe/reinitialize `data/agent-memory/*.json` at startup.
 
@@ -76,6 +83,9 @@ MARKET_PROVIDER=real MARKET_UPSTREAM_URL=https://your-proxy.example/api/market/f
 - `POST /api/agent/runtime/kill-switch` (`activate` | `deactivate`) - emergency stop of all agent decisions + LLM calls
 - `GET /api/agent/memory?trader_id=t_001`
 - `GET /api/chat/tts/config` (TTS capability + voice map)
+- `GET /api/chat/tts/profile?room_id=t_003` (effective TTS profile for one room)
+- `POST /api/chat/tts/profile` (`{ room_id, provider, voice, speed?, fallback_provider? }`, token-protected)
+- `DELETE /api/chat/tts/profile?room_id=t_003` (clear room override, token-protected)
 - `POST /api/chat/tts` (`{ room_id, text }`, returns audio stream)
 - `GET /api/replay/runtime/status`
 - `POST /api/replay/runtime/control` (`pause` | `resume` | `step` | `set_speed` | `set_cursor`)
@@ -119,7 +129,8 @@ TTS playback notes:
 
 - Frontend stream pages request room-specific TTS audio via `POST /api/chat/tts`.
 - Current UI voice policy is to speak agent public messages of kinds `reply`, `proactive`, and `narration`.
-- Voice selection is resolved from `CHAT_TTS_VOICE_<TRADER_ID>` first, then defaults.
+- Provider/voice selection resolves in order: persisted room override -> runtime defaults.
+- `POST /api/chat/tts` response headers include `x-tts-provider`, `x-tts-voice`, `x-tts-speed`, and `x-tts-model`.
 
 Chat engagement notes:
 

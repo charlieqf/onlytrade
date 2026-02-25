@@ -122,4 +122,10 @@ curl -fsS -X POST "http://127.0.0.1:18080/api/chat/tts" \
   -o /tmp/t_003_test.mp3
 ```
 
-If this returns HTTP 429 (`openai_tts_http_429`), recharge/fix OpenAI billing first.
+Check response headers for active provider (`x-tts-provider`) and voice (`x-tts-voice`).
+
+If this returns HTTP 429 (`openai_tts_http_429`), recharge/fix OpenAI billing first or switch room provider to self-hosted via:
+
+```bash
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
+```

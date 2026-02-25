@@ -36,7 +36,7 @@ AGENT_SESSION_GUARD_ENABLED=false
 2. Ensure CN news material is refreshed:
 
 ```bash
-bash scripts/onlytrade-ssh-ops.sh news-digest-cn-run-once
+bash scripts/onlytrade-ssh-ops.sh preopen-cn-refresh
 ```
 
 3. Restart backend with single-instance check (important):
@@ -85,6 +85,7 @@ LIVE_FILE_REFRESH_MS=10000
 4. Ensure scheduler includes both jobs:
    - `scripts/akshare/run_cycle_if_market_open.py`
    - `scripts/akshare/run_red_blue_if_market_open.py`
+   - `scripts/akshare/run_news_digest_if_preopen.py`
 
 ## Single-Instance Restart Guardrail (Critical)
 

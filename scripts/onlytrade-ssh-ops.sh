@@ -23,6 +23,8 @@ Examples:
   bash scripts/onlytrade-ssh-ops.sh start-3day --speed 60 --cadence 10
   bash scripts/onlytrade-ssh-ops.sh start-3day --single-run --speed 60 --cadence 10
   bash scripts/onlytrade-ssh-ops.sh live-preflight
+  bash scripts/onlytrade-ssh-ops.sh viewer-sim t_003 --viewers 24 --busy high --tempo steady --duration-min 15
+  OPENAI_API_KEY=... bash scripts/onlytrade-ssh-ops.sh viewer-sim t_003 --viewers 18 --busy normal --content mixed --llm-ratio 0.4
   bash scripts/onlytrade-ssh-ops.sh agent-reset t_001 --positions-only --confirm
   bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0 --confirm
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import time
 import urllib.error
@@ -99,6 +100,19 @@ CASUAL_TOPICS = [
     "今天心态有点炸，给点稳住节奏的建议。",
     "这波讲解很清楚，继续冲！",
     "盘面有点无聊，来一句今日交易格言。",
+    "我刚下班在地铁上听直播，信号断断续续也要跟上。",
+    "今天晚上吃啥，大家报个菜单让我抄作业。",
+    "周末你一般复盘多久？我老是坚持不住。",
+    "我家猫又踩键盘了，差点帮我下单。",
+]
+
+OFFTOPIC_TOPICS = [
+    "有人在看球吗，比分到哪了？",
+    "我这边下雨了，盘后准备跑步还是躺平。",
+    "今天开会开麻了，来点提神的话。",
+    "最近有什么好看的剧，边看边复盘那种。",
+    "刚点了奶茶，感觉今天要靠糖分续命。",
+    "今天地铁太挤了，手都抬不起来。",
 ]
 
 TOPIC_GROUPS = {
@@ -106,14 +120,176 @@ TOPIC_GROUPS = {
     "trade": TRADE_TOPICS,
     "news": NEWS_TOPICS,
     "casual": CASUAL_TOPICS,
+    "offtopic": OFFTOPIC_TOPICS,
 }
+
+TOPIC_WEIGHTS = {
+    "stock": 35,
+    "trade": 20,
+    "news": 15,
+    "casual": 20,
+    "offtopic": 10,
+}
+
+NICKNAME_PREFIXES = [
+    "阿秋",
+    "小北",
+    "木子",
+    "云朵",
+    "老K",
+    "星河",
+    "小橙",
+    "山海",
+    "小鹿",
+    "阿杰",
+    "豆包",
+    "南风",
+]
+
+NICKNAME_SUFFIXES = [
+    "看盘",
+    "短线",
+    "路人",
+    "学徒",
+    "打工人",
+    "散户",
+    "夜猫",
+    "慢慢来",
+    "稳一点",
+    "不追高",
+]
+
+CONTENT_MODES = ("template", "mixed", "llm")
+
+
+class LlmClient:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout_sec: int,
+        max_tokens: int,
+        temperature: float,
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.timeout_sec = max(3, int(timeout_sec))
+        self.max_tokens = max(24, int(max_tokens))
+        self.temperature = max(0.0, min(1.5, float(temperature)))
+
+    def generate(self, category: str, symbols: list[str]) -> dict:
+        symbol_hint = ", ".join(symbols[:8]) if symbols else "600519.SH"
+        user_prompt = (
+            "你在生成直播间观众消息。"
+            f"类别: {category}。"
+            f"可参考股票代码: {symbol_hint}。"
+            "输出一条中文自然口语，10-28字，单句，不要解释，不要引号。"
+        )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你负责生成真实直播弹幕，语气像普通散户，偶尔随意闲聊。",
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+
+        req = urllib.request.Request(
+            url=f"{self.base_url}/chat/completions",
+            method="POST",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                parsed = json.loads(body) if body else {}
+                choices = parsed.get("choices") if isinstance(parsed, dict) else None
+                if not isinstance(choices, list) or not choices:
+                    return {"ok": False, "error": "llm_no_choices"}
+                first = choices[0] if isinstance(choices[0], dict) else {}
+                msg = first.get("message") if isinstance(first, dict) else {}
+                text = ""
+                if isinstance(msg, dict):
+                    text = str(msg.get("content") or "")
+                text = normalize_generated_text(text)
+                if not text:
+                    return {"ok": False, "error": "llm_empty"}
+                return {"ok": True, "text": text}
+        except urllib.error.HTTPError as exc:
+            code = int(exc.code)
+            return {"ok": False, "error": f"llm_http_{code}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"llm_error:{exc}"}
+
+
+def normalize_generated_text(text: str) -> str:
+    value = str(text or "").replace("\n", " ").strip()
+    value = value.strip('"')
+    value = value.strip("'")
+    value = " ".join(value.split())
+    return value[:120].strip()
 
 
 def pick_topic_text(symbols: list[str]) -> tuple[str, str]:
-    category = random.choice(["stock", "trade", "news", "casual"])
+    categories = list(TOPIC_WEIGHTS.keys())
+    weights = [TOPIC_WEIGHTS[key] for key in categories]
+    category = random.choices(categories, weights=weights, k=1)[0]
     template = random.choice(TOPIC_GROUPS[category])
     symbol = random.choice(symbols) if symbols else "600519.SH"
     return category, template.format(symbol=symbol)
+
+
+def build_random_nickname(index: int, used: set[str]) -> str:
+    for _ in range(24):
+        candidate = (
+            f"{random.choice(NICKNAME_PREFIXES)}"
+            f"{random.choice(NICKNAME_SUFFIXES)}"
+            f"{random.randint(0, 99):02d}"
+        )
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+
+    fallback = f"观众{index + 1:02d}_{random.randint(100, 999)}"
+    used.add(fallback)
+    return fallback
+
+
+def pick_message_text(
+    symbols: list[str],
+    content_mode: str,
+    llm_ratio: float,
+    llm_client: LlmClient | None,
+) -> tuple[str, str, str, str | None]:
+    category, template_text = pick_topic_text(symbols)
+    ratio = max(0.0, min(1.0, float(llm_ratio)))
+    use_llm = content_mode == "llm" or (
+        content_mode == "mixed" and random.random() < ratio
+    )
+    if use_llm and llm_client is not None:
+        result = llm_client.generate(category=category, symbols=symbols)
+        if result.get("ok"):
+            text = normalize_generated_text(str(result.get("text") or ""))
+            if text:
+                return category, text, "llm", None
+        return (
+            category,
+            template_text,
+            "template_fallback",
+            str(result.get("error") or "llm_failed"),
+        )
+
+    return category, template_text, "template", None
 
 
 def poll_reply(
@@ -137,6 +313,8 @@ def poll_reply(
         data = unwrap_data(payload) if code == 200 else {}
         messages = data.get("messages", []) if isinstance(data, dict) else []
         for msg in messages:
+            if not isinstance(msg, dict):
+                continue
             if str(msg.get("sender_type")) != "agent":
                 continue
             created = int(msg.get("created_ts_ms") or 0)
@@ -163,6 +341,22 @@ def parse_args():
     parser.add_argument("--min-interval-sec", type=float, default=3.0)
     parser.add_argument("--max-interval-sec", type=float, default=8.0)
     parser.add_argument("--reply-timeout-sec", type=int, default=30)
+    parser.add_argument("--reply-mode", choices=("none", "blocking"), default="none")
+    parser.add_argument("--constant-tempo", dest="constant_tempo", action="store_true")
+    parser.add_argument(
+        "--no-constant-tempo", dest="constant_tempo", action="store_false"
+    )
+    parser.set_defaults(constant_tempo=True)
+    parser.add_argument("--content-mode", choices=CONTENT_MODES, default="template")
+    parser.add_argument("--llm-ratio", type=float, default=0.35)
+    parser.add_argument("--llm-model", default="gpt-4o-mini")
+    parser.add_argument(
+        "--llm-base-url",
+        default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    )
+    parser.add_argument("--llm-timeout-sec", type=int, default=12)
+    parser.add_argument("--llm-max-tokens", type=int, default=64)
+    parser.add_argument("--llm-temperature", type=float, default=0.9)
     parser.add_argument(
         "--symbols",
         default="002131.SZ,300058.SZ,002342.SZ,600519.SH,300059.SZ,600089.SH,600986.SH,601899.SH,002050.SZ,002195.SZ",
@@ -182,14 +376,43 @@ def main() -> int:
     api = ApiClient(args.api_base)
     log_path = Path(args.log_path)
 
+    llm_client: LlmClient | None = None
+    api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
+    if args.content_mode in ("mixed", "llm"):
+        if not api_key:
+            if args.content_mode == "llm":
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "missing_openai_api_key",
+                            "hint": "Set OPENAI_API_KEY or use --content-mode template",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return 1
+        else:
+            llm_client = LlmClient(
+                api_key=api_key,
+                model=str(args.llm_model),
+                base_url=str(args.llm_base_url),
+                timeout_sec=int(args.llm_timeout_sec),
+                max_tokens=int(args.llm_max_tokens),
+                temperature=float(args.llm_temperature),
+            )
+
     viewers: list[Viewer] = []
+    used_nicknames: set[str] = set()
     for i in range(max(1, int(args.viewers))):
-        nickname = f"观众{i + 1:02d}"
+        nickname = build_random_nickname(i, used_nicknames)
         code, payload = api.post(
             "/api/chat/session/bootstrap", {"user_nickname": nickname}
         )
         data = unwrap_data(payload) if code == 200 else {}
-        session_id = str((data or {}).get("user_session_id") or "").strip()
+        if not isinstance(data, dict):
+            data = {}
+        session_id = str(data.get("user_session_id") or "").strip()
         if not session_id:
             print(
                 json.dumps(
@@ -208,20 +431,45 @@ def main() -> int:
 
     print(
         json.dumps(
-            {"ok": True, "viewers": len(viewers), "room_id": args.room_id},
+            {
+                "ok": True,
+                "viewers": len(viewers),
+                "room_id": args.room_id,
+                "content_mode": args.content_mode,
+                "llm_enabled": llm_client is not None,
+            },
             ensure_ascii=False,
         )
     )
 
     end_at = time.time() + max(1, int(args.duration_min)) * 60
+    next_send_at = time.time()
     sent = 0
     reply_expected = 0
     reply_ok = 0
     reply_fail = 0
+    llm_used = 0
+    llm_fallback = 0
+    llm_fail = 0
 
     while time.time() < end_at:
+        if args.constant_tempo:
+            delay = max(0.0, next_send_at - time.time())
+            if delay > 0:
+                time.sleep(delay)
+
         viewer = random.choice(viewers)
-        category, body = pick_topic_text(symbols)
+        category, body, content_source, llm_error = pick_message_text(
+            symbols=symbols,
+            content_mode=str(args.content_mode),
+            llm_ratio=float(args.llm_ratio),
+            llm_client=llm_client,
+        )
+        if content_source == "llm":
+            llm_used += 1
+        elif content_source == "template_fallback":
+            llm_fallback += 1
+            llm_fail += 1
 
         mode = random.random()
         if mode < 0.45:
@@ -256,12 +504,15 @@ def main() -> int:
             "visibility": visibility,
             "message_type": message_type,
             "topic": category,
+            "content_source": content_source,
             "text": text,
             "status": code,
             "ok": code == 200,
         }
+        if llm_error:
+            row["llm_error"] = llm_error
 
-        if expect_reply:
+        if expect_reply and str(args.reply_mode) == "blocking":
             reply_expected += 1
             if code == 200:
                 reply = poll_reply(
@@ -284,12 +535,16 @@ def main() -> int:
         append_jsonl(log_path, row)
         sent += 1
 
-        time.sleep(
-            random.uniform(
-                max(0.2, float(args.min_interval_sec)),
-                max(float(args.min_interval_sec), float(args.max_interval_sec)),
-            )
+        next_interval = random.uniform(
+            max(0.2, float(args.min_interval_sec)),
+            max(float(args.min_interval_sec), float(args.max_interval_sec)),
         )
+        if args.constant_tempo:
+            next_send_at += next_interval
+            if next_send_at < time.time() - max(1.0, float(args.max_interval_sec)):
+                next_send_at = time.time()
+        else:
+            time.sleep(next_interval)
 
     summary = {
         "ok": True,
@@ -300,6 +555,12 @@ def main() -> int:
         "reply_ok": reply_ok,
         "reply_fail": reply_fail,
         "reply_ok_rate": (reply_ok / reply_expected) if reply_expected else None,
+        "reply_mode": str(args.reply_mode),
+        "constant_tempo": bool(args.constant_tempo),
+        "content_mode": args.content_mode,
+        "llm_used": llm_used,
+        "llm_fail": llm_fail,
+        "llm_fallback": llm_fallback,
         "log_path": str(log_path),
     }
     print(json.dumps(summary, ensure_ascii=False))

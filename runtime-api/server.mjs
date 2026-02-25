@@ -4013,6 +4013,7 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     : ''
 
   const casualLine = casual ? `${casual.replace(/[。！？!?]+$/g, '')}。` : ''
+  const casualBias = (simpleHash(`${seedBase}|casual-bias|${symbolCode}|${action}|${tone}`) % 100) < (action === 'HOLD' ? 65 : 45)
   const tailByTone = {
     calm: [
       '我会继续稳着跟，信号出来第一时间同步。',
@@ -4038,7 +4039,9 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   const chatterTail = pickFromPool(tailByTone[tone] || tailByTone.calm, `${seedBase}|tail|${tone}`, tailByTone.calm[0])
 
   const sentence1 = `${String(actionLine).replace(/[。！？!?]+$/g, '')}，${String(marketLineText).replace(/[。！？!?]+$/g, '')}`
-  const sentence2 = topicLine || casualLine || chatterTail
+  const sentence2 = casualBias
+    ? (casualLine || topicLine || chatterTail)
+    : (topicLine || casualLine || chatterTail)
   const text = `${sentence1}。${sentence2}`.trim() || '房间在线，我先继续跟踪盘面和消息变化。'
 
   return {
@@ -4386,13 +4389,17 @@ function narrationTextFromReasoningSteps(steps) {
 
   let text = ''
   if (isHold) {
+    const holdOpeners = ['当前判断', '这轮看法', '先看盘面']
+    const opener = holdOpeners[simpleHash(`${signalPlain}|${actionPlain}|hold`) % holdOpeners.length]
     text = signalPlain
-      ? `我的思路：${signalPlain}，所以这一轮先观望。`
-      : `我的思路：${actionPlain}。`
+      ? `${opener}：${signalPlain}，这轮先观望。`
+      : `${opener}：${actionPlain || '先观望'}。`
   } else {
+    const decisionOpeners = ['当前动作', '本轮决策', '这轮执行']
+    const opener = decisionOpeners[simpleHash(`${signalPlain}|${actionPlain}|decision`) % decisionOpeners.length]
     text = signalPlain && signalPlain !== actionPlain
-      ? `我的决策：${actionPlain}；依据：${signalPlain}`
-      : `我的决策：${actionPlain}`
+      ? `${opener}：${actionPlain}；依据：${signalPlain}`
+      : `${opener}：${actionPlain}`
   }
 
   if (!/[。！？!?]$/.test(text)) {

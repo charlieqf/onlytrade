@@ -76,8 +76,9 @@ Commands:
   news-digest-cn-run-once          Build CN-A news_digest.cn-a.json once (best-effort)
   red-blue-cn-run-once             Build CN-A market_breadth.cn-a.json once
   red-blue-cn-if-open              Build CN-A market_breadth.cn-a.json if market open
+  preopen-cn-refresh               Refresh CN pre-open context files (news + overview)
   red-blue-replay-build            Build replay market_breadth.1m.json from replay frames
-                                  Options: --frames-path --output-path --day-key YYYY-MM-DD
+                                   Options: --frames-path --output-path --day-key YYYY-MM-DD
   overview-status                  Show overview + digest file statuses
   chat-status <room_id> [user_session_id]
                                   Show chat file status for room/private
@@ -94,6 +95,15 @@ Commands:
   memory [trader_id]              Fetch agent memory snapshot(s)
   stream-monitor <room_id> [limit]
                                   Monitor room stream freshness + SSE probe
+  viewer-sim <room_id> [options]
+                                  Run random viewer simulator (stock + casual chat)
+                                  Options: --viewers N --busy low|normal|high
+                                           --duration-min N --seed N --log-path PATH
+                                           --reply-timeout-sec N
+                                           --reply-mode none|blocking
+                                           --tempo steady|natural
+                                           --content template|mixed|llm --llm-ratio 0..1
+                                           --llm-model NAME
   watch [seconds]                 Poll status repeatedly (default 3s)
 
 Env vars:
@@ -533,6 +543,59 @@ print(json.dumps(output, ensure_ascii=False))
 PY
 }
 
+run_viewer_simulator() {
+  local room_id="$1"
+  local viewers="$2"
+  local duration_min="$3"
+  local min_interval_sec="$4"
+  local max_interval_sec="$5"
+  local seed="$6"
+  local log_path="$7"
+  local reply_timeout_sec="$8"
+  local content_mode="$9"
+  local llm_ratio="${10}"
+  local llm_model="${11}"
+  local reply_mode="${12}"
+  local tempo_mode="${13}"
+
+  if [ -z "$log_path" ]; then
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    log_path="logs/soak/viewer-sim/${room_id}-${stamp}.jsonl"
+  fi
+
+  local py_bin=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    py_bin="python"
+  else
+    echo "[ops] ERROR: python/python3 not found for viewer-sim" >&2
+    exit 1
+  fi
+
+  local tempo_flag="--constant-tempo"
+  if [ "$tempo_mode" = "natural" ]; then
+    tempo_flag="--no-constant-tempo"
+  fi
+
+  "$py_bin" "$REPO_ROOT/scripts/simulate_viewers_chat.py" \
+    --api-base "$API_BASE" \
+    --room-id "$room_id" \
+    --viewers "$viewers" \
+    --duration-min "$duration_min" \
+    --min-interval-sec "$min_interval_sec" \
+    --max-interval-sec "$max_interval_sec" \
+    --reply-timeout-sec "$reply_timeout_sec" \
+    --reply-mode "$reply_mode" \
+    "$tempo_flag" \
+    --content-mode "$content_mode" \
+    --llm-ratio "$llm_ratio" \
+    --llm-model "$llm_model" \
+    --seed "$seed" \
+    --log-path "$log_path"
+}
+
 akshare_run_once() {
   local symbols_csv="${1:-002131,300058,002342,600519,300059,600089,600986,601899,002050,002195}"
   local canonical_path="${ONLYTRADE_AKSHARE_CANONICAL:-data/live/onlytrade/frames.1m.json}"
@@ -690,6 +753,13 @@ red_blue_cn_if_open() {
     return
   fi
   python "$REPO_ROOT/scripts/akshare/run_red_blue_if_market_open.py" --canonical-path "data/live/onlytrade/market_breadth.cn-a.json"
+}
+
+preopen_cn_refresh() {
+  echo "[ops] refreshing CN pre-open context"
+  news_digest_cn_run_once
+  market_overview_cn_run_once
+  overview_status
 }
 
 red_blue_replay_build() {
@@ -1100,6 +1170,9 @@ main() {
     red-blue-cn-if-open)
       red_blue_cn_if_open
       ;;
+    preopen-cn-refresh)
+      preopen_cn_refresh
+      ;;
     red-blue-replay-build)
       local frames_path=""
       local output_path=""
@@ -1218,6 +1291,140 @@ main() {
         exit 1
       fi
       stream_monitor "$room_id" "$limit" | json_pretty
+      ;;
+    viewer-sim)
+      local room_id="${1:-}"
+      shift || true
+      if [ -z "$room_id" ]; then
+        echo "[ops] ERROR: viewer-sim requires <room_id>" >&2
+        exit 1
+      fi
+
+      local viewers="16"
+      local busy="normal"
+      local duration_min="10"
+      local seed="42"
+      local log_path=""
+      local reply_timeout_sec="15"
+      local reply_timeout_override="false"
+      local content_mode="template"
+      local llm_ratio="0.35"
+      local llm_model="gpt-4o-mini"
+      local reply_mode="none"
+      local tempo_mode="steady"
+
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --viewers)
+            viewers="$2"
+            shift 2
+            ;;
+          --busy)
+            busy="$2"
+            shift 2
+            ;;
+          --duration-min)
+            duration_min="$2"
+            shift 2
+            ;;
+          --seed)
+            seed="$2"
+            shift 2
+            ;;
+          --log-path)
+            log_path="$2"
+            shift 2
+            ;;
+          --reply-timeout-sec)
+            reply_timeout_sec="$2"
+            reply_timeout_override="true"
+            shift 2
+            ;;
+          --content)
+            content_mode="$2"
+            shift 2
+            ;;
+          --llm-ratio)
+            llm_ratio="$2"
+            shift 2
+            ;;
+          --llm-model)
+            llm_model="$2"
+            shift 2
+            ;;
+          --reply-mode)
+            reply_mode="$2"
+            shift 2
+            ;;
+          --tempo)
+            tempo_mode="$2"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown viewer-sim option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+
+      case "$content_mode" in
+        template|mixed|llm)
+          ;;
+        *)
+          echo "[ops] ERROR: --content must be template|mixed|llm" >&2
+          exit 1
+          ;;
+      esac
+
+      case "$reply_mode" in
+        none|blocking)
+          ;;
+        *)
+          echo "[ops] ERROR: --reply-mode must be none|blocking" >&2
+          exit 1
+          ;;
+      esac
+
+      case "$tempo_mode" in
+        steady|natural)
+          ;;
+        *)
+          echo "[ops] ERROR: --tempo must be steady|natural" >&2
+          exit 1
+          ;;
+      esac
+
+      local min_interval_sec="3.0"
+      local max_interval_sec="8.0"
+      case "$busy" in
+        low)
+          min_interval_sec="6.0"
+          max_interval_sec="12.0"
+          if [ "$reply_timeout_override" != "true" ]; then
+            reply_timeout_sec="25"
+          fi
+          ;;
+        normal)
+          min_interval_sec="3.0"
+          max_interval_sec="8.0"
+          if [ "$reply_timeout_override" != "true" ]; then
+            reply_timeout_sec="15"
+          fi
+          ;;
+        high)
+          min_interval_sec="0.8"
+          max_interval_sec="2.5"
+          if [ "$reply_timeout_override" != "true" ]; then
+            reply_timeout_sec="4"
+          fi
+          ;;
+        *)
+          echo "[ops] ERROR: --busy must be low|normal|high" >&2
+          exit 1
+          ;;
+      esac
+
+      run_viewer_simulator "$room_id" "$viewers" "$duration_min" "$min_interval_sec" "$max_interval_sec" "$seed" "$log_path" "$reply_timeout_sec" "$content_mode" "$llm_ratio" "$llm_model" "$reply_mode" "$tempo_mode"
       ;;
     watch)
       local seconds="${1:-3}"

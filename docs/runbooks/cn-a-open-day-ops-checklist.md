@@ -19,8 +19,7 @@ bash scripts/onlytrade-ssh-ops.sh status
 3. Refresh CN news and overview material:
 
 ```bash
-bash scripts/onlytrade-ssh-ops.sh news-digest-cn-run-once
-bash scripts/onlytrade-ssh-ops.sh market-overview-cn-run-once
+bash scripts/onlytrade-ssh-ops.sh preopen-cn-refresh
 ```
 
 4. Keep stream agents active for chatter:
@@ -47,6 +46,13 @@ ssh -i ~/.ssh/kamatera root@104.238.213.119 \
 ```
 
 Expected pre-open: `{"status":"skip","reason":"outside_cn_a_session"}`.
+
+3. Optional: confirm pre-open digest guard job behavior:
+
+```bash
+ssh -i ~/.ssh/kamatera root@104.238.213.119 \
+  "cd /opt/onlytrade && /opt/onlytrade/.venv-akshare/bin/python scripts/akshare/run_news_digest_if_preopen.py"
+```
 
 ## At Open (Go / No-Go)
 

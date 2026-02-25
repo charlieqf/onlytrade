@@ -60,7 +60,16 @@ function normalizeAction(raw: string): string {
 function formatTimeLabel(timestamp: string): string {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return '--:--:--'
-  return date.toLocaleTimeString('en-GB', { hour12: false })
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Shanghai',
+    }).format(date)
+  } catch {
+    return date.toLocaleTimeString('en-GB', { hour12: false })
+  }
 }
 
 function clipText(value: string, maxLen: number): string {
@@ -408,9 +417,11 @@ export function usePhoneStreamData({
 export function useAgentTtsAutoplay({
   roomId,
   publicMessages,
+  openaiOnly = true,
 }: {
   roomId: string
   publicMessages: ChatMessage[]
+  openaiOnly?: boolean
 }) {
   const [ttsAutoPlay, setTtsAutoPlay] = useState<boolean>(true)
   const [ttsError, setTtsError] = useState<string>('')
@@ -433,6 +444,7 @@ export function useAgentTtsAutoplay({
   const ttsPlayingRef = useRef<boolean>(false)
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
   const ttsObjectUrlRef = useRef<string | null>(null)
+  const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false)
 
   const speakWithBrowserTts = useCallback(async (text: string) => {
     if (
@@ -457,6 +469,7 @@ export function useAgentTtsAutoplay({
 
   const playQueuedTts = useCallback(async () => {
     if (!ttsAutoPlay || !ttsAvailable) return
+    if (autoplayBlocked) return
     if (ttsPlayingRef.current) return
     const next = ttsQueueRef.current.shift()
     if (!next) return
@@ -465,6 +478,7 @@ export function useAgentTtsAutoplay({
     const text = normalized || fallbackTtsText(next.agent_message_kind)
     if (!text) return
 
+    let blockedNow = false
     ttsPlayingRef.current = true
     setTtsSpeaking(true)
     try {
@@ -486,6 +500,7 @@ export function useAgentTtsAutoplay({
 
       const audio = new Audio(objectUrl)
       audio.preload = 'auto'
+      audio.volume = 1
       ttsAudioRef.current = audio
 
       await new Promise<void>((resolve, reject) => {
@@ -499,6 +514,8 @@ export function useAgentTtsAutoplay({
       const message = String(error instanceof Error ? error.message : 'tts_play_failed')
 
       if (
+        !openaiOnly
+        &&
         /openai_tts_http_429|chat_tts_unavailable|chat_tts_disabled|openai_tts_http_5\d\d/i
           .test(message)
       ) {
@@ -513,21 +530,24 @@ export function useAgentTtsAutoplay({
 
       setTtsError(message)
       if (/NotAllowedError|play\(\) failed/i.test(message)) {
-        setTtsAutoPlay(false)
+        ttsQueueRef.current.unshift(next)
+        blockedNow = true
+        setAutoplayBlocked(true)
       }
     } finally {
       ttsPlayingRef.current = false
       setTtsSpeaking(false)
-      if (ttsQueueRef.current.length > 0) {
+      if (!blockedNow && !autoplayBlocked && ttsQueueRef.current.length > 0) {
         void playQueuedTts()
       }
     }
-  }, [roomId, ttsAutoPlay, ttsAvailable, speakWithBrowserTts])
+  }, [roomId, ttsAutoPlay, ttsAvailable, speakWithBrowserTts, openaiOnly, autoplayBlocked])
 
   useEffect(() => {
     ttsSeenMessageIdsRef.current.clear()
     ttsQueueRef.current = []
     ttsPlayingRef.current = false
+    setAutoplayBlocked(false)
     setTtsSpeaking(false)
     setTtsError('')
     if (ttsAudioRef.current) {
@@ -540,6 +560,27 @@ export function useAgentTtsAutoplay({
       ttsObjectUrlRef.current = null
     }
   }, [roomId])
+
+  useEffect(() => {
+    if (!autoplayBlocked) return
+    if (typeof window === 'undefined') return
+
+    const resume = () => {
+      setAutoplayBlocked(false)
+      setTtsError('')
+      void playQueuedTts()
+    }
+
+    window.addEventListener('pointerdown', resume)
+    window.addEventListener('touchstart', resume)
+    window.addEventListener('keydown', resume)
+
+    return () => {
+      window.removeEventListener('pointerdown', resume)
+      window.removeEventListener('touchstart', resume)
+      window.removeEventListener('keydown', resume)
+    }
+  }, [autoplayBlocked, playQueuedTts])
 
   useEffect(() => {
     return () => {

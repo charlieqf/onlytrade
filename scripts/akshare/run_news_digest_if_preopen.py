@@ -6,6 +6,9 @@ import sys
 from datetime import datetime, time
 from pathlib import Path
 
+if __package__ is None or __package__ == "":
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 from scripts.akshare.run_cycle_if_market_open import SH_TZ
 
 

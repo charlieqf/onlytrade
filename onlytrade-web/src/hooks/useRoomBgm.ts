@@ -6,17 +6,34 @@ export type BgmTrack = {
   src: string
 }
 
-const UNIVERSAL_ROOM_BGM: BgmTrack = {
-  id: 'room-loop-track',
-  title: '情深深雨濛濛',
-  src: '/audio/bgm/room_loop.mp3',
-}
+const UNIVERSAL_ROOM_BGM_PLAYLIST: BgmTrack[] = [
+  {
+    id: 'room-loop-track',
+    title: '情深深雨濛濛',
+    src: '/audio/bgm/room_loop.mp3',
+  },
+  {
+    id: 'bgm-track-1',
+    title: 'BGM 1',
+    src: '/audio/bgm/1.mp3',
+  },
+  {
+    id: 'bgm-track-2',
+    title: 'BGM 2',
+    src: '/audio/bgm/2.mp3',
+  },
+  {
+    id: 'bgm-track-3',
+    title: 'BGM 3',
+    src: '/audio/bgm/3.mp3',
+  },
+]
 
 const DEFAULT_BGM_VOLUME = 0.14
-const DEFAULT_BGM_VOLUME_WECOM = 0.1
+const DEFAULT_BGM_VOLUME_WECOM = 0.05
 const DUCKING_FACTOR_DEFAULT = 0.35
 const DUCKING_FACTOR_WECOM = 0.08
-const BGM_GAIN_MULTIPLIER_WECOM = 0.55
+const BGM_GAIN_MULTIPLIER_WECOM = 0.3
 
 function detectPathBase(): string {
   if (typeof window === 'undefined') return ''
@@ -60,12 +77,10 @@ function resolveRoomBgmTracks(roomId: string): BgmTrack[] {
   const key = String(roomId || '').trim().toLowerCase()
   if (!key) return []
   const pathBase = detectPathBase()
-  return [
-    {
-      ...UNIVERSAL_ROOM_BGM,
-      src: `${pathBase}${UNIVERSAL_ROOM_BGM.src}`,
-    },
-  ]
+  return UNIVERSAL_ROOM_BGM_PLAYLIST.map((track) => ({
+    ...track,
+    src: `${pathBase}${track.src}`,
+  }))
 }
 
 export function useRoomBgm({ roomId, ducking = false }: { roomId: string; ducking?: boolean }) {

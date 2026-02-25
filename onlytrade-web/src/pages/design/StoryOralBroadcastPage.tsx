@@ -32,6 +32,24 @@ const DEFAULT_MANIFEST: StoryManifest = {
   scenes: DEFAULT_SCENES,
 }
 
+const STORY_SLUG_BY_TRADER: Record<string, string> = {
+  t_007: 'zhaolaoge',
+  t_008: 'xuxiang',
+}
+
+function resolveStorySlug(traderId: string): string {
+  const fallback = STORY_SLUG_BY_TRADER[String(traderId || '').trim().toLowerCase()] || 'zhaolaoge'
+  if (typeof window === 'undefined') return fallback
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const custom = String(params.get('story') || '').trim().toLowerCase()
+    if (/^[a-z0-9_-]{2,32}$/.test(custom)) return custom
+  } catch {
+    // ignore malformed query
+  }
+  return fallback
+}
+
 function detectPathBase(): string {
   if (typeof window === 'undefined') return ''
   const pathname = String(window.location.pathname || '')
@@ -39,6 +57,15 @@ function detectPathBase(): string {
     return '/onlytrade'
   }
   return ''
+}
+
+function withAssetVersion(url: string, version: string): string {
+  const base = String(url || '').trim()
+  if (!base) return base
+  const v = String(version || '').trim()
+  if (!v) return base
+  const join = base.includes('?') ? '&' : '?'
+  return `${base}${join}v=${encodeURIComponent(v)}`
 }
 
 function toSafeNumber(value: unknown, fallback = 0): number {
@@ -160,6 +187,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const [scriptText, setScriptText] = useState('')
   const [loadError, setLoadError] = useState('')
   const [mediaError, setMediaError] = useState('')
+  const [assetVersion, setAssetVersion] = useState<string>(() => String(Date.now()))
 
   const [narrationTimeSec, setNarrationTimeSec] = useState(0)
   const [narrationDurationSec, setNarrationDurationSec] = useState(0)
@@ -181,6 +209,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null)
   const narrationRetryCountRef = useRef(0)
   const manualPauseRef = useRef(false)
+  const pendingUnmuteRef = useRef(false)
 
   useEffect(() => {
     const mediaNodes = Array.from(document.querySelectorAll<HTMLMediaElement>('audio, video'))
@@ -194,10 +223,17 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   }, [])
 
   const pathBase = useMemo(() => detectPathBase(), [])
-  const storyRoot = `${pathBase}/story/zhaolaoge`
+  const storySlug = useMemo(() => resolveStorySlug(selectedTrader.trader_id), [selectedTrader.trader_id])
+  const storyRoot = `${pathBase}/story/${storySlug}`
 
-  const narrationSrc = `${storyRoot}/${manifest.narration_file}`
-  const bgmSrc = `${storyRoot}/${manifest.bgm_file}`
+  const narrationSrc = useMemo(
+    () => withAssetVersion(`${storyRoot}/${manifest.narration_file}`, assetVersion),
+    [storyRoot, manifest.narration_file, assetVersion]
+  )
+  const bgmSrc = useMemo(
+    () => withAssetVersion(`${storyRoot}/${manifest.bgm_file}`, assetVersion),
+    [storyRoot, manifest.bgm_file, assetVersion]
+  )
 
   const subtitleCues = useMemo(() => {
     const baseDuration = narrationDurationSec > 0
@@ -222,7 +258,10 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     0,
     Math.min(sceneFiles.length - 1, Math.floor(progress * sceneFiles.length))
   )
-  const activeSceneSrc = `${storyRoot}/${sceneFiles[activeSceneIndex] || sceneFiles[0]}`
+  const activeSceneSrc = withAssetVersion(
+    `${storyRoot}/${sceneFiles[activeSceneIndex] || sceneFiles[0]}`,
+    assetVersion
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -258,6 +297,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
         } else {
           setManifest(DEFAULT_MANIFEST)
         }
+        const versionFromHeaders = String(
+          manifestResp.headers.get('etag')
+          || manifestResp.headers.get('last-modified')
+          || Date.now()
+        ).trim()
+        setAssetVersion(versionFromHeaders || String(Date.now()))
         setScriptText(String(scriptPayload || '').trim())
         setLoadError('')
       } catch (error) {
@@ -289,6 +334,8 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     const narration = new Audio(narrationSrc)
     narration.preload = 'auto'
     narration.loop = true
+    narration.autoplay = true
+    narration.volume = 1
 
     const bgm = new Audio(bgmSrc)
     bgm.preload = 'auto'
@@ -298,6 +345,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     bgmAudioRef.current = bgm
     narrationRetryCountRef.current = 0
     manualPauseRef.current = false
+    pendingUnmuteRef.current = false
     setNarrationTimeSec(0)
     setNarrationDurationSec(Math.max(0, manifest.duration_sec || 0))
     setNarrationPlaying(false)
@@ -383,9 +431,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       setNarrationPlaying(true)
       return
     }
+
     try {
       narration.muted = false
       await narration.play()
+      pendingUnmuteRef.current = false
+      setNarrationPlaying(true)
     } catch (error) {
       const message = String(error instanceof Error ? error.message : 'narration_play_failed')
       if (/AbortError|interrupted/i.test(message)) {
@@ -400,12 +451,9 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
         try {
           narration.muted = true
           await narration.play()
+          pendingUnmuteRef.current = true
           setNarrationPlaying(true)
-          setTimeout(() => {
-            const current = narrationAudioRef.current
-            if (!current) return
-            current.muted = false
-          }, 120)
+          setMediaError('')
           return
         } catch {
           // Autoplay still blocked on this webview/browser.
@@ -414,6 +462,36 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
         return
       }
       setMediaError(message)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const tryUnmuteAfterInteraction = () => {
+      if (!pendingUnmuteRef.current) return
+      const narration = narrationAudioRef.current
+      if (!narration) return
+      narration.muted = false
+      narration
+        .play()
+        .then(() => {
+          pendingUnmuteRef.current = false
+          setNarrationPlaying(true)
+        })
+        .catch(() => {
+          narration.muted = true
+        })
+    }
+
+    window.addEventListener('pointerdown', tryUnmuteAfterInteraction)
+    window.addEventListener('touchstart', tryUnmuteAfterInteraction)
+    window.addEventListener('keydown', tryUnmuteAfterInteraction)
+
+    return () => {
+      window.removeEventListener('pointerdown', tryUnmuteAfterInteraction)
+      window.removeEventListener('touchstart', tryUnmuteAfterInteraction)
+      window.removeEventListener('keydown', tryUnmuteAfterInteraction)
     }
   }, [])
 
@@ -441,6 +519,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
     if (!narration.paused) {
       manualPauseRef.current = true
+      pendingUnmuteRef.current = false
       narration.pause()
       setNarrationPlaying(false)
       return
@@ -451,6 +530,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       try {
         narration.muted = false
         await narration.play()
+        pendingUnmuteRef.current = false
         setNarrationPlaying(true)
       } catch (error) {
         const message = String(error instanceof Error ? error.message : 'narration_play_failed')

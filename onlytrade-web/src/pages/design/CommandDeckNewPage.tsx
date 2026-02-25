@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import useSWR from 'swr'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
+import { useRoomBgm } from '../../hooks/useRoomBgm'
 import { PhoneRealtimeKlineChart } from '../../components/PhoneRealtimeKlineChart'
 import type { Language } from '../../i18n/translations'
-import { api } from '../../lib/api'
-import type { ChatMessage, CompetitionTraderData } from '../../types'
+import type { ChatMessage } from '../../types'
 import {
   type FormalStreamDesignPageProps,
   formatSignedMoney,
@@ -13,6 +12,7 @@ import {
   PhoneAvatarSlot,
   useAutoScrollFeed,
   useAvatarSize,
+  useAgentTtsAutoplay,
   usePhoneStreamData,
 } from './phoneStreamShared'
 
@@ -20,6 +20,17 @@ type SymbolInfo = {
   symbol?: string
   name?: string
 }
+
+const MOCK_METRICS = {
+  peerRankText: '10/49',
+  totalReturnPct: 149,
+  industryReturnPct: 89,
+  hs300ReturnPct: 31,
+  weekReturnPct: 17.8,
+  halfYearReturnPct: 132,
+  maxDrawdownPct: 18.6,
+  recoveryDays: 26,
+} as const
 
 const DEFAULT_CN_SYMBOL_NAMES: Record<string, string> = {
   '600519.SH': '贵州茅台',
@@ -90,6 +101,47 @@ function getMessageVisual(msg: ChatMessage): MessageVisual {
   return AGENT_DEFAULT_STYLE
 }
 
+function formatBeijingTimeHHmm(createdTsMs: number): string {
+  const n = Number(createdTsMs || 0)
+  if (!Number.isFinite(n) || n <= 0) return '--:--'
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Shanghai',
+    }).format(new Date(n))
+  } catch {
+    return '--:--'
+  }
+}
+
+function formatMetricPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return '--'
+  const n = Number(value)
+  const abs = Math.abs(n)
+  const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2
+  const body = Number(abs.toFixed(digits)).toString()
+  return `${n > 0 ? '+' : n < 0 ? '-' : ''}${body}%`
+}
+
+function metricPctClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return 'text-white/80'
+  const n = Number(value)
+  if (n > 0) return 'text-red-300'
+  if (n < 0) return 'text-green-300'
+  return 'text-white/80'
+}
+
+function isWeComLikeIPhoneClient(): boolean {
+  if (typeof window === 'undefined') return false
+  const ua = String(window.navigator?.userAgent || '').toLowerCase()
+  if (!ua) return false
+  const isIOS = ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')
+  if (!isIOS) return false
+  return ua.includes('wxwork') || ua.includes('micromessenger')
+}
+
 function localizePositionSide(side: string): string {
   const normalized = String(side || '').trim().toUpperCase()
   if (normalized === 'LONG') return '多头'
@@ -147,14 +199,20 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
+  const { ttsAvailable, setTtsAutoPlay, ttsSpeaking } = useAgentTtsAutoplay({
+    roomId,
+    publicMessages,
+    openaiOnly: true,
+  })
+  const { bgmAvailable, setBgmEnabled, setBgmVolume } = useRoomBgm({
+    roomId,
+    ducking: ttsSpeaking,
+  })
 
   const [pinnedSymbol, setPinnedSymbol] = useState<string>('')
   const [supportPct, setSupportPct] = useState<number>(73)
   const [symbolNameMap, setSymbolNameMap] = useState<Record<string, string>>(DEFAULT_CN_SYMBOL_NAMES)
-  const { data: competition } = useSWR('public-competition-for-commanddeck', api.getCompetition, {
-    refreshInterval: 15_000,
-    revalidateOnFocus: false,
-  })
+  const isWeComIPhone = useMemo(() => isWeComLikeIPhoneClient(), [])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -168,6 +226,17 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
 
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!ttsAvailable) return
+    setTtsAutoPlay(true)
+  }, [roomId, ttsAvailable, setTtsAutoPlay])
+
+  useEffect(() => {
+    if (!bgmAvailable) return
+    setBgmEnabled(true)
+    setBgmVolume(isWeComIPhone ? 0.02 : 0.06)
+  }, [roomId, bgmAvailable, setBgmEnabled, setBgmVolume, isWeComIPhone])
 
   useEffect(() => {
     const query = new URLSearchParams({
@@ -202,24 +271,10 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
   )
 
   const againstPct = Math.max(0, 100 - supportPct)
-  const totalPnl = Number(account?.total_pnl || 0)
-  const totalPnlPct = Number(account?.total_pnl_pct || 0)
-  const traders = Array.isArray(competition?.traders)
-    ? (competition?.traders as CompetitionTraderData[])
-    : []
-  const avgReturnPct = traders.length
-    ? traders.reduce((sum, row) => sum + Number(row.total_pnl_pct || 0), 0) / traders.length
-    : 0
-  const outperformancePct = totalPnlPct - avgReturnPct
-  const sortedByReturn = [...traders].sort(
-    (a, b) => Number(b.total_pnl_pct || 0) - Number(a.total_pnl_pct || 0)
-  )
-  const selfIndex = sortedByReturn.findIndex((row) => row.trader_id === selectedTrader.trader_id)
-  const rank = selfIndex >= 0 ? selfIndex + 1 : null
-  const beatRate =
-    rank && sortedByReturn.length > 1
-      ? ((sortedByReturn.length - rank) / (sortedByReturn.length - 1)) * 100
-      : null
+  const dailyPnl = Number(account?.daily_pnl || 0)
+  const totalEquity = Number(account?.total_equity || 0)
+  const dayBaseEquity = totalEquity - dailyPnl
+  const dayReturnPct = dayBaseEquity > 0 ? (dailyPnl / dayBaseEquity) * 100 : null
 
   const messageVisuals = useMemo(() => {
     let lastViewerStyle: ViewerStyle = VIEWER_STYLES[0]
@@ -259,41 +314,62 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
             <span>反对 {againstPct}%</span>
           </div>
 
-          <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
-            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
-              <div className="flex items-center justify-between">
-                <span className="text-white/60">累计收益率</span>
-                <span className={`font-bold ${totalPnlPct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                  {formatSignedPct(totalPnlPct)}
-                </span>
+          <div className="mt-1 rounded border border-white/10 bg-gradient-to-b from-white/[0.08] to-white/[0.03] px-1.5 py-1 text-[9px]">
+            <div className="flex items-center gap-1">
+              <span className="rounded border border-white/15 bg-black/30 px-1 py-[1px] text-[8px] text-white/75">
+                同类排名 {MOCK_METRICS.peerRankText}
+              </span>
+              <span className="ml-auto text-[8px] text-white/55">累计表现</span>
+              <span className={`text-[11px] font-black ${metricPctClass(MOCK_METRICS.totalReturnPct)}`}>
+                {formatMetricPct(MOCK_METRICS.totalReturnPct)}
+              </span>
+            </div>
+
+            <div className="mt-1 grid grid-cols-4 gap-1 text-[7px]">
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">行业收益</div>
+                <div className={`font-bold ${metricPctClass(MOCK_METRICS.industryReturnPct)}`}>
+                  {formatMetricPct(MOCK_METRICS.industryReturnPct)}
+                </div>
+              </div>
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">沪深300</div>
+                <div className={`font-bold ${metricPctClass(MOCK_METRICS.hs300ReturnPct)}`}>
+                  {formatMetricPct(MOCK_METRICS.hs300ReturnPct)}
+                </div>
+              </div>
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">最大回撤</div>
+                <div className={`font-bold ${metricPctClass(-Math.abs(Number(MOCK_METRICS.maxDrawdownPct || 0)))}`}>
+                  -{Number(MOCK_METRICS.maxDrawdownPct.toFixed(2)).toString()}%
+                </div>
+              </div>
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">修复天数</div>
+                <div className="font-bold text-white/85">{MOCK_METRICS.recoveryDays}天</div>
               </div>
             </div>
-            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
-              <div className="flex items-center justify-between">
-                <span className="text-white/60">累计盈亏</span>
-                <span className={`font-bold ${totalPnl >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                  {formatSignedMoney(totalPnl)}
-                </span>
+
+            <div className="mt-1 grid grid-cols-3 gap-1 text-[8px]">
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">当日收益</div>
+                <div className={`font-bold ${metricPctClass(dayReturnPct)}`}>{formatMetricPct(dayReturnPct)}</div>
+              </div>
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">本周收益</div>
+                <div className={`font-bold ${metricPctClass(MOCK_METRICS.weekReturnPct)}`}>
+                  {formatMetricPct(MOCK_METRICS.weekReturnPct)}
+                </div>
+              </div>
+              <div className="rounded border border-white/10 bg-black/25 px-1 py-0.5 text-center">
+                <div className="text-white/55">半年收益</div>
+                <div className={`font-bold ${metricPctClass(MOCK_METRICS.halfYearReturnPct)}`}>
+                  {formatMetricPct(MOCK_METRICS.halfYearReturnPct)}
+                </div>
               </div>
             </div>
-            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
-              <div className="flex items-center justify-between">
-                <span className="text-white/60">较全体均值超额</span>
-                <span className={`font-bold ${outperformancePct >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                  {formatSignedPct(outperformancePct)}
-                </span>
-              </div>
-            </div>
-            <div className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1">
-              <div className="flex items-center justify-between">
-                <span className="text-white/60">排名/击败率</span>
-                <span className="font-bold text-white/90">
-                  {rank
-                    ? `${rank}/${Math.max(1, sortedByReturn.length)} · ${beatRate == null ? '--' : `${beatRate.toFixed(0)}%`}`
-                    : '--'}
-                </span>
-              </div>
-            </div>
+
+
           </div>
         </div>
 
@@ -313,7 +389,7 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
 
           <PhoneAvatarSlot
             trader={selectedTrader}
-            sizePx={Math.max(24, Math.round(sizePx / 4))}
+            sizePx={Math.max(30, Math.round(sizePx / 3))}
             language={pageLanguage}
             showPlaceholderLabel={false}
             showTraderName
@@ -416,8 +492,9 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                     const visual = messageVisuals[index] || AGENT_DEFAULT_STYLE
                     return (
                       <div key={msg.id} className={`flex flex-col ${msg.sender_type === 'agent' ? 'items-end' : 'items-start'}`}>
-                        <div className={`mb-0.5 text-[8px] ${visual.senderClass}`}>
-                          {msg.sender_name}
+                        <div className={`mb-0.5 flex items-center gap-1 text-[8px] ${visual.senderClass}`}>
+                          <span>{msg.sender_name}</span>
+                          <span className="text-white/45">{formatBeijingTimeHHmm(msg.created_ts_ms)}</span>
                         </div>
                         <div className={`max-w-[92%] rounded-lg px-2 py-1 text-[10px] ${visual.bubbleClass}`}>
                           {msg.text}

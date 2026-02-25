@@ -33,8 +33,11 @@ This document tracks the 4 formal phone-first stream pages, their routes, and th
   - 8000 bridge route: `/onlytrade/stream/story-broadcast?trader=<trader_id>`
   - Legacy alias: `/design/story-broadcast?trader=<trader_id>`
   - File: `onlytrade-web/src/pages/design/StoryOralBroadcastPage.tsx`
-  - Asset root: `onlytrade-web/public/story/zhaolaoge/`
-  - Current default agent: `t_007`
+  - Asset root: `onlytrade-web/public/story/<story_slug>/`
+  - Built-in trader mapping:
+    - `t_007` -> `zhaolaoge`
+    - `t_008` -> `xuxiang`
+  - Optional override: `?story=<story_slug>`
 
 Path-based bridge notes:
 
@@ -154,3 +157,29 @@ Operator command alternative (without exposing status badges in UI):
 ```bash
 bash scripts/onlytrade-ops.sh stream-monitor t_003
 ```
+
+## Viewer Simulator (Ops)
+
+Use backend ops command to simulate many random viewers (stock talk + casual chat):
+
+```bash
+bash scripts/onlytrade-ops.sh viewer-sim t_003 --viewers 24 --busy high --duration-min 15
+```
+
+Use steady cadence (default) for roughly constant viewer message tempo:
+
+```bash
+bash scripts/onlytrade-ops.sh viewer-sim t_003 --viewers 24 --busy normal --tempo steady --duration-min 30
+```
+
+Optional LLM content mode (fallback to template if unavailable in mixed mode):
+
+```bash
+bash scripts/onlytrade-ops.sh viewer-sim t_003 --viewers 24 --busy normal --duration-min 10 --content mixed --llm-ratio 0.4
+```
+
+Busy presets:
+
+- `low`: slower chat cadence
+- `normal`: default cadence
+- `high`: dense chat cadence

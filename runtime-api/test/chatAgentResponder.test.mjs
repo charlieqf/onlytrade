@@ -85,3 +85,27 @@ test('narration message caps to two sentences and strips markdown', () => {
   assert.equal(message.agent_message_kind, 'narration')
   assert.equal(message.text, '第一句。第二句！')
 })
+
+test('agent reply truncation keeps a clean ending', () => {
+  const message = buildAgentReply({
+    roomAgent: {
+      agentName: 'HS300 Momentum',
+    },
+    inboundMessage: {
+      room_id: 't_001',
+      user_session_id: 'usr_sess_1',
+      visibility: 'public',
+      message_type: 'public_mention_agent',
+      sender_name: '观众09',
+      text: '@agent 给个简短更新',
+    },
+    text: '当前AI链条情绪回暖但成交分化明显，我先盯量价确认再执行，若信号失败就继续观望并把回撤风险控制在计划线内。',
+    nowMs: 99_000,
+    maxChars: 45,
+    maxSentences: 2,
+  })
+
+  assert.equal(message.text.startsWith('@观众09 '), true)
+  assert.equal(message.text.length <= 45, true)
+  assert.match(message.text, /[。！？!?…]$/)
+})

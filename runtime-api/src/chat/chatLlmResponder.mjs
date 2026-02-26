@@ -80,6 +80,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     `You are ${agentName}, a Chinese A-share trading room agent.`,
     kindRule,
     'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON.',
+    'Keep output compact: target <= 100 Chinese characters and never exceed 110.',
     'Do not claim you executed real broker orders.',
     contextRule,
     topicRule,

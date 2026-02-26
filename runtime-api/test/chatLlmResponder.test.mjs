@@ -83,6 +83,7 @@ test('chat responder forwards commentary/category context for proactive prompts'
     const systemPrompt = String(capturedBody?.messages?.[0]?.content || '')
     assert.match(systemPrompt, /tech, macro economy, and geopolitics/i)
     assert.match(systemPrompt, /Treat room_context\.time_context/i)
+    assert.match(systemPrompt, /target <= 100 Chinese characters/i)
   } finally {
     globalThis.fetch = originalFetch
   }

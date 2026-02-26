@@ -48,14 +48,45 @@ function capSentences(value, maxSentences = 2) {
   return out.join('')
 }
 
+function trimToMaxChars(value, maxChars = 120) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const cap = Math.max(24, Math.floor(Number(maxChars) || 120))
+  if (text.length <= cap) return text
+
+  const hard = text.slice(0, cap).trim()
+  if (!hard) return ''
+
+  let boundary = -1
+  for (let i = hard.length - 1; i >= 0; i -= 1) {
+    if (/[。！？!?，,；;：:\s]/.test(hard[i])) {
+      boundary = i
+      break
+    }
+  }
+
+  let clipped = hard
+  if (boundary >= Math.floor(cap * 0.6)) {
+    clipped = hard.slice(0, boundary + 1).trim()
+  }
+
+  if (!/[。！？!?…]$/.test(clipped)) {
+    const body = clipped.length >= cap
+      ? clipped.slice(0, Math.max(0, cap - 1)).trimEnd()
+      : clipped
+    clipped = `${body}…`
+  }
+
+  return clipped
+}
+
 function sanitizeGeneratedText(value, fallback = '', { maxChars = 120, maxSentences = 2 } = {}) {
   const raw = String(value || '').trim()
   if (!raw) return fallback
 
   const flattened = stripMarkdown(raw).replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
   const sentenceCapped = capSentences(flattened, maxSentences)
-  const maxLen = Math.max(24, Math.floor(Number(maxChars) || 120))
-  const trimmed = sentenceCapped.slice(0, maxLen).trim()
+  const trimmed = trimToMaxChars(sentenceCapped, maxChars)
   return trimmed || fallback
 }
 

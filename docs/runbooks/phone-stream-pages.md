@@ -37,13 +37,17 @@ This document tracks the 4 formal phone-first stream pages, their routes, and th
   - Built-in trader mapping:
     - `t_007` -> `zhaolaoge`
     - `t_008` -> `xuxiang`
+    - `t_009` -> `qingshan`
+    - `t_010` -> `ai_daily_20260226`
+    - `t_011` -> `citrini_ghost_20260226`
+    - `t_012` -> `ai_tribunal_20260226`
   - Optional override: `?story=<story_slug>`
 
 Path-based bridge notes:
 
 - Preferred public entry is `http://<host>:8000/onlytrade/...`.
 - SSE and API calls must resolve under `/onlytrade/api/...` when on `/onlytrade` pages.
-- BGM asset path must resolve under `/onlytrade/audio/bgm/room_loop.mp3` for bridged routes.
+- Story assets are served from `/onlytrade/story/<story_slug>/...` on bridged routes.
 
 All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStreamShared.tsx`.
 
@@ -105,6 +109,22 @@ All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneS
 - Avatar slot fixed to bottom-left area, resizable, with digital human visual slot + live TTS playback.
 - Public chat is display-only.
 - Betting and gifting are not present in these 4 pages.
+
+### Story Broadcast UI Policy
+
+- Top transport/status badges are hidden (no SSE/connected/freshness chips in page header).
+- Bottom control row is simplified:
+  - keeps narration `Pause/Resume` and progress scrubber
+  - removes `Narration loop` badge
+  - removes `BGM on/off` toggle and BGM volume slider
+- For single-scene stories, background image uses `object-contain` to avoid aggressive crop under top panel.
+
+### Story Speaker Cues
+
+- If `script.txt` lines are speaker-tagged (for example `[alpha]`, `[xiaozhen]`, `[listener]`):
+  - host/guest badges show `在发言` when active subtitle role matches
+  - listener segments add subtle phone-line noise overlay while narration plays
+- Untagged scripts still play normally, but speaker badges/noise effects will not activate.
 
 ## Voice / TTS Behavior
 

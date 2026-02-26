@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime
 from datetime import time
 from pathlib import Path
 from typing import Any
 import sys
+import time as pytime
 from zoneinfo import ZoneInfo
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 import akshare as ak
+import requests
 
 from scripts.akshare.common import (
     atomic_write_json,
@@ -39,6 +42,42 @@ DEFAULT_RAW_QUOTES_PATH = Path("data/live/akshare/raw_quotes.json")
 DEFAULT_CHECKPOINT_PATH = Path("data/live/akshare/checkpoint.json")
 MIN_RECOVERY_BARS = 240
 SH_TZ = ZoneInfo("Asia/Shanghai")
+AKSHARE_HTTP_TIMEOUT_SEC = max(3.0, float(os.getenv("AKSHARE_HTTP_TIMEOUT_SEC", "8")))
+AKSHARE_RETRY_ATTEMPTS = max(1, int(os.getenv("AKSHARE_RETRY_ATTEMPTS", "2")))
+AKSHARE_RETRY_SLEEP_SEC = max(0.0, float(os.getenv("AKSHARE_RETRY_SLEEP_SEC", "0.2")))
+
+
+def _install_requests_timeout_patch() -> None:
+    if getattr(requests.sessions.Session.request, "_onlytrade_timeout_patched", False):
+        return
+
+    original_request = requests.sessions.Session.request
+
+    def patched_request(self, method, url, **kwargs):
+        timeout = kwargs.get("timeout")
+        if timeout is None:
+            kwargs["timeout"] = AKSHARE_HTTP_TIMEOUT_SEC
+        return original_request(self, method, url, **kwargs)
+
+    patched_request._onlytrade_timeout_patched = True  # type: ignore[attr-defined]
+    requests.sessions.Session.request = patched_request
+
+
+def _retry_call(fn, attempts: int = AKSHARE_RETRY_ATTEMPTS):
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return fn()
+        except Exception as error:
+            last_error = error
+            if attempt + 1 < attempts and AKSHARE_RETRY_SLEEP_SEC > 0:
+                pytime.sleep(AKSHARE_RETRY_SLEEP_SEC)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("retry_call_failed_without_error")
+
+
+_install_requests_timeout_patch()
 
 
 def _is_cn_a_market_open(now: datetime | None = None) -> bool:
@@ -133,7 +172,7 @@ def _normalize_spot_row_to_snapshot(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_spot_quote_map() -> dict[str, dict[str, Any]]:
-    df = ak.stock_zh_a_spot()
+    df = _retry_call(lambda: ak.stock_zh_a_spot())
     rows = df.to_dict(orient="records")
 
     quote_map: dict[str, dict[str, Any]] = {}
@@ -220,7 +259,9 @@ def fetch_minute_tail(code: str, tail_bars: int = 8) -> list[dict[str, Any]]:
     errors: list[str] = []
 
     try:
-        df = ak.stock_zh_a_hist_min_em(symbol=normalized, period="1", adjust="")
+        df = _retry_call(
+            lambda: ak.stock_zh_a_hist_min_em(symbol=normalized, period="1", adjust="")
+        )
         rows = df.tail(lookback_bars).to_dict(orient="records")
         normalized_rows = _normalize_minute_rows(normalized, rows)
         if normalized_rows:
@@ -229,8 +270,10 @@ def fetch_minute_tail(code: str, tail_bars: int = 8) -> list[dict[str, Any]]:
         errors.append(f"hist_min_em: {error}")
 
     try:
-        df = ak.stock_zh_a_minute(
-            symbol=_to_prefixed_symbol(normalized), period="1", adjust=""
+        df = _retry_call(
+            lambda: ak.stock_zh_a_minute(
+                symbol=_to_prefixed_symbol(normalized), period="1", adjust=""
+            )
         )
         rows = df.tail(lookback_bars).to_dict(orient="records")
         normalized_rows = _normalize_minute_rows_from_minute_api(normalized, rows)
@@ -246,7 +289,7 @@ def fetch_minute_tail(code: str, tail_bars: int = 8) -> list[dict[str, Any]]:
 
 def fetch_quote_snapshot(code: str) -> dict[str, Any]:
     normalized = to_code(code)
-    df = ak.stock_bid_ask_em(symbol=normalized)
+    df = _retry_call(lambda: ak.stock_bid_ask_em(symbol=normalized))
     item_map = {str(row["item"]): row["value"] for _, row in df.iterrows()}
     return {
         "symbol_code": normalized,

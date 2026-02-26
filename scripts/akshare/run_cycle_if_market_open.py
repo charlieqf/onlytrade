@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, time
@@ -9,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 
 SH_TZ = ZoneInfo("Asia/Shanghai")
+RUN_CYCLE_TIMEOUT_SEC = max(20, int(os.getenv("AKSHARE_RUN_CYCLE_TIMEOUT_SEC", "55")))
 
 
 def is_cn_a_market_open(now: datetime | None = None) -> bool:
@@ -44,8 +46,22 @@ def main() -> int:
 
     run_cycle_path = Path(__file__).with_name("run_cycle.py")
     command = [sys.executable, str(run_cycle_path), *sys.argv[1:]]
-    completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+    try:
+        completed = subprocess.run(command, check=False, timeout=RUN_CYCLE_TIMEOUT_SEC)
+        return int(completed.returncode)
+    except subprocess.TimeoutExpired:
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "reason": "run_cycle_timeout",
+                    "timeout_sec": RUN_CYCLE_TIMEOUT_SEC,
+                    "now_shanghai": now.isoformat(timespec="seconds"),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 124
 
 
 if __name__ == "__main__":

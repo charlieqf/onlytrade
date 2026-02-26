@@ -2,7 +2,7 @@
 # Run every minute; each script enforces its own China market/pre-open window.
 # This avoids cron timezone limitations on hosts where CRON_TZ does not
 # control trigger scheduling.
-* * * * 1-5 /opt/onlytrade/.venv-akshare/bin/python /opt/onlytrade/scripts/akshare/run_cycle_if_market_open.py >> /var/log/onlytrade/akshare.log 2>&1
+* * * * 1-5 timeout -k 5s 55s flock -n /tmp/onlytrade_run_cycle.lock /opt/onlytrade/.venv-akshare/bin/python /opt/onlytrade/scripts/akshare/run_cycle_if_market_open.py >> /var/log/onlytrade/akshare.log 2>&1
 * * * * 1-5 /opt/onlytrade/.venv-akshare/bin/python /opt/onlytrade/scripts/akshare/run_red_blue_if_market_open.py >> /var/log/onlytrade/akshare_red_blue.log 2>&1
 * * * * 1-5 /opt/onlytrade/.venv-akshare/bin/python /opt/onlytrade/scripts/akshare/run_news_digest_if_preopen.py --canonical-path /opt/onlytrade/data/live/onlytrade/news_digest.cn-a.json >> /var/log/onlytrade/akshare_news_digest.log 2>&1
 # END ONLYTRADE_AKSHARE_CRON

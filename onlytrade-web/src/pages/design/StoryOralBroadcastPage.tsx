@@ -217,12 +217,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const {
     selectedTrader,
     modeLabel,
-    freshnessLabel,
-    packetAgeLabel,
-    decisionAgeLabel,
-    transportLabel,
     isDegraded,
-    sseStatus,
     language,
   } = usePhoneStreamData(props)
 
@@ -236,12 +231,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   const [narrationDurationSec, setNarrationDurationSec] = useState(0)
   const [narrationPlaying, setNarrationPlaying] = useState(false)
 
-  const [bgmEnabled, setBgmEnabled] = useState<boolean>(() => {
+  const [bgmEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true
     const raw = window.localStorage.getItem('story_bgm_enabled')
     return raw == null ? true : raw !== 'false'
   })
-  const [bgmVolume, setBgmVolume] = useState<number>(() => {
+  const [bgmVolume] = useState<number>(() => {
     if (typeof window === 'undefined') return 0.16
     const raw = Number(window.localStorage.getItem('story_bgm_volume') || '')
     if (!Number.isFinite(raw)) return 0.16
@@ -756,14 +751,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               </div>
             </div>
 
-            <div className="mt-2 flex flex-wrap items-center gap-1 text-[9px] font-mono text-white/85">
-              <span className="rounded bg-black/55 px-1.5 py-0.5 text-cyan-300">{transportLabel}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">{sseStatus}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">{freshnessLabel}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">pkt {packetAgeLabel}</span>
-              <span className="rounded bg-black/55 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
-            </div>
-
             {showDualSpeakerIndicator && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/90">
                 <div className="flex items-center gap-1.5 rounded-full border border-white/20 bg-black/45 px-2 py-1">
@@ -822,10 +809,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
           <div className="shrink-0 border-b border-white/10 bg-[#101010] px-3 py-2">
             <div className="flex items-center gap-2">
-              <div className="rounded border border-amber-300/40 bg-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-200">
-                {language === 'zh' ? '旁白循环播放' : 'Narration loop'}
-              </div>
-
               <button
                 type="button"
                 onClick={() => void toggleNarration()}
@@ -833,35 +816,6 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               >
                 {narrationPlaying ? (language === 'zh' ? '暂停' : 'Pause') : (language === 'zh' ? '继续' : 'Resume')}
               </button>
-
-              <button
-                type="button"
-                onClick={() => setBgmEnabled((prev) => !prev)}
-                className={`rounded px-2 py-1 text-[11px] font-bold ${bgmEnabled ? 'bg-cyan-500/70 text-black' : 'bg-black/45 text-white/85'}`}
-              >
-                {bgmEnabled ? 'BGM on' : 'BGM off'}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={0.45}
-                step={0.01}
-                value={Math.max(0, Math.min(bgmVolume, 0.45))}
-                onInput={(event) => {
-                  const target = event.target as HTMLInputElement
-                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
-                }}
-                onChange={(event) => {
-                  const target = event.target as HTMLInputElement
-                  setBgmVolume(Math.max(0, Math.min(Number(target.value), 0.45)))
-                }}
-                className="h-4 w-20 accent-cyan-300"
-                style={{ touchAction: 'pan-x' }}
-                aria-label="BGM volume"
-              />
-              <div className="ml-auto text-[10px] font-mono text-white/70">
-                {Math.round(Math.max(0, Math.min(bgmVolume, 0.45)) * 100)}%
-              </div>
             </div>
 
             <div className="mt-2 flex items-center gap-2">

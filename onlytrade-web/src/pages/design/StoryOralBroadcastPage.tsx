@@ -308,6 +308,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
   )
 
   const sceneFiles = manifest.scenes.length ? manifest.scenes : DEFAULT_SCENES
+  const singleSceneMode = sceneFiles.length <= 1
   const progress = narrationDurationSec > 0
     ? Math.max(0, Math.min(narrationTimeSec / narrationDurationSec, 1))
     : 0
@@ -798,11 +799,11 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
             )}
           </div>
 
-          <div className="relative shrink-0 border-b border-white/10" style={{ height: '48vh' }}>
+          <div className="relative shrink-0 border-b border-white/10 bg-black/70" style={{ height: '48vh' }}>
             <img
               src={activeSceneSrc}
               alt={manifest.title}
-              className="h-full w-full object-cover"
+              className={`h-full w-full ${singleSceneMode ? 'object-contain object-center' : 'object-cover'}`}
               loading="eager"
             />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/40" />

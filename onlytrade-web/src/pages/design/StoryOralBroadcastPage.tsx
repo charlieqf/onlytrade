@@ -35,6 +35,7 @@ const DEFAULT_MANIFEST: StoryManifest = {
 const STORY_SLUG_BY_TRADER: Record<string, string> = {
   t_007: 'zhaolaoge',
   t_008: 'xuxiang',
+  t_009: 'qingshan',
 }
 
 function resolveStorySlug(traderId: string): string {

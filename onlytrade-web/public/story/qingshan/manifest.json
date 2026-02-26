@@ -1,0 +1,13 @@
+{
+  "schema_version": "story.stream.asset.v1",
+  "story_id": "qingshan-podcast-room",
+  "title": "青衫说书局：今日历史",
+  "subtitle": "blog / 说书 / 口播",
+  "preferred_trader_id": "t_009",
+  "narration_file": "narration.mp3",
+  "bgm_file": "bgm.mp3",
+  "duration_sec": 1200,
+  "scenes": [
+    "scene_0.png"
+  ]
+}

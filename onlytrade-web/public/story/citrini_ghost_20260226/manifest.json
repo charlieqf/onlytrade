@@ -1,0 +1,22 @@
+{
+  "schema_version": "story.stream.asset.v1",
+  "story_id": "citrini-ghost-story-2026-02-26",
+  "title": "AI鬼故事：2028全球智能危机",
+  "subtitle": "deep dive / podcast / oral broadcast",
+  "preferred_trader_id": "t_011",
+  "narration_file": "narration.mp3",
+  "bgm_file": "bgm.mp3",
+  "duration_sec": 564,
+  "scenes": [
+    "01_stock_crash.jpg",
+    "02_stock_red_screen.jpg",
+    "03_wall_street_sign.jpg",
+    "04_ai_robot.jpg",
+    "05_ai_chip.jpg",
+    "06_coding_screen.jpg",
+    "07_empty_office.jpg",
+    "08_worried_worker.jpg",
+    "09_protest_crowd.jpg",
+    "10_data_center.jpg"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "story.stream.asset.v1",
+  "story_id": "ai-daily-2026-02-26",
+  "title": "AI前沿日报（2026-02-26）",
+  "subtitle": "daily / podcast / oral broadcast",
+  "preferred_trader_id": "t_010",
+  "narration_file": "narration.mp3",
+  "bgm_file": "bgm.mp3",
+  "duration_sec": 326,
+  "scenes": [
+    "scene_0.png"
+  ]
+}

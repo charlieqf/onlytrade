@@ -89,7 +89,10 @@ function buildFallbackReplyText({ roomAgent, inboundMessage, roomContext, latest
     : '我先把风险和节奏放前面，不着急抢动作。'
 
   const newsLine = newsTitle ? `另外这条消息也要盯：${newsTitle.slice(0, 24)}。` : ''
-  const casualLine = casual ? `${casual.slice(0, 22)}。` : '我们先稳住节奏，机会会有。'
+  const casualLineRaw = casual ? `${casual.slice(0, 22)}。` : '我们先稳住节奏，机会会有。'
+  const casualLine = isTimeAwareChatTextAllowed(casualLineRaw, nowMs)
+    ? casualLineRaw
+    : timeAwareFallbackLine(nowMs)
 
   return `@${sender} ${tradeLine}${newsLine || casualLine}`
 }
@@ -102,6 +105,57 @@ function dayKeyInTimeZone(tsMs, timeZone = 'Asia/Shanghai') {
     day: '2-digit',
   })
   return dtf.format(new Date(tsMs))
+}
+
+function shanghaiDayPart(tsMs) {
+  const date = new Date(Number.isFinite(Number(tsMs)) ? Number(tsMs) : Date.now())
+  const hm = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+  const [hh, mm] = hm.split(':').map((item) => Number(item || 0))
+  const mins = hh * 60 + mm
+  if (mins >= 330 && mins < 540) return 'early_morning'
+  if (mins >= 540 && mins < 690) return 'morning_session'
+  if (mins >= 690 && mins < 780) return 'lunch_break'
+  if (mins >= 780 && mins < 900) return 'afternoon_session'
+  if (mins >= 900 && mins < 1140) return 'evening'
+  return 'night'
+}
+
+function isTimeAwareChatTextAllowed(text, tsMs) {
+  const value = String(text || '').trim()
+  if (!value) return false
+  const dayPart = shanghaiDayPart(tsMs)
+  const nightLife = /(下班|晚饭|晚餐|今晚|夜宵|熬夜|晚安|睡觉|收工)/i
+  const morningOnly = /(早安|早餐|刚起床|上班路上|早盘刚开|刚到公司)/i
+
+  if (
+    (dayPart === 'early_morning' || dayPart === 'morning_session' || dayPart === 'lunch_break' || dayPart === 'afternoon_session')
+    && nightLife.test(value)
+  ) {
+    return false
+  }
+  if ((dayPart === 'evening' || dayPart === 'night') && morningOnly.test(value)) {
+    return false
+  }
+  return true
+}
+
+function timeAwareFallbackLine(tsMs) {
+  const dayPart = shanghaiDayPart(tsMs)
+  if (dayPart === 'early_morning' || dayPart === 'morning_session') {
+    return '我先把早盘节奏稳住，等信号更清晰再同步。'
+  }
+  if (dayPart === 'lunch_break') {
+    return '午间先复盘关键信号，下午再看确认位。'
+  }
+  if (dayPart === 'afternoon_session') {
+    return '下午盘先守风险边界，再择机跟进。'
+  }
+  return '当前先以风控和节奏为主，不做情绪化动作。'
 }
 
 function filterTodayMessages(messages, nowMs, timeZone = 'Asia/Shanghai') {
@@ -249,6 +303,9 @@ export function createChatService({
       if (!text) return ''
       // Bound by both global chat limits and streamer-style constraints.
       const capped = text.slice(0, safeMaxTextLen)
+      if (!isTimeAwareChatTextAllowed(capped, payload?.nowMs)) {
+        return timeAwareFallbackLine(payload?.nowMs)
+      }
       return capped
     } catch {
       return ''

@@ -35,6 +35,21 @@ function styleHint(roomAgent) {
   return bits.join(' | ')
 }
 
+function normalizeTimeContext(roomContext) {
+  const ctx = toSafeObject(roomContext)
+  const raw = toSafeObject(ctx?.time_context)
+  if (!raw) return null
+  return {
+    timezone: String(raw.timezone || 'Asia/Shanghai').slice(0, 32),
+    now_iso: String(raw.now_iso || '').slice(0, 40) || null,
+    hhmm: String(raw.hhmm || '').slice(0, 8) || null,
+    day_part: String(raw.day_part || '').slice(0, 32) || null,
+    minutes_since_midnight: Number.isFinite(toNumber(raw.minutes_since_midnight, NaN))
+      ? Math.max(0, Math.min(1439, Math.floor(toNumber(raw.minutes_since_midnight, 0))))
+      : null,
+  }
+}
+
 function buildSystemPrompt({ roomAgent, kind }) {
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
   const kindRule = kind === 'proactive'
@@ -43,7 +58,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
       ? 'You are narrating your latest trading decision to the room like a livestream host.'
       : 'You are writing a direct reply to a user message in the room.')
   const contextRule = (kind === 'proactive' || kind === 'narration')
-    ? 'If room_context contains market_overview_brief, news_digest_titles, news_commentary, or news_categories, explicitly reference one concise market/news point.'
+    ? 'If room_context contains market_overview_brief, news_digest_titles, news_commentary, news_categories, or symbol_history_summary, explicitly reference one concise market/news/history point.'
     : ''
   const topicRule = kind === 'proactive'
     ? 'Prioritize topic rotation around tech, macro economy, and geopolitics when those signals exist.'
@@ -58,6 +73,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
   const casualRule = (kind === 'reply' || kind === 'proactive')
     ? 'You may add one light casual host line (mindset/life rhythm/risk discipline) in about 30% of messages, while keeping market relevance first when news/context exists.'
     : ''
+  const timeRule = 'Treat room_context.time_context (Asia/Shanghai) as authoritative local time. Keep any life-rhythm/casual line consistent with that clock; avoid after-work/dinner/night wording in morning sessions.'
   const style = styleHint(roomAgent)
 
   return [
@@ -71,6 +87,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     holdReasonRule,
     varietyRule,
     casualRule,
+    timeRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
 }
@@ -148,9 +165,19 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
               : null,
           }
           : null,
+        symbol_history_summary: toSafeObject(ctx.symbol_history_summary)
+          ? {
+            symbol: String(ctx.symbol_history_summary.symbol || '').slice(0, 24) || null,
+            past_6m: String(ctx.symbol_history_summary.past_6m || '').slice(0, 180) || null,
+            past_1m: String(ctx.symbol_history_summary.past_1m || '').slice(0, 180) || null,
+            past_1w: String(ctx.symbol_history_summary.past_1w || '').slice(0, 180) || null,
+            past_1d: String(ctx.symbol_history_summary.past_1d || '').slice(0, 180) || null,
+          }
+          : null,
         casual_topics: Array.isArray(ctx.casual_topics)
           ? ctx.casual_topics.map((t) => String(t || '').slice(0, 60)).filter(Boolean).slice(0, 8)
           : [],
+        time_context: normalizeTimeContext(ctx),
       }
       : null,
     history_tail: Array.isArray(historyContext)

@@ -150,6 +150,12 @@ function summarizeContext(context) {
       sma_60: toNumber(daily.sma_60, 0),
       rsi_14: toNumber(daily.rsi_14, 50),
       range_20d_pct: toNumber(daily.range_20d_pct, 0),
+      historical_summaries: {
+        past_6m: String(context?.daily?.price_volume_descriptions?.past_6m || '').slice(0, 180),
+        past_1m: String(context?.daily?.price_volume_descriptions?.past_1m || '').slice(0, 180),
+        past_1w: String(context?.daily?.price_volume_descriptions?.past_1w || '').slice(0, 180),
+        past_1d: String(context?.daily?.price_volume_descriptions?.past_1d || '').slice(0, 180),
+      },
     },
     position_state: {
       shares: toNumber(position.shares, 0),
@@ -220,6 +226,12 @@ function summarizeContextLite(context) {
       sma_20: toNumber(daily.sma_20, 0),
       sma_60: toNumber(daily.sma_60, 0),
       rsi_14: toNumber(daily.rsi_14, 50),
+      hx: {
+        m6: String(context?.daily?.price_volume_descriptions?.past_6m || '').slice(0, 120),
+        m1: String(context?.daily?.price_volume_descriptions?.past_1m || '').slice(0, 120),
+        w1: String(context?.daily?.price_volume_descriptions?.past_1w || '').slice(0, 120),
+        d1: String(context?.daily?.price_volume_descriptions?.past_1d || '').slice(0, 120),
+      },
     },
     position_state: {
       shares: toNumber(position.shares, 0),

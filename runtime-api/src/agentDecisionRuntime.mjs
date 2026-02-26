@@ -309,6 +309,15 @@ function buildDecisionInputPrompt(context, symbol, cycleNumber) {
       sma_60: toSafeNumber(context?.daily?.feature_snapshot?.sma_60, 0),
       rsi_14: toSafeNumber(context?.daily?.feature_snapshot?.rsi_14, 50),
       range_20d_pct: toSafeNumber(context?.daily?.feature_snapshot?.range_20d_pct, 0),
+      historical_summaries: {
+        past_6m: String(context?.daily?.price_volume_descriptions?.past_6m || '').slice(0, 180),
+        past_1m: String(context?.daily?.price_volume_descriptions?.past_1m || '').slice(0, 180),
+        past_1w: String(context?.daily?.price_volume_descriptions?.past_1w || '').slice(0, 180),
+        past_1d: String(context?.daily?.price_volume_descriptions?.past_1d || '').slice(0, 180),
+      },
+      historical_reference_lines: Array.isArray(context?.daily?.price_volume_reference_lines)
+        ? context.daily.price_volume_reference_lines.map((item) => String(item || '').slice(0, 180)).filter(Boolean).slice(0, 4)
+        : [],
     },
     position_state: {
       shares: toSafeNumber(context?.position_state?.shares, 0),

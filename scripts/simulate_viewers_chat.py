@@ -6,6 +6,7 @@ import json
 import os
 import random
 import time
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -100,19 +101,19 @@ CASUAL_TOPICS = [
     "今天心态有点炸，给点稳住节奏的建议。",
     "这波讲解很清楚，继续冲！",
     "盘面有点无聊，来一句今日交易格言。",
-    "我刚下班在地铁上听直播，信号断断续续也要跟上。",
-    "今天晚上吃啥，大家报个菜单让我抄作业。",
-    "周末你一般复盘多久？我老是坚持不住。",
+    "我在路上听直播，信号断断续续也要跟上。",
+    "今天该怎么安排复盘节奏，求个模板。",
+    "你一般复盘多久？我老是坚持不住。",
     "我家猫又踩键盘了，差点帮我下单。",
 ]
 
 OFFTOPIC_TOPICS = [
     "有人在看球吗，比分到哪了？",
-    "我这边下雨了，盘后准备跑步还是躺平。",
+    "我这边下雨了，今天状态有点分心。",
     "今天开会开麻了，来点提神的话。",
-    "最近有什么好看的剧，边看边复盘那种。",
-    "刚点了奶茶，感觉今天要靠糖分续命。",
-    "今天地铁太挤了，手都抬不起来。",
+    "最近有什么好看的剧，休息时想放松一下。",
+    "今天靠咖啡续命，给点专注建议。",
+    "今天通勤有点挤，脑子还没缓过来。",
 ]
 
 TOPIC_GROUPS = {
@@ -179,13 +180,21 @@ class LlmClient:
         self.max_tokens = max(24, int(max_tokens))
         self.temperature = max(0.0, min(1.5, float(temperature)))
 
-    def generate(self, category: str, symbols: list[str]) -> dict:
+    def generate(
+        self, category: str, symbols: list[str], time_context: dict | None = None
+    ) -> dict:
         symbol_hint = ", ".join(symbols[:8]) if symbols else "600519.SH"
+        tc = time_context or shanghai_time_context()
+        now_iso = str(tc.get("now_iso") or "")
+        hhmm = str(tc.get("hhmm") or "")
+        day_part = str(tc.get("day_part") or "")
         user_prompt = (
             "你在生成直播间观众消息。"
             f"类别: {category}。"
             f"可参考股票代码: {symbol_hint}。"
+            f"当前本地时间(Asia/Shanghai): {now_iso} ({hhmm}, {day_part})。"
             "输出一条中文自然口语，10-28字，单句，不要解释，不要引号。"
+            "时间语境必须一致：白天不要出现下班/晚饭/晚安等夜间表达。"
         )
         payload = {
             "model": self.model,
@@ -240,11 +249,80 @@ def normalize_generated_text(text: str) -> str:
     return value[:120].strip()
 
 
-def pick_topic_text(symbols: list[str]) -> tuple[str, str]:
+def shanghai_time_context(ts_ms: int | None = None) -> dict:
+    tz = timezone(timedelta(hours=8))
+    now = (
+        datetime.now(tz)
+        if ts_ms is None
+        else datetime.fromtimestamp(ts_ms / 1000.0, tz)
+    )
+    mins = now.hour * 60 + now.minute
+    if 330 <= mins < 540:
+        day_part = "early_morning"
+    elif 540 <= mins < 690:
+        day_part = "morning_session"
+    elif 690 <= mins < 780:
+        day_part = "lunch_break"
+    elif 780 <= mins < 900:
+        day_part = "afternoon_session"
+    elif 900 <= mins < 1140:
+        day_part = "evening"
+    else:
+        day_part = "night"
+    return {
+        "timezone": "Asia/Shanghai",
+        "now_iso": now.isoformat(timespec="seconds"),
+        "hhmm": now.strftime("%H:%M"),
+        "day_part": day_part,
+        "minutes_since_midnight": mins,
+    }
+
+
+def is_time_appropriate_text(text: str, day_part: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+
+    night_life = (
+        "下班",
+        "晚饭",
+        "晚餐",
+        "今晚",
+        "夜宵",
+        "熬夜",
+        "晚安",
+        "睡觉",
+        "收工",
+    )
+    morning_only = ("早安", "早餐", "刚起床", "上班路上", "早盘刚开", "刚到公司")
+
+    if day_part in (
+        "early_morning",
+        "morning_session",
+        "lunch_break",
+        "afternoon_session",
+    ):
+        if any(token in value for token in night_life):
+            return False
+
+    if day_part in ("evening", "night"):
+        if any(token in value for token in morning_only):
+            return False
+
+    return True
+
+
+def filter_templates_for_time(templates: list[str], day_part: str) -> list[str]:
+    out = [item for item in templates if is_time_appropriate_text(item, day_part)]
+    return out if out else templates
+
+
+def pick_topic_text(symbols: list[str], day_part: str) -> tuple[str, str]:
     categories = list(TOPIC_WEIGHTS.keys())
     weights = [TOPIC_WEIGHTS[key] for key in categories]
     category = random.choices(categories, weights=weights, k=1)[0]
-    template = random.choice(TOPIC_GROUPS[category])
+    pool = filter_templates_for_time(list(TOPIC_GROUPS[category]), day_part)
+    template = random.choice(pool)
     symbol = random.choice(symbols) if symbols else "600519.SH"
     return category, template.format(symbol=symbol)
 
@@ -270,18 +348,28 @@ def pick_message_text(
     content_mode: str,
     llm_ratio: float,
     llm_client: LlmClient | None,
+    time_context: dict,
 ) -> tuple[str, str, str, str | None]:
-    category, template_text = pick_topic_text(symbols)
+    day_part = str(time_context.get("day_part") or "")
+    category, template_text = pick_topic_text(symbols, day_part)
     ratio = max(0.0, min(1.0, float(llm_ratio)))
     use_llm = content_mode == "llm" or (
         content_mode == "mixed" and random.random() < ratio
     )
     if use_llm and llm_client is not None:
-        result = llm_client.generate(category=category, symbols=symbols)
+        result = llm_client.generate(
+            category=category, symbols=symbols, time_context=time_context
+        )
         if result.get("ok"):
             text = normalize_generated_text(str(result.get("text") or ""))
-            if text:
+            if text and is_time_appropriate_text(text, day_part):
                 return category, text, "llm", None
+            return (
+                category,
+                template_text,
+                "template_fallback",
+                "llm_time_mismatch",
+            )
         return (
             category,
             template_text,
@@ -459,11 +547,13 @@ def main() -> int:
                 time.sleep(delay)
 
         viewer = random.choice(viewers)
+        time_ctx = shanghai_time_context()
         category, body, content_source, llm_error = pick_message_text(
             symbols=symbols,
             content_mode=str(args.content_mode),
             llm_ratio=float(args.llm_ratio),
             llm_client=llm_client,
+            time_context=time_ctx,
         )
         if content_source == "llm":
             llm_used += 1
@@ -499,6 +589,7 @@ def main() -> int:
         code, resp = api.post(f"/api/chat/rooms/{args.room_id}/messages", payload)
         row = {
             "ts_ms": sent_ts_ms,
+            "time_context": time_ctx,
             "viewer": viewer.nickname,
             "user_session_id": viewer.session_id,
             "visibility": visibility,

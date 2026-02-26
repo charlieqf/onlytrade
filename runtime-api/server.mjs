@@ -3038,6 +3038,84 @@ const DEFAULT_CASUAL_TOPICS = [
   '盘中也要留点余地，别一把梭哈。',
 ]
 
+function shanghaiClockParts(tsMs = Date.now()) {
+  const date = new Date(Number.isFinite(Number(tsMs)) ? Number(tsMs) : Date.now())
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+
+  const pick = (type) => String(parts.find((item) => item.type === type)?.value || '')
+  const year = Number(pick('year') || 0)
+  const month = Number(pick('month') || 0)
+  const day = Number(pick('day') || 0)
+  const hour = Number(pick('hour') || 0)
+  const minute = Number(pick('minute') || 0)
+  const second = Number(pick('second') || 0)
+  const hh = String(hour).padStart(2, '0')
+  const mm = String(minute).padStart(2, '0')
+  const ss = String(second).padStart(2, '0')
+  const iso = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${hh}:${mm}:${ss}+08:00`
+  const mins = hour * 60 + minute
+
+  let dayPart = 'night'
+  if (mins >= 330 && mins < 540) dayPart = 'early_morning'
+  else if (mins >= 540 && mins < 690) dayPart = 'morning_session'
+  else if (mins >= 690 && mins < 780) dayPart = 'lunch_break'
+  else if (mins >= 780 && mins < 900) dayPart = 'afternoon_session'
+  else if (mins >= 900 && mins < 1140) dayPart = 'evening'
+
+  return {
+    timezone: 'Asia/Shanghai',
+    now_iso: iso,
+    hhmm: `${hh}:${mm}`,
+    minutes_since_midnight: mins,
+    day_part: dayPart,
+  }
+}
+
+function isTimeAwareChatTextAllowed(text, { tsMs = Date.now() } = {}) {
+  const value = String(text || '').trim()
+  if (!value) return false
+  const dayPart = shanghaiClockParts(tsMs).day_part
+
+  const nightLifePhrase = /(下班|晚饭|晚餐|夜宵|晚安|今晚|深夜|熬夜|睡觉|宵夜|收工)/i
+  const morningOnlyPhrase = /(早安|早餐|刚起床|上班路上|早盘刚开|刚到公司)/i
+
+  if (
+    (dayPart === 'early_morning' || dayPart === 'morning_session' || dayPart === 'lunch_break' || dayPart === 'afternoon_session')
+    && nightLifePhrase.test(value)
+  ) {
+    return false
+  }
+
+  if ((dayPart === 'evening' || dayPart === 'night') && morningOnlyPhrase.test(value)) {
+    return false
+  }
+
+  return true
+}
+
+function filterTimeAwareCasualTopics(topics, { tsMs = Date.now(), limit = 8 } = {}) {
+  const source = Array.isArray(topics) ? topics : []
+  const filtered = source
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item) => isTimeAwareChatTextAllowed(item, { tsMs }))
+
+  if (filtered.length > 0) {
+    return filtered.slice(0, Math.max(1, Math.floor(Number(limit) || 8)))
+  }
+
+  return DEFAULT_CASUAL_TOPICS.slice(0, Math.max(1, Math.floor(Number(limit) || 8)))
+}
+
 function simpleHash(value) {
   const text = String(value || '')
   let hash = 0
@@ -3062,6 +3140,61 @@ function extractCasualTopics(payload, { dayKey = '', limit = 8 } = {}) {
     : []
   const merged = [...external, ...DEFAULT_CASUAL_TOPICS]
   return rotatePoolByKey(merged, dayKey || String(Date.now()), limit)
+}
+
+function compactSymbolHistorySummary(row) {
+  const safe = row && typeof row === 'object' ? row : {}
+  return {
+    symbol: String(safe.symbol || '').trim().toUpperCase(),
+    past_6m: String(safe.past_6m || '').trim().slice(0, 180),
+    past_1m: String(safe.past_1m || '').trim().slice(0, 180),
+    past_1w: String(safe.past_1w || '').trim().slice(0, 180),
+    past_1d: String(safe.past_1d || '').trim().slice(0, 180),
+    lines: Array.isArray(safe.lines)
+      ? safe.lines.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 4)
+      : [],
+  }
+}
+
+async function buildSymbolHistorySummaryForRoom({ trader, symbol, nowMs = Date.now() } = {}) {
+  const safeSymbol = String(symbol || '').trim().toUpperCase()
+  if (!safeSymbol || !trader) return null
+
+  try {
+    const dailyBatch = await marketDataService.getFrames({
+      symbol: safeSymbol,
+      interval: '1d',
+      limit: 180,
+    })
+    const account = getAccount(trader.trader_id)
+    const positions = getPositions(trader.trader_id)
+    const marketSpec = getMarketSpecForExchange(trader.exchange_id)
+
+    const context = buildAgentMarketContext({
+      symbol: safeSymbol,
+      asOfTsMs: Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now(),
+      intradayBatch: { frames: [] },
+      dailyBatch,
+      positionState: buildPositionState({ symbol: safeSymbol, account, positions }),
+      marketSpec,
+    })
+
+    const descriptions = context?.daily?.price_volume_descriptions || {}
+    const lines = Array.isArray(context?.daily?.price_volume_reference_lines)
+      ? context.daily.price_volume_reference_lines
+      : []
+
+    return compactSymbolHistorySummary({
+      symbol: safeSymbol,
+      past_6m: descriptions.past_6m,
+      past_1m: descriptions.past_1m,
+      past_1w: descriptions.past_1w,
+      past_1d: descriptions.past_1d,
+      lines,
+    })
+  } catch {
+    return null
+  }
 }
 
 function newsCategoryLabel(category) {
@@ -3572,20 +3705,34 @@ async function buildRoomChatContext(roomId, {
       }
     })()
     : null
+  const historySymbol = String(symbolBrief?.symbol || headSymbol || '').trim().toUpperCase()
+  const symbolHistorySummary = await buildSymbolHistorySummaryForRoom({
+    trader,
+    symbol: historySymbol,
+    nowMs: sessionNowMs,
+  })
 
   return {
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
+    time_context: shanghaiClockParts(sessionNowMs),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
     news_commentary: Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : [],
     news_categories: Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : [],
-    casual_topics: Array.isArray(effectiveDigest?.casual_topics)
-      ? effectiveDigest.casual_topics.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
-      : DEFAULT_CASUAL_TOPICS.slice(0, 8),
+    casual_topics: filterTimeAwareCasualTopics(
+      Array.isArray(effectiveDigest?.casual_topics)
+        ? effectiveDigest.casual_topics
+        : DEFAULT_CASUAL_TOPICS,
+      { tsMs: sessionNowMs, limit: 8 }
+    ),
     news_burst_signal: effectiveDigest?.burst_signal || null,
     market_breadth_summary: effectiveBreadth?.summary || '',
     market_breadth: effectiveBreadth?.breadth || null,
     symbol_brief: symbolBrief,
+    symbol_history_summary: symbolHistorySummary,
+    symbol_history_lines: Array.isArray(symbolHistorySummary?.lines)
+      ? symbolHistorySummary.lines.slice(0, 4)
+      : [],
   }
 }
 
@@ -4566,6 +4713,15 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
 
     text = String(text || '').trim()
     if (!text) return false
+
+    if (!isTimeAwareChatTextAllowed(text, { tsMs: now })) {
+      const safeCasual = filterTimeAwareCasualTopics(roomContext?.casual_topics, { tsMs: now, limit: 6 })
+      const safeTail = pickFromPool(safeCasual, `${safeRoomId}|time-aware-fallback|${now}`, '先稳住节奏，等信号更清晰再同步。')
+      text = String(safeTail || '先稳住节奏，等信号更清晰再同步。').trim()
+      generationSource = 'fallback'
+      generationReason = 'fallback_time_context'
+      generationTone = generationTone === 'neutral' ? 'calm' : generationTone
+    }
 
     const recentOpeners = Array.isArray(previous.recent_proactive_openers)
       ? previous.recent_proactive_openers.map((item) => String(item || '').trim()).filter(Boolean).slice(-8)

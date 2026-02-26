@@ -442,6 +442,7 @@ export function useAgentTtsAutoplay({
   const ttsSeenMessageIdsRef = useRef<Set<string>>(new Set())
   const ttsQueueRef = useRef<ChatMessage[]>([])
   const ttsPlayingRef = useRef<boolean>(false)
+  const ttsPrimedRef = useRef<boolean>(false)
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
   const ttsObjectUrlRef = useRef<string | null>(null)
   const [autoplayBlocked, setAutoplayBlocked] = useState<boolean>(false)
@@ -547,6 +548,7 @@ export function useAgentTtsAutoplay({
     ttsSeenMessageIdsRef.current.clear()
     ttsQueueRef.current = []
     ttsPlayingRef.current = false
+    ttsPrimedRef.current = false
     setAutoplayBlocked(false)
     setTtsSpeaking(false)
     setTtsError('')
@@ -600,9 +602,32 @@ export function useAgentTtsAutoplay({
 
     const seen = ttsSeenMessageIdsRef.current
     const queue = ttsQueueRef.current
+    const recentRows = publicMessages.slice(-30)
+
+    if (!ttsPrimedRef.current) {
+      for (const row of recentRows) {
+        if (row.sender_type !== 'agent') continue
+        if (
+          !(
+            row.agent_message_kind === 'reply' ||
+            row.agent_message_kind === 'proactive' ||
+            row.agent_message_kind === 'narration'
+          )
+        ) {
+          continue
+        }
+        const id = String(row.id || '').trim()
+        const text = String(row.text || '').trim()
+        if (!id || !text) continue
+        seen.add(id)
+      }
+      ttsPrimedRef.current = true
+      return
+    }
+
     let appended = 0
 
-    for (const row of publicMessages.slice(-30)) {
+    for (const row of recentRows) {
       if (row.sender_type !== 'agent') continue
       if (
         !(
@@ -619,6 +644,9 @@ export function useAgentTtsAutoplay({
       if (!text) continue
       seen.add(id)
       queue.push(row)
+      if (queue.length > 2) {
+        queue.splice(0, queue.length - 2)
+      }
       appended += 1
     }
 

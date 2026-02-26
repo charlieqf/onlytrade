@@ -41,6 +41,20 @@ test('chat responder forwards commentary/category context for proactive prompts'
         market_overview_brief: 'A股缩量震荡，科技分化。',
         news_digest_titles: ['地缘冲突推升油价', '美债收益率上行'],
         news_commentary: ['地缘热点：中东局势升级；能源价格波动'],
+        symbol_history_summary: {
+          symbol: '600519.SH',
+          past_6m: '近6个月总体震荡上行。',
+          past_1m: '近1个月回撤后反弹。',
+          past_1w: '近1周量能回升。',
+          past_1d: '最近1日缩量整理。',
+        },
+        time_context: {
+          timezone: 'Asia/Shanghai',
+          now_iso: '2026-02-26T09:30:00+08:00',
+          hhmm: '09:30',
+          day_part: 'morning_session',
+          minutes_since_midnight: 570,
+        },
         news_categories: [
           { category: 'geopolitics', label: '地缘', count: 3 },
           { category: 'global_macro', label: '宏观', count: 2 },
@@ -63,9 +77,12 @@ test('chat responder forwards commentary/category context for proactive prompts'
     assert.equal(Array.isArray(promptPayload?.room_context?.news_commentary), true)
     assert.equal(Array.isArray(promptPayload?.room_context?.news_categories), true)
     assert.equal(promptPayload?.room_context?.news_burst_signal?.category, 'geopolitics')
+    assert.equal(promptPayload?.room_context?.symbol_history_summary?.symbol, '600519.SH')
+    assert.equal(promptPayload?.room_context?.time_context?.day_part, 'morning_session')
 
     const systemPrompt = String(capturedBody?.messages?.[0]?.content || '')
     assert.match(systemPrompt, /tech, macro economy, and geopolitics/i)
+    assert.match(systemPrompt, /Treat room_context\.time_context/i)
   } finally {
     globalThis.fetch = originalFetch
   }

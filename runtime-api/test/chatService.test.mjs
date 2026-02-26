@@ -325,3 +325,35 @@ test('proactive cadence accelerates during news burst window', async () => {
   const second = await svc.getPublicMessages('t_001', { limit: 20 })
   assert.equal(second.filter((item) => item.sender_type === 'agent').length, 2)
 })
+
+test('mention reply replaces time-mismatched casual text with daytime fallback', async () => {
+  const fake = createFakeStore()
+  const morningTsMs = Date.parse('2026-02-26T01:30:00.000Z')
+  const svc = createChatService({
+    store: fake.store,
+    resolveRoomAgent: () => ({
+      roomId: 't_001',
+      agentId: 't_001',
+      agentHandle: 'hs300_momentum',
+      agentName: 'HS300 Momentum',
+      isRunning: true,
+    }),
+    nowMs: () => morningTsMs,
+    shouldAgentReply: () => true,
+    generateAgentMessageText: async () => '今晚收工后再细聊。',
+  })
+
+  const result = await svc.postMessage({
+    roomId: 't_001',
+    userSessionId: 'usr_sess_1',
+    userNickname: 'TraderFox',
+    visibility: 'public',
+    text: '@agent update?',
+    messageType: 'public_mention_agent',
+  })
+
+  assert.equal(
+    result.agent_reply?.text,
+    '@TraderFox 我先把早盘节奏稳住，等信号更清晰再同步。'
+  )
+})

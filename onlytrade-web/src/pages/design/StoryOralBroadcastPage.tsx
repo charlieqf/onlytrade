@@ -15,10 +15,18 @@ type StoryManifest = {
   scenes: string[]
 }
 
+type SpeakerRole = 'alpha' | 'xiaozhen' | 'listener' | 'unknown'
+
+type ScriptSegment = {
+  text: string
+  speaker: SpeakerRole
+}
+
 type SubtitleCue = {
   startSec: number
   endSec: number
   text: string
+  speaker: SpeakerRole
 }
 
 const DEFAULT_SCENES = Array.from({ length: 18 }, (_, idx) => `scene_${idx}.png`)
@@ -36,6 +44,9 @@ const STORY_SLUG_BY_TRADER: Record<string, string> = {
   t_007: 'zhaolaoge',
   t_008: 'xuxiang',
   t_009: 'qingshan',
+  t_010: 'ai_daily_20260226',
+  t_011: 'citrini_ghost_20260226',
+  t_012: 'ai_tribunal_20260226',
 }
 
 function resolveStorySlug(traderId: string): string {
@@ -95,47 +106,77 @@ function parseStoryManifest(payload: unknown): StoryManifest {
   }
 }
 
-function splitScriptSentences(script: string): string[] {
-  const compact = String(script || '')
+function normalizeSpeakerRole(raw: string): SpeakerRole {
+  const token = String(raw || '').trim().toLowerCase()
+  if (!token) return 'unknown'
+  if (token === 'alpha' || token === 'host') return 'alpha'
+  if (token === 'xiaozhen' || token === 'guest') return 'xiaozhen'
+  if (
+    token === 'listener'
+    || token === 'caller'
+    || token === 'audience'
+    || token.startsWith('caller_')
+  ) {
+    return 'listener'
+  }
+  return 'unknown'
+}
+
+function parseScriptSegments(script: string): ScriptSegment[] {
+  const lines = String(script || '')
     .replace(/\r/g, '\n')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .join('')
-  if (!compact) return []
 
-  const matched = compact.match(/[^。！？!?]+[。！？!?]?/g) || []
-  return matched
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
+  if (!lines.length) return []
 
-function coalesceSentences(sentences: string[], targetCount: number): string[] {
-  if (sentences.length <= targetCount) return sentences
-  const chunkSize = Math.ceil(sentences.length / targetCount)
-  const merged: string[] = []
-  for (let i = 0; i < sentences.length; i += chunkSize) {
-    merged.push(sentences.slice(i, i + chunkSize).join(''))
+  const parsed: ScriptSegment[] = []
+  for (const line of lines) {
+    let speaker: SpeakerRole = 'unknown'
+    let text = line
+
+    const bracketTagged = line.match(/^\[([^\]]+)\]\s*(.+)$/)
+    if (bracketTagged) {
+      speaker = normalizeSpeakerRole(bracketTagged[1])
+      text = bracketTagged[2]
+    } else {
+      const colonTagged = line.match(/^([a-zA-Z0-9_\u4e00-\u9fa5]+)\s*[：:]\s*(.+)$/)
+      if (colonTagged) {
+        speaker = normalizeSpeakerRole(colonTagged[1])
+        text = colonTagged[2]
+      }
+    }
+
+    const compactText = String(text || '')
+      .replace(/<break\s+time="\d+ms"\s*\/?>/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (!compactText) continue
+    if (/^sys_inject_(ad|song)$/i.test(compactText)) continue
+    parsed.push({ text: compactText, speaker })
   }
-  return merged
+
+  return parsed
 }
 
 function buildSubtitleCues(script: string, durationSec: number): SubtitleCue[] {
-  const rawSentences = splitScriptSentences(script)
-  if (!rawSentences.length) return []
+  const segments = parseScriptSegments(script)
+  if (!segments.length) return []
 
-  const sentences = coalesceSentences(rawSentences, 220)
   const safeDuration = Math.max(10, Number(durationSec) || 1001)
   const minSec = 2.1
   const maxSec = 8.2
 
-  const weights = sentences.map((line) => Math.max(8, line.replace(/\s+/g, '').length))
+  const weights = segments.map((segment) => Math.max(8, segment.text.replace(/\s+/g, '').length))
   const totalWeight = weights.reduce((sum, n) => sum + n, 0)
 
-  const preliminary = sentences.map((text, idx) => {
+  const preliminary = segments.map((segment, idx) => {
     const raw = (safeDuration * weights[idx]) / Math.max(1, totalWeight)
     return {
-      text,
+      text: segment.text,
+      speaker: segment.speaker,
       sec: Math.max(minSec, Math.min(maxSec, raw)),
     }
   })
@@ -155,6 +196,7 @@ function buildSubtitleCues(script: string, durationSec: number): SubtitleCue[] {
       startSec,
       endSec,
       text: row.text,
+      speaker: row.speaker,
     }
   })
 }
@@ -208,6 +250,10 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   const narrationAudioRef = useRef<HTMLAudioElement | null>(null)
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null)
+  const phoneNoiseContextRef = useRef<AudioContext | null>(null)
+  const phoneNoiseSourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const phoneNoiseGainRef = useRef<GainNode | null>(null)
+  const phoneNoiseBufferRef = useRef<AudioBuffer | null>(null)
   const narrationRetryCountRef = useRef(0)
   const manualPauseRef = useRef(false)
   const pendingUnmuteRef = useRef(false)
@@ -243,13 +289,23 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     return buildSubtitleCues(scriptText, baseDuration)
   }, [scriptText, narrationDurationSec, manifest.duration_sec])
 
-  const activeCue = useMemo(() => {
-    if (!subtitleCues.length) return ''
+  const activeCue = useMemo<SubtitleCue | null>(() => {
+    if (!subtitleCues.length) return null
     const cue = subtitleCues.find(
       (row) => narrationTimeSec >= row.startSec && narrationTimeSec < row.endSec
     )
-    return cue?.text || subtitleCues[subtitleCues.length - 1]?.text || ''
+    return cue || subtitleCues[subtitleCues.length - 1] || null
   }, [subtitleCues, narrationTimeSec])
+
+  const activeCueText = activeCue?.text || ''
+  const activeSpeaker = activeCue?.speaker || 'unknown'
+  const hostSpeaking = activeSpeaker === 'alpha'
+  const guestSpeaking = activeSpeaker === 'xiaozhen'
+  const listenerSpeaking = activeSpeaker === 'listener'
+  const showDualSpeakerIndicator = useMemo(
+    () => subtitleCues.some((row) => row.speaker === 'alpha' || row.speaker === 'xiaozhen'),
+    [subtitleCues]
+  )
 
   const sceneFiles = manifest.scenes.length ? manifest.scenes : DEFAULT_SCENES
   const progress = narrationDurationSec > 0
@@ -470,6 +526,11 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     if (typeof window === 'undefined') return
 
     const tryUnmuteAfterInteraction = () => {
+      const phoneNoiseContext = phoneNoiseContextRef.current
+      if (phoneNoiseContext && phoneNoiseContext.state === 'suspended') {
+        phoneNoiseContext.resume().catch(() => {})
+      }
+
       if (!pendingUnmuteRef.current) return
       const narration = narrationAudioRef.current
       if (!narration) return
@@ -513,6 +574,115 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       window.clearTimeout(timer)
     }
   }, [tryStartNarration, narrationSrc])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const shouldEnableNoise = narrationPlaying && listenerSpeaking
+    if (!shouldEnableNoise) {
+      const existing = phoneNoiseSourceRef.current
+      if (existing) {
+        try {
+          existing.stop()
+        } catch {
+          // ignore
+        }
+        phoneNoiseSourceRef.current = null
+      }
+      return
+    }
+
+    const AudioCtor = (
+      window.AudioContext
+      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    )
+    if (!AudioCtor) return
+
+    if (!phoneNoiseContextRef.current) {
+      phoneNoiseContextRef.current = new AudioCtor()
+    }
+    const ctx = phoneNoiseContextRef.current
+    if (!ctx) return
+
+    if (!phoneNoiseGainRef.current) {
+      const gain = ctx.createGain()
+      gain.gain.value = 0.016
+      gain.connect(ctx.destination)
+      phoneNoiseGainRef.current = gain
+    }
+
+    if (!phoneNoiseBufferRef.current) {
+      const frameCount = Math.floor(ctx.sampleRate * 1.5)
+      const buffer = ctx.createBuffer(1, frameCount, ctx.sampleRate)
+      const channel = buffer.getChannelData(0)
+      for (let i = 0; i < frameCount; i += 1) {
+        channel[i] = (Math.random() * 2 - 1) * 0.42
+      }
+      phoneNoiseBufferRef.current = buffer
+    }
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {})
+    }
+
+    if (!phoneNoiseSourceRef.current && phoneNoiseGainRef.current && phoneNoiseBufferRef.current) {
+      const source = ctx.createBufferSource()
+      source.buffer = phoneNoiseBufferRef.current
+      source.loop = true
+
+      const highpass = ctx.createBiquadFilter()
+      highpass.type = 'highpass'
+      highpass.frequency.value = 420
+
+      const lowpass = ctx.createBiquadFilter()
+      lowpass.type = 'lowpass'
+      lowpass.frequency.value = 3400
+
+      const bandpass = ctx.createBiquadFilter()
+      bandpass.type = 'bandpass'
+      bandpass.frequency.value = 1650
+      bandpass.Q.value = 0.75
+
+      source.connect(highpass)
+      highpass.connect(lowpass)
+      lowpass.connect(bandpass)
+      bandpass.connect(phoneNoiseGainRef.current)
+
+      source.onended = () => {
+        if (phoneNoiseSourceRef.current === source) {
+          phoneNoiseSourceRef.current = null
+        }
+      }
+
+      try {
+        source.start()
+        phoneNoiseSourceRef.current = source
+      } catch {
+        // ignore duplicate start or autoplay restrictions
+      }
+    }
+  }, [listenerSpeaking, narrationPlaying])
+
+  useEffect(() => {
+    return () => {
+      const source = phoneNoiseSourceRef.current
+      if (source) {
+        try {
+          source.stop()
+        } catch {
+          // ignore
+        }
+        phoneNoiseSourceRef.current = null
+      }
+      const ctx = phoneNoiseContextRef.current
+      if (ctx) {
+        ctx.close().catch(() => {})
+        phoneNoiseContextRef.current = null
+      }
+      phoneNoiseGainRef.current = null
+      phoneNoiseBufferRef.current = null
+    }
+  }, [])
 
   const toggleNarration = useCallback(async () => {
     const narration = narrationAudioRef.current
@@ -593,6 +763,32 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
               <span className="rounded bg-black/55 px-1.5 py-0.5">dec {decisionAgeLabel}</span>
             </div>
 
+            {showDualSpeakerIndicator && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/90">
+                <div className="flex items-center gap-1.5 rounded-full border border-white/20 bg-black/45 px-2 py-1">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-cyan-500/75 text-[9px] font-black text-black">
+                    A
+                  </span>
+                  <span className="font-semibold">alpha</span>
+                  {hostSpeaking && <span className="rounded bg-emerald-400/25 px-1.5 py-0.5 text-[9px] text-emerald-200">在发言</span>}
+                </div>
+
+                <div className="flex items-center gap-1.5 rounded-full border border-white/20 bg-black/45 px-2 py-1">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-pink-400/75 text-[9px] font-black text-black">
+                    真
+                  </span>
+                  <span className="font-semibold">xiaozhen</span>
+                  {guestSpeaking && <span className="rounded bg-emerald-400/25 px-1.5 py-0.5 text-[9px] text-emerald-200">在发言</span>}
+                </div>
+
+                {listenerSpeaking && (
+                  <span className="rounded-full border border-amber-300/40 bg-amber-500/20 px-2 py-1 text-[9px] font-semibold text-amber-200">
+                    连线听众在发言 · 已叠加电话噪音
+                  </span>
+                )}
+              </div>
+            )}
+
             {(isDegraded || loadError || mediaError) && (
               <div className="mt-2 rounded border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] text-red-100">
                 {loadError || mediaError || (language === 'zh'
@@ -615,7 +811,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
           <div className="shrink-0 border-b border-white/10 bg-[#121212] px-3 py-2">
             <div className="min-h-[96px] rounded border border-white/15 bg-black/45 p-2">
               <div className="line-clamp-4 text-[13px] font-medium leading-relaxed text-white">
-                {activeCue || (language === 'zh' ? '说书准备中...' : 'Story stream loading...')}
+                {activeCueText || (language === 'zh' ? '说书准备中...' : 'Story stream loading...')}
               </div>
               <div className="mt-1 text-[10px] font-mono text-white/65">
                 scene {activeSceneIndex + 1}/{sceneFiles.length}

@@ -194,6 +194,7 @@ export interface RoomStreamPacket {
       red_blue_ratio?: number | null
     } | null
     symbol_brief?: any
+    thinking_symbol?: string | null
   }
   status: SystemStatus
   account: AccountInfo
@@ -209,6 +210,8 @@ export interface RoomStreamPacket {
   }
   decision_audit_preview?: any
   decision_meta?: any
+  thinking_symbol_live?: string | null
+  thinking_symbol_live_ts_ms?: number | null
   market_overview?: {
     source_kind: string | null
     brief: string

@@ -324,6 +324,65 @@ function extractRawDecision(value, fallbackSymbol) {
     }
   }
 
+  const source = (() => {
+    if (Array.isArray(value.decisions) && value.decisions[0] && typeof value.decisions[0] === 'object') {
+      return value.decisions[0]
+    }
+    if (value.decision && typeof value.decision === 'object') {
+      return value.decision
+    }
+    return value
+  })()
+
+  const action = toAction(
+    source.action
+    ?? source.decision
+    ?? source.signal
+    ?? source.side
+    ?? source.trade_action
+  )
+  const symbol = String(
+    source.symbol
+    ?? source.ticker
+    ?? source.code
+    ?? source.instrument
+    ?? fallbackSymbol
+    ?? ''
+  ).trim() || fallbackSymbol
+  const confidence = Number(
+    source.confidence
+    ?? source.confidence_score
+    ?? source.score
+    ?? source.probability
+    ?? 0.6
+  )
+  const quantityShares = Number(
+    source.quantity_shares
+    ?? source.quantity
+    ?? source.shares
+    ?? source.qty
+    ?? source.size
+  )
+  const reasoning = String(
+    source.reasoning
+    ?? source.rationale
+    ?? source.thesis
+    ?? source.explanation
+    ?? source.notes
+    ?? ''
+  ).trim()
+
+  const coerced = {
+    action,
+    symbol,
+    confidence: Number.isFinite(confidence) ? confidence : 0.6,
+    quantity_shares: Number.isFinite(quantityShares) ? quantityShares : (action === 'hold' ? 0 : 100),
+    reasoning: reasoning || 'Model output normalized by fallback parser.',
+  }
+  if (isValidRawDecisionShape(coerced)) {
+    return coerced
+  }
+
   return null
 }
 

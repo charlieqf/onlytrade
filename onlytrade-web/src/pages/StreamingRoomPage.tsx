@@ -104,8 +104,14 @@ function topPosition(positions: Position[]) {
 }
 
 function pickThinkingSymbol(packet?: RoomStreamPacket): string | undefined {
+  const fromLive = String((packet as any)?.thinking_symbol_live || '').trim()
+  if (fromLive) return fromLive
+
   const fromMeta = String((packet as any)?.decision_meta?.thinking_symbol || '').trim()
   if (fromMeta) return fromMeta
+
+  const fromContext = String((packet as any)?.room_context?.thinking_symbol || '').trim()
+  if (fromContext) return fromContext
 
   const symbolBrief = (packet?.room_context as any)?.symbol_brief
   if (symbolBrief && typeof symbolBrief === 'object') {
@@ -131,13 +137,13 @@ function resolveKlineFocusTarget({
     ? Date.now() - new Date(decisionTs).getTime()
     : Number.POSITIVE_INFINITY
 
-  if (decisionSymbol && decisionAgeMs <= 2 * 60_000) {
-    return { symbol: decisionSymbol, source: 'decision' as const }
-  }
-
   const thinkingSymbol = pickThinkingSymbol(streamPacket)
   if (thinkingSymbol) {
     return { symbol: thinkingSymbol, source: 'thinking' as const }
+  }
+
+  if (decisionSymbol && decisionAgeMs <= 2 * 60_000) {
+    return { symbol: decisionSymbol, source: 'decision' as const }
   }
 
   const positionSymbol = String(featuredPos?.symbol || '').trim()

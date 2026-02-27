@@ -2817,6 +2817,7 @@ const roomEventBufferByRoom = new Map()
 const roomEventSeqByRoom = new Map()
 const roomEventBufferExpiryByRoom = new Map()
 const roomPublicChatActivityByRoom = new Map()
+const runtimeThinkingByTraderId = new Map()
 const roomKeepaliveTimerByRoom = new Map()
 const roomStreamPacketTimerByRoom = new Map()
 const roomStreamPacketBuildStateByRoom = new Map()
@@ -5805,6 +5806,15 @@ async function evaluateTraderContext(trader, { cycleNumber }) {
     marketSpec,
   })
 
+  if (symbol) {
+    runtimeThinkingByTraderId.set(trader.trader_id, {
+      symbol,
+      cycle_number: Number.isFinite(Number(cycleNumber)) ? Number(cycleNumber) : null,
+      updated_ts_ms: Date.now(),
+      source: 'evaluate_context',
+    })
+  }
+
   context.candidate_set = {
     symbols: rankedCandidates.map((item) => item.symbol),
     selected_symbol: symbol,
@@ -6508,6 +6518,25 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
       || (Number(meta.cycle_number || 0) > 0 && Number(meta.cycle_number || 0) === Number(latestDecision?.cycle_number || 0)))
     : false
   const effectiveMeta = metaMatchesDecision ? meta : null
+  const runtimeThinking = runtimeThinkingByTraderId.get(safeRoomId) || null
+  const runtimeThinkingTsMs = Number(runtimeThinking?.updated_ts_ms || 0)
+  const runtimeThinkingAgeMs = runtimeThinkingTsMs > 0 ? Math.max(0, tsMs - runtimeThinkingTsMs) : null
+  const runtimeThinkingSymbolRaw = String(runtimeThinking?.symbol || '').trim().toUpperCase()
+  const runtimeThinkingSymbol = (
+    runtimeThinkingSymbolRaw
+    && Number.isFinite(runtimeThinkingAgeMs)
+    && runtimeThinkingAgeMs <= 3 * 60_000
+  )
+    ? runtimeThinkingSymbolRaw
+    : null
+  const decisionMeta = effectiveMeta
+    ? { ...effectiveMeta }
+    : null
+  if (runtimeThinkingSymbol && decisionMeta) {
+    decisionMeta.thinking_symbol = runtimeThinkingSymbol
+    decisionMeta.thinking_symbol_live_ts_ms = runtimeThinkingTsMs || null
+    decisionMeta.thinking_symbol_source = String(runtimeThinking?.source || 'runtime')
+  }
 
   const decisionAuditPreview = latestDecision ? {
     schema_version: 'agent.decision_audit.v1',
@@ -6535,7 +6564,12 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
       exchange_id: trader.exchange_id,
       is_running: trader.is_running === true,
     },
-    room_context: roomContext,
+    room_context: runtimeThinkingSymbol
+      ? {
+        ...roomContext,
+        thinking_symbol: runtimeThinkingSymbol,
+      }
+      : roomContext,
     market_overview: {
       source_kind: overview?.source_kind || null,
       brief: overview?.brief || '',
@@ -6567,7 +6601,9 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
         : null,
     },
     decision_audit_preview: decisionAuditPreview,
-    decision_meta: effectiveMeta,
+    decision_meta: decisionMeta,
+    thinking_symbol_live: runtimeThinkingSymbol,
+    thinking_symbol_live_ts_ms: runtimeThinkingSymbol ? runtimeThinkingTsMs : null,
     runtime: {
       state: agentRuntime?.getState?.() || null,
       metrics: agentRuntime?.getMetrics?.() || null,
@@ -7746,6 +7782,20 @@ agentRuntime = createInMemoryAgentRuntime({
         market_breadth: context?.market_breadth || null,
         news_digest: context?.news_digest || null,
       })
+      const headSymbol = String(
+        decision?.decisions?.[0]?.symbol
+        || context?.symbol
+        || context?.symbol_brief?.symbol
+        || ''
+      ).trim().toUpperCase()
+      if (headSymbol) {
+        runtimeThinkingByTraderId.set(trader.trader_id, {
+          symbol: headSymbol,
+          cycle_number: Number(decision?.cycle_number || 0),
+          updated_ts_ms: Date.now(),
+          source: 'decision',
+        })
+      }
     } catch {
       // ignore
     }

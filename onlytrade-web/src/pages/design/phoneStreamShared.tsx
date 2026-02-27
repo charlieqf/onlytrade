@@ -220,8 +220,14 @@ function pickPositionSymbol(positions: Position[]): string | undefined {
 }
 
 function pickThinkingSymbol(packet?: RoomStreamPacket): string | undefined {
+  const fromLive = String((packet as any)?.thinking_symbol_live || '').trim()
+  if (fromLive) return fromLive
+
   const fromMeta = String((packet as any)?.decision_meta?.thinking_symbol || '').trim()
   if (fromMeta) return fromMeta
+
+  const fromContext = String((packet as any)?.room_context?.thinking_symbol || '').trim()
+  if (fromContext) return fromContext
 
   const symbolBrief = (packet?.room_context as any)?.symbol_brief
   if (symbolBrief && typeof symbolBrief === 'object') {
@@ -308,10 +314,10 @@ export function usePhoneStreamData({
   const positionSymbol = pickPositionSymbol(positions)
 
   const focusedSymbol =
+    thinkingSymbol ||
     (latestDecisionSymbol && latestDecisionAgeMs <= 2 * 60_000
       ? latestDecisionSymbol
       : '') ||
-    thinkingSymbol ||
     positionSymbol ||
     latestDecisionSymbol ||
     '600519.SH'

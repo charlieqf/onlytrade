@@ -7,6 +7,29 @@
   "narration_file": "narration.mp3",
   "bgm_file": "bgm.mp3",
   "duration_sec": 564,
+  "participants": [
+    {
+      "id": "alpha",
+      "name": "alpha",
+      "role": "host",
+      "seat": 0,
+      "avatar": "host.mp4"
+    },
+    {
+      "id": "xiaozhen",
+      "name": "xiaozhen",
+      "role": "guest",
+      "seat": 1,
+      "avatar": "guest1.mp4"
+    },
+    {
+      "id": "caller_1",
+      "name": "guest 2",
+      "role": "guest",
+      "seat": 2,
+      "avatar": "guest2.png"
+    }
+  ],
   "scenes": [
     "scene_0.png"
   ]

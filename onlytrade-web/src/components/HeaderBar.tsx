@@ -20,6 +20,7 @@ type Page =
   | 'expert2'
   | 'expert3'
   | 'story'
+  | 'multiBroadcast'
 
 interface HeaderBarProps {
   onLoginClick?: () => void

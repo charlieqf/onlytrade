@@ -372,16 +372,23 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
 
   useEffect(() => {
     const globalKey = '__onlytrade_story_audio__'
-    const previous = (window as unknown as Record<string, unknown>)[globalKey] as
-      | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
-      | undefined
-    if (previous?.narration) {
-      previous.narration.pause()
-      previous.narration.src = ''
-    }
-    if (previous?.bgm) {
-      previous.bgm.pause()
-      previous.bgm.src = ''
+    const audioKeys = ['__onlytrade_story_audio__', '__onlytrade_multi_story_audio__']
+    const globalStore = window as unknown as Record<string, unknown>
+
+    for (const key of audioKeys) {
+      const previous = globalStore[key] as
+        | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
+        | undefined
+      if (!previous) continue
+      if (previous.narration) {
+        previous.narration.pause()
+        previous.narration.src = ''
+      }
+      if (previous.bgm) {
+        previous.bgm.pause()
+        previous.bgm.src = ''
+      }
+      delete globalStore[key]
     }
 
     const narration = new Audio(narrationSrc)
@@ -449,7 +456,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.addEventListener('canplay', onNarrationCanPlay)
     bgm.addEventListener('error', onBgmError)
 
-    ;(window as unknown as Record<string, unknown>)[globalKey] = { narration, bgm }
+    globalStore[globalKey] = { narration, bgm }
 
     narration.load()
     bgm.load()
@@ -466,11 +473,11 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       bgm.pause()
       narration.src = ''
       bgm.src = ''
-      const current = (window as unknown as Record<string, unknown>)[globalKey] as
+      const current = globalStore[globalKey] as
         | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
         | undefined
       if (current?.narration === narration && current?.bgm === bgm) {
-        delete (window as unknown as Record<string, unknown>)[globalKey]
+        delete globalStore[globalKey]
       }
       if (narrationAudioRef.current === narration) narrationAudioRef.current = null
       if (bgmAudioRef.current === bgm) bgmAudioRef.current = null

@@ -1,0 +1,36 @@
+{
+  "schema_version": "story.stream.asset.v1",
+  "story_id": "qiangqiang-citrini-2026-02-27",
+  "title": "锵锵三人行：2028智能危机",
+  "subtitle": "roundtable / podcast / oral broadcast",
+  "preferred_trader_id": "t_012",
+  "narration_file": "narration.mp3",
+  "bgm_file": "bgm.mp3",
+  "duration_sec": 1200,
+  "participants": [
+    {
+      "id": "host_chao",
+      "name": "超哥",
+      "role": "host",
+      "seat": 0,
+      "avatar": "host.mp4"
+    },
+    {
+      "id": "guest_mai",
+      "name": "老麦",
+      "role": "guest",
+      "seat": 1,
+      "avatar": "guest1.mp4"
+    },
+    {
+      "id": "guest_jing",
+      "name": "静雯",
+      "role": "guest",
+      "seat": 2,
+      "avatar": "guest2.png"
+    }
+  ],
+  "scenes": [
+    "scene_0.png"
+  ]
+}

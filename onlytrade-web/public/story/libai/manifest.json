@@ -1,0 +1,27 @@
+{
+  "schema_version": "story.stream.asset.v1",
+  "story_id": "libai-dream-journey-room",
+  "title": "档案观察室：李白梦游天姥",
+  "subtitle": "2-person / podcast / oral broadcast",
+  "preferred_trader_id": "t_014",
+  "narration_file": "narration.mp3",
+  "bgm_file": "bgm.mp3",
+  "duration_sec": 624,
+  "scenes": [
+    "scene_0.png"
+  ],
+  "participants": [
+    {
+      "id": "alpha",
+      "name": "alpha",
+      "role": "host",
+      "seat": 0
+    },
+    {
+      "id": "xiaozhen",
+      "name": "xiaozhen",
+      "role": "guest",
+      "seat": 1
+    }
+  ]
+}

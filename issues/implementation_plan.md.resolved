@@ -1,0 +1,25 @@
+# Fix "No trader selected" Issue on Multi-Broadcast Page
+
+## Context
+When deploying OnlyTrade to the VM under the `/onlytrade` subdirectory, the frontend API requests still hardcode `/api/` (e.g., `GET /api/traders`). Because the Nginx configuration only reverse-proxies `/onlytrade/api/` to the backend, the `/api/` requests fall through to the Single Page Application (SPA) catch-all rule, returning HTML instead of JSON. The frontend [getPublicTraders](file:///c:/work/code/onlytrade/onlytrade-web/src/lib/api.ts#100-106) call fails silently (catches parse error), resulting in an empty trader list and the "No trader selected" UI state.
+
+## Proposed Changes
+
+Instead of refactoring the entire frontend codebase to dynamically prefix `/onlytrade` for every `/api/` fetch, the simplest and most robust fix is to add a new `location` block to the Nginx configuration.
+
+### Nginx Configuration
+#### [MODIFY] [onlytrade.conf](file:///c:/Users/charl/onlytrade.conf)
+- Add a new `location ^~ /api/` block that proxies requests directly to `http://127.0.0.1:18080/api/` (identical to the existing `/onlytrade/api/` block).
+
+### Runbook Documentation
+#### [MODIFY] [aliyun-vm-deploy-qwen.md](file:///c:/work/code/onlytrade/docs/runbooks/aliyun-vm-deploy-qwen.md)
+- Update the Nginx configuration code block in Section `7.1` to include the new `/api/` proxy bridging, so future deployments will have this fix automatically.
+
+## Verification Plan
+
+### Automated Tests
+- Review the Nginx configuration changes for syntax correctness.
+
+### Manual Verification
+- The user will need to SCP the updated [onlytrade.conf](file:///c:/Users/charl/onlytrade.conf) to the VM (`/usr/local/nginx/conf/onlytrade.conf`) and reload Nginx (`sudo nginx -s reload`).
+- Reload the browser page `http://10.0.0.215:18000/onlytrade/stream/multi-broadcast?trader=t_012&show=qiangqiang_citrini_20260227`. The `GET /api/traders` request should successfully fetch the JSON, populate [te](file:///c:/work/code/onlytrade/onlytrade-web/src/lib/api.ts#1119-1126), match the `t_012` trader, and the console error or "No trader selected" message should disappear.

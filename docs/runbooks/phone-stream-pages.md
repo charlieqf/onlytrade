@@ -41,6 +41,8 @@ This document tracks the 4 formal phone-first stream pages, their routes, and th
     - `t_010` -> `ai_daily_20260226`
     - `t_011` -> `citrini_ghost_20260226`
     - `t_012` -> `ai_tribunal_20260226`
+    - `t_013` -> `mandela_effect`
+    - `t_014` -> `libai`
   - Optional override: `?story=<story_slug>`
 
 Path-based bridge notes:

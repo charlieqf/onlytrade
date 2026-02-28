@@ -55,6 +55,8 @@ const SHOW_SLUG_BY_TRADER: Record<string, string> = {
   t_010: 'ai_daily_20260226',
   t_011: 'citrini_ghost_20260226',
   t_012: 'ai_tribunal_20260226',
+  t_013: 'mandela_effect',
+  t_014: 'libai',
 }
 
 const SPEAKER_NAME_MAP: Record<string, string> = {

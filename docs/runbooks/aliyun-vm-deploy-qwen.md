@@ -4,29 +4,43 @@
 
 适用对象：国内同事，按步骤执行即可。
 
+> [!IMPORTANT]
+> **目标环境**：CentOS 7 (Core)，已有多个 Docker 服务在运行。
+> 本指南已根据实际环境调整，使用 `yum` 包管理、`nvm` 安装 Node 20、
+> 自定义 Nginx 路径 `/usr/local/nginx/conf/`。
+
 ---
 
 ## 0. 目标与架构
 
 - 前端：`onlytrade-web` 构建后静态文件，由 Nginx 提供。
 - 后端：`runtime-api/server.mjs`，监听 `127.0.0.1:18080`。
-- 对外入口：`http://<aliyun-ip>:8000/onlytrade/...`
+- 对外入口：`http://<阿里云公网IP>:18000/onlytrade/...`
 - Nginx 反代：
   - `/onlytrade/api/*` -> `http://127.0.0.1:18080/api/*`
   - 其余 `/onlytrade/*` -> 前端 SPA（`index.html`）
 - LLM：通过 OpenAI 兼容协议接入 Qwen。
 
+> [!NOTE]
+> 原计划使用端口 `8000`，但该端口已被现有 Python3 服务占用。
+> 改用 `18000` 作为对外访问端口，`18080` 为后端 API 内部端口不变。
+> 如需使用其他端口，请全文替换 `18000`。
+
 ---
 
 ## 1. 机器与网络准备
 
-建议配置：
+当前 VM 配置（已确认）：
 
-- 2C4G 起步（推荐 4C8G，前端构建更稳）
-- 系统：Ubuntu 22.04/24.04（其他发行版可参考同逻辑）
-- 安全组放行：
-  - `22`（SSH）
-  - `8000`（网页访问）
+- CentOS 7 (Core)，内核 3.10.0-1160 x86_64
+- 16GB 内存
+- 磁盘 275G，已用 ~235G（剩余 ~41G，足够部署）
+- 已有 Docker 容器运行多个服务
+
+安全组放行（如未开放）：
+
+- `22`（SSH）
+- `18000`（OnlyTrade 网页访问）
 
 可选端口（仅调试）：
 
@@ -34,19 +48,36 @@
 
 ---
 
-## 2. 安装基础依赖
+## 2. 安装/升级基础依赖
+
+### 2.1 系统包（CentOS 7 yum）
+
+大部分已安装。确认并补充：
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git curl ca-certificates build-essential nginx python3 python3-pip
+sudo yum install -y git curl ca-certificates make gcc gcc-c++ nginx python3 python3-pip
 ```
 
-安装 Node.js 20：
+### 2.2 安装 Node.js 20（via nvm）
+
+> [!WARNING]
+> 系统自带 Node v16.20.2，不要直接升级以免影响其他服务。
+> 使用 `nvm` 安装 Node 20，仅 OnlyTrade 使用。
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-node -v
+# 安装 nvm（如已安装可跳过）
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+# 加载 nvm（或重新登录）
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# 安装 Node 20 并设为默认
+nvm install 20
+nvm alias default 20
+
+# 验证
+node -v   # 应输出 v20.x.x
 npm -v
 ```
 
@@ -134,6 +165,10 @@ EOF
 ## 5. 安装依赖并构建
 
 ```bash
+# 确保使用 Node 20（nvm 环境）
+source ~/.nvm/nvm.sh
+nvm use 20
+
 cd /opt/onlytrade
 
 # 后端依赖
@@ -148,10 +183,18 @@ npm run build --prefix onlytrade-web
 
 ## 6. 配置 systemd（后端常驻）
 
-创建服务文件：
+> [!IMPORTANT]
+> 因为 Node 20 通过 nvm 安装，`ExecStart` 需要使用 nvm 管理的 Node 路径。
+> 先查路径：`which node`（在 nvm use 20 后执行），通常为 `/root/.nvm/versions/node/v20.x.x/bin/node`。
+
+创建服务文件（请将 `<NVM_NODE_PATH>` 替换为实际路径）：
 
 ```bash
-sudo tee /etc/systemd/system/onlytrade-runtime-api.service >/dev/null <<'EOF'
+# 获取当前 nvm node 路径
+NVM_NODE=$(which node)
+echo "Node path: $NVM_NODE"
+
+sudo tee /etc/systemd/system/onlytrade-runtime-api.service >/dev/null <<EOF
 [Unit]
 Description=OnlyTrade Runtime API
 After=network.target
@@ -160,7 +203,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/onlytrade/runtime-api
-ExecStart=/usr/bin/node server.mjs
+ExecStart=$NVM_NODE server.mjs
 Restart=always
 RestartSec=3
 Environment=NODE_ENV=production
@@ -181,14 +224,18 @@ sudo systemctl status onlytrade-runtime-api --no-pager
 
 ---
 
-## 7. 配置 Nginx（8000 对外）
+## 7. 配置 Nginx（18000 对外）
 
-创建站点配置：
+> [!IMPORTANT]
+> 此 VM 的 Nginx 是编译安装的，配置在 `/usr/local/nginx/conf/`。
+> **没有** `sites-available`/`sites-enabled` 目录，需使用 `include` 方式添加配置。
+
+### 7.1 创建 OnlyTrade 站点配置
 
 ```bash
-sudo tee /etc/nginx/sites-available/onlytrade.conf >/dev/null <<'EOF'
+sudo tee /usr/local/nginx/conf/onlytrade.conf >/dev/null <<'EOF'
 server {
-    listen 8000;
+    listen 18000;
     server_name _;
 
     root /opt/onlytrade/onlytrade-web/dist;
@@ -196,6 +243,21 @@ server {
 
     # API桥接（含SSE）
     location ^~ /onlytrade/api/ {
+        proxy_pass http://127.0.0.1:18080/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE/流式建议
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600;
+    }
+
+    # API桥接（修复前端硬编码 /api/ 的问题）
+    location ^~ /api/ {
         proxy_pass http://127.0.0.1:18080/api/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -223,13 +285,34 @@ server {
 EOF
 ```
 
-启用并重启 Nginx：
+### 7.2 在主配置中 include
+
+检查 `/usr/local/nginx/conf/nginx.conf` 的 `http {}` 块末尾是否已有类似 `include` 行：
 
 ```bash
-sudo ln -sf /etc/nginx/sites-available/onlytrade.conf /etc/nginx/sites-enabled/onlytrade.conf
+grep -n 'include.*onlytrade' /usr/local/nginx/conf/nginx.conf
+```
+
+如果没有，在 `http {}` 块末尾（`}` 之前）添加：
+
+```bash
+# 编辑主配置（注意备份）
+sudo cp /usr/local/nginx/conf/nginx.conf /usr/local/nginx/conf/nginx.conf.$(date +%Y%m%d)
+
+# 在 http {} 块的最后一个 } 之前插入 include 行
+sudo sed -i '/^}/i \    include /usr/local/nginx/conf/onlytrade.conf;' /usr/local/nginx/conf/nginx.conf
+```
+
+> 如果 `sed` 位置不对，请手动编辑 `nginx.conf`，在 `http { ... }` 块末尾、最后一个 `}` 之前加上：
+> ```
+> include /usr/local/nginx/conf/onlytrade.conf;
+> ```
+
+### 7.3 测试并重载
+
+```bash
 sudo nginx -t
-sudo systemctl restart nginx
-sudo systemctl status nginx --no-pager
+sudo nginx -s reload
 ```
 
 ---
@@ -246,14 +329,14 @@ curl -fsS http://127.0.0.1:18080/api/agent/runtime/status | head
 ### 8.2 对外桥接检查
 
 ```bash
-curl -i "http://127.0.0.1:8000/onlytrade/api/agent/runtime/status"
-curl -i "http://127.0.0.1:8000/onlytrade/stream/command-deck-new?trader=t_003"
+curl -i "http://127.0.0.1:18000/onlytrade/api/agent/runtime/status"
+curl -i "http://127.0.0.1:18000/onlytrade/stream/command-deck-new?trader=t_003"
 ```
 
 ### 8.3 浏览器访问
 
-- `http://<阿里云公网IP>:8000/onlytrade/stream/command-deck-new?trader=t_003`
-- `http://<阿里云公网IP>:8000/onlytrade/stream/multi-broadcast?trader=t_012&show=qiangqiang_citrini_20260227`
+- `http://<阿里云公网IP>:18000/onlytrade/stream/command-deck-new?trader=t_003`
+- `http://<阿里云公网IP>:18000/onlytrade/stream/multi-broadcast?trader=t_012&show=qiangqiang_citrini_20260227`
 
 ---
 
@@ -269,7 +352,7 @@ sudo journalctl -u onlytrade-runtime-api -n 200 --no-pager
 
 - `llm=openai decision_model=qwen-plus chat_model=qwen-turbo ...`
 
-说明：日志里 `llm=openai` 表示“OpenAI 兼容协议调用器”，不代表实际供应商一定是 OpenAI。
+说明：日志里 `llm=openai` 表示"OpenAI 兼容协议调用器"，不代表实际供应商一定是 OpenAI。
 
 ---
 
@@ -278,6 +361,10 @@ sudo journalctl -u onlytrade-runtime-api -n 200 --no-pager
 每次更新代码后执行：
 
 ```bash
+# 确保 nvm 环境
+source ~/.nvm/nvm.sh
+nvm use 20
+
 cd /opt/onlytrade
 git fetch origin main
 git checkout main
@@ -288,16 +375,17 @@ npm ci --prefix onlytrade-web
 npm run build --prefix onlytrade-web
 
 sudo systemctl restart onlytrade-runtime-api
-sudo systemctl reload nginx
+sudo nginx -s reload
 
 curl -fsS http://127.0.0.1:18080/health
-curl -fsS http://127.0.0.1:8000/onlytrade/api/agent/runtime/status >/dev/null
+curl -fsS http://127.0.0.1:18000/onlytrade/api/agent/runtime/status >/dev/null
 ```
 
 也可以用仓库脚本（注意设置 health URL 为 18080）：
 
 ```bash
 cd /opt/onlytrade
+source ~/.nvm/nvm.sh && nvm use 20
 ONLYTRADE_API_HEALTH_URL=http://127.0.0.1:18080/health \
 ONLYTRADE_API_RUNTIME_URL=http://127.0.0.1:18080/api/agent/runtime/status \
 bash scripts/deploy-vm.sh --skip-tests
@@ -325,7 +413,9 @@ bash scripts/onlytrade-ops.sh overview-status
 ```bash
 # 服务状态
 sudo systemctl status onlytrade-runtime-api --no-pager
-sudo systemctl status nginx --no-pager
+
+# Nginx 状态（编译安装版无 systemd，直接检测进程）
+ps aux | grep nginx
 
 # 查看实时日志
 sudo journalctl -u onlytrade-runtime-api -f
@@ -365,8 +455,9 @@ curl -fsS http://127.0.0.1:18080/health
 
 ```bash
 cd /opt/onlytrade
+source ~/.nvm/nvm.sh && nvm use 20
 npm run build --prefix onlytrade-web
-sudo systemctl reload nginx
+sudo nginx -s reload
 ```
 
 ### C. 切 Qwen 后 LLM 无输出/超时
@@ -376,7 +467,19 @@ sudo systemctl reload nginx
 - 检查 key 是否可用。
 - 可先把模型降级到 `qwen-turbo` 验证连通，再切回 `qwen-plus`。
 
-### D. 出现第二路串音（故事页）
+### D. systemd 找不到 node
+
+如果 `systemctl start onlytrade-runtime-api` 报错找不到 node：
+
+```bash
+# 确认 nvm node 路径
+source ~/.nvm/nvm.sh && nvm use 20 && which node
+# 更新 service 文件中的 ExecStart 路径
+sudo systemctl daemon-reload
+sudo systemctl restart onlytrade-runtime-api
+```
+
+### E. 出现第二路串音（故事页）
 
 已在新版本做跨页面音轨清理；若仍偶发：
 
@@ -387,15 +490,12 @@ sudo systemctl reload nginx
 
 ## 14. 给同事的最短执行清单（TL;DR）
 
-1. 安装 Node20 + Nginx + Python3
+1. 安装 nvm → Node 20；确认 Nginx/Python3/Git 已有
 2. 拉代码到 `/opt/onlytrade`
 3. 配 `runtime-api/.env.local`（Qwen key/base/model）
 4. `npm ci`（backend+frontend） + `npm run build --prefix onlytrade-web`
-5. 启动 `onlytrade-runtime-api` systemd
-6. 配 Nginx 监听 `8000` 并桥接 `/onlytrade/api`
+5. 启动 `onlytrade-runtime-api` systemd（注意 ExecStart 用 nvm 的 node 路径）
+6. 配 Nginx 监听 `18000` 并桥接 `/onlytrade/api`（include 方式加入 `/usr/local/nginx/conf/onlytrade.conf`）
 7. `curl` 验证健康与页面
-8. 每天开盘前执行盘前刷新命令
-
----
-
-如需我补一份“阿里云 Linux 3（CentOS 系）”版本（`yum`/`dnf` 命令、服务路径差异），我可以在同目录再加一个兼容版。
+8. 安全组放行端口 `18000`
+9. 每天开盘前执行盘前刷新命令

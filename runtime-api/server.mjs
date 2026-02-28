@@ -1,3 +1,10 @@
+import fetch, { Headers, Request, Response } from 'node-fetch'
+if (!global.fetch) {
+  global.fetch = fetch
+  global.Headers = Headers
+  global.Request = Request
+  global.Response = Response
+}
 import express from 'express'
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from 'node:fs'

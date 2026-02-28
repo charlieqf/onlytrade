@@ -1173,6 +1173,7 @@ export function StreamingRoomPage({
   const ttsPlayingRef = useRef<boolean>(false)
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null)
   const ttsObjectUrlRef = useRef<string | null>(null)
+  const ttsPlaySessionRef = useRef<number>(0)
 
   useEffect(() => {
     const onVisibility = () => {
@@ -1356,6 +1357,10 @@ export function StreamingRoomPage({
 
     ttsPlayingRef.current = true
     setTtsSpeaking(true)
+    
+    ttsPlaySessionRef.current += 1
+    const currentSession = ttsPlaySessionRef.current
+
     try {
       const blob = await api.synthesizeRoomSpeech({
         room_id: roomId,
@@ -1363,6 +1368,8 @@ export function StreamingRoomPage({
         tone: resolveMessageTtsTone(next),
         message_id: String(next.id || ''),
       })
+
+      if (ttsPlaySessionRef.current !== currentSession) return
 
       if (!blob || blob.size <= 0) {
         throw new Error('tts_empty_audio')
@@ -1410,6 +1417,7 @@ export function StreamingRoomPage({
   }
 
   useEffect(() => {
+    ttsPlaySessionRef.current += 1
     ttsSeenMessageIdsRef.current.clear()
     ttsQueueRef.current = []
     ttsPlayingRef.current = false

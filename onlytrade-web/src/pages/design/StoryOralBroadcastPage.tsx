@@ -384,11 +384,15 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       if (!previous) continue
       if (previous.narration) {
         previous.narration.pause()
+        previous.narration.muted = true
         previous.narration.src = ''
+        previous.narration.load()
       }
       if (previous.bgm) {
         previous.bgm.pause()
+        previous.bgm.muted = true
         previous.bgm.src = ''
+        previous.bgm.load()
       }
       delete globalStore[key]
     }
@@ -505,7 +509,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
         setTimeout(() => {
           const current = narrationAudioRef.current
           if (!current || !current.paused) return
-          current.play().catch(() => {})
+          current.play().catch(() => { })
         }, 250)
         return
       }
@@ -533,7 +537,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     const tryUnmuteAfterInteraction = () => {
       const phoneNoiseContext = phoneNoiseContextRef.current
       if (phoneNoiseContext && phoneNoiseContext.state === 'suspended') {
-        phoneNoiseContext.resume().catch(() => {})
+        phoneNoiseContext.resume().catch(() => { })
       }
 
       if (!pendingUnmuteRef.current) return
@@ -627,7 +631,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     }
 
     if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {})
+      ctx.resume().catch(() => { })
     }
 
     if (!phoneNoiseSourceRef.current && phoneNoiseGainRef.current && phoneNoiseBufferRef.current) {
@@ -681,7 +685,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       }
       const ctx = phoneNoiseContextRef.current
       if (ctx) {
-        ctx.close().catch(() => {})
+        ctx.close().catch(() => { })
         phoneNoiseContextRef.current = null
       }
       phoneNoiseGainRef.current = null
@@ -731,7 +735,7 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       bgm.pause()
       return
     }
-    bgm.play().catch(() => {})
+    bgm.play().catch(() => { })
   }, [bgmEnabled, bgmVolume, narrationPlaying])
 
   const seekNarration = useCallback((nextSec: number) => {

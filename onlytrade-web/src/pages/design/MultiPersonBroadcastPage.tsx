@@ -513,11 +513,15 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
 
       if (previous.narration) {
         previous.narration.pause()
+        previous.narration.muted = true
         previous.narration.src = ''
+        previous.narration.load()
       }
       if (previous.bgm) {
         previous.bgm.pause()
+        previous.bgm.muted = true
         previous.bgm.src = ''
+        previous.bgm.load()
       }
       delete globalStore[key]
     }
@@ -636,7 +640,7 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
       bgm.pause()
       return
     }
-    bgm.play().catch(() => {})
+    bgm.play().catch(() => { })
   }, [narrationPlaying])
 
   useEffect(() => {
@@ -653,8 +657,8 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
           narration.muted = true
         })
       }
-      waveContextRef.current?.resume().catch(() => {})
-      phoneNoiseContextRef.current?.resume().catch(() => {})
+      waveContextRef.current?.resume().catch(() => { })
+      phoneNoiseContextRef.current?.resume().catch(() => { })
     }
 
     window.addEventListener('pointerdown', onUnlock)
@@ -713,7 +717,7 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
     }
 
     if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {})
+      ctx.resume().catch(() => { })
     }
 
     if (!phoneNoiseSourceRef.current && phoneNoiseGainRef.current && phoneNoiseBufferRef.current) {
@@ -746,9 +750,9 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
   useEffect(() => {
     let raf = 0
     const canvas = waveCanvasRef.current
-    if (!canvas) return () => {}
+    if (!canvas) return () => { }
     const ctx2d = canvas.getContext('2d')
-    if (!ctx2d) return () => {}
+    if (!ctx2d) return () => { }
 
     const freqData = new Uint8Array(128)
 
@@ -837,7 +841,7 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
         // ignore
       }
       if (waveContextRef.current) {
-        waveContextRef.current.close().catch(() => {})
+        waveContextRef.current.close().catch(() => { })
         waveContextRef.current = null
       }
 
@@ -850,7 +854,7 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
         }
       }
       if (phoneNoiseContextRef.current) {
-        phoneNoiseContextRef.current.close().catch(() => {})
+        phoneNoiseContextRef.current.close().catch(() => { })
         phoneNoiseContextRef.current = null
       }
     }

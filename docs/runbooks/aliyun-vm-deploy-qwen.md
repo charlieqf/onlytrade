@@ -381,6 +381,19 @@ curl -fsS http://127.0.0.1:18080/health
 curl -fsS http://127.0.0.1:18000/onlytrade/api/agent/runtime/status >/dev/null
 ```
 
+> [!TIP]
+> 如果你需要启动特定的直播数字人 Agent（如 `t_003`, `t_012`, `t_013`, `t_014`），可以使用 Ops CLI 启动它们：
+> ```bash
+> cd /opt/onlytrade
+> source scripts/onlytrade-ops.sh
+> export ONLYTRADE_OPS_RUNTIME_API_URL=http://127.0.0.1:18080
+> export ONLYTRADE_OPS_IDENTITY_TOKEN=$(grep CONTROL_API_TOKEN /opt/onlytrade/runtime-api/.env.local | cut -d '=' -f2)
+> agent-start t_003
+> agent-start t_012
+> agent-start t_013
+> agent-start t_014
+> ```
+
 也可以用仓库脚本（注意设置 health URL 为 18080）：
 
 ```bash
@@ -479,12 +492,13 @@ sudo systemctl daemon-reload
 sudo systemctl restart onlytrade-runtime-api
 ```
 
-### E. 出现第二路串音（故事页）
+### E. 出现第二路串音（故事/多播页）
 
-已在新版本做跨页面音轨清理；若仍偶发：
-
-- 浏览器强刷（`Ctrl+F5`）
-- 关闭旧标签页后重开。
+**原因**：之前由于 React 组件切换路由时 TTS 的异步音频请求晚于组件卸载返回，导致产生了无法被 React 控制的后台 `<audio>` 播放残留。或者由于部分 `manifest.json` 中配置了混有人声的 `bgm_file`。
+**解决**：最新代码已在使用 `useAgentTtsAutoplay` 的 Hook 处通过引入 `ttsPlaySessionRef` 令牌彻底修复了异步播放泄漏的问题。如果依然出现问题：
+- 确保已拉取最新前端代码并在 VM 上重新 `npm run build`。
+- 确认对应的故事 `manifest.json` 里没有配置不需要的 `bgm_file`。
+- 浏览器强制刷新（`Ctrl+F5`）。
 
 ---
 

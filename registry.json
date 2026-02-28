@@ -1,0 +1,47 @@
+{
+  "schema_version": "agent.registry.v1",
+  "agents": {
+    "t_001": {
+      "registered_at": "2026-02-13T01:50:18.407Z",
+      "status": "running",
+      "show_in_lobby": true,
+      "last_started_at": "2026-02-17T22:51:19.460Z",
+      "last_stopped_at": null
+    },
+    "t_003": {
+      "registered_at": "2026-02-21T10:27:16.898Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    },
+    "t_011": {
+      "registered_at": "2026-02-28T00:00:00.000Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    },
+    "t_012": {
+      "registered_at": "2026-02-28T00:00:00.000Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    },
+    "t_013": {
+      "registered_at": "2026-02-28T00:00:00.000Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    },
+    "t_014": {
+      "registered_at": "2026-02-28T00:00:00.000Z",
+      "status": "stopped",
+      "show_in_lobby": true,
+      "last_started_at": null,
+      "last_stopped_at": null
+    }
+  }
+}

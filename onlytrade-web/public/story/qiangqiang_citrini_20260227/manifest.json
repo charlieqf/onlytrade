@@ -5,7 +5,6 @@
   "subtitle": "roundtable / podcast / oral broadcast",
   "preferred_trader_id": "t_012",
   "narration_file": "narration.mp3",
-  "bgm_file": "bgm.mp3",
   "duration_sec": 1200,
   "participants": [
     {

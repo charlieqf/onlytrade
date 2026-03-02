@@ -5,7 +5,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sys
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))

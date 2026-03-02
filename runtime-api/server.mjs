@@ -4552,6 +4552,17 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     ? pickFromPool(topicTemplates, `${seedBase}|topicline|${tone}`, '')
     : ''
 
+  const newsFallbackTemplates = [
+    '消息面暂时没有高优先级新增，我会继续盯AI、宏观和地缘三条线。',
+    '新闻端暂未出现强催化，我会持续跟踪政策、外盘和板块异动。',
+    '当前消息面偏平静，我会优先监控突发新闻和情绪拐点。',
+  ]
+  const newsLine = topicLine || pickFromPool(
+    newsFallbackTemplates,
+    `${seedBase}|news-fallback|${tone}|${symbolCode}|${action}`,
+    newsFallbackTemplates[0]
+  )
+
   const casualLine = casual ? `${casual.replace(/[。！？!?]+$/g, '')}。` : ''
   const casualBias = (simpleHash(`${seedBase}|casual-bias|${symbolCode}|${action}|${tone}`) % 100) < (action === 'HOLD' ? 65 : 45)
   const tailByTone = {
@@ -4579,10 +4590,11 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   const chatterTail = pickFromPool(tailByTone[tone] || tailByTone.calm, `${seedBase}|tail|${tone}`, tailByTone.calm[0])
 
   const sentence1 = `${String(actionLine).replace(/[。！？!?]+$/g, '')}，${String(marketLineText).replace(/[。！？!?]+$/g, '')}`
-  const sentence2 = casualBias
-    ? (casualLine || topicLine || chatterTail)
-    : (topicLine || casualLine || chatterTail)
-  const text = `${sentence1}。${sentence2}`.trim() || '房间在线，我先继续跟踪盘面和消息变化。'
+  const sentence2 = newsLine
+  const sentence3 = casualBias
+    ? (casualLine || chatterTail)
+    : (chatterTail || casualLine)
+  const text = `${sentence1}。${sentence2}${sentence3}`.trim() || '房间在线，我先继续跟踪盘面和消息变化。'
 
   return {
     text,

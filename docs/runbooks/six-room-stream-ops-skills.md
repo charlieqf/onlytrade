@@ -19,6 +19,7 @@ Companion local skill file:
 
 - Host: `113.125.202.169`
 - SSH port: `21522`
+- Default key on this workstation: `C:\Users\rdpuser\.ssh\cn169_ed25519`
 - Runtime API: `http://127.0.0.1:18080`
 - Public web: `http://zhibo.quickdealservice.com:18000`
 
@@ -27,6 +28,26 @@ SSH template:
 ```bash
 ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169
 ```
+
+Hot-switch helper for `t_003` voice:
+
+```bash
+bash scripts/t003-voice-hot-switch.sh status --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh zsy --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh cosy --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh cosy --vm-key <YOUR_KEY_PATH> --vm-port 21522 --cosy-voice longfeifei_v3
+```
+
+Cosy voices now route through the selfhosted TTS gateway (`scripts/tts-gateway/gateway.py`).
+Runtime should point `CHAT_TTS_SELFHOSTED_URL` to the gateway endpoint (recommended: `http://127.0.0.1:13003/tts`).
+
+Allowed cosy female voices for `cosy` action:
+
+- `longanhuan`
+- `longanwen_v3`
+- `longyan_v3`
+- `longwan_v3`
+- `longfeifei_v3`
 
 If you use this repo's wrapper scripts:
 
@@ -50,6 +71,7 @@ bash scripts/onlytrade-ssh-ops.sh status
 - Story and multi-broadcast pages keep BGM disabled by policy.
 - Room BGM is restricted to `t_003` only.
 - `t_003` TTS baseline is `selfhosted + zsy`.
+- `t_003` Cosy switch also uses `provider=selfhosted` (gateway routes by `voice_id`).
 - Story/multi URLs should pass explicit `story=<slug>` or `show=<slug>`.
 
 ## 5) Fast health checks (copy/paste)
@@ -85,7 +107,7 @@ curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickde
 
 ```bash
 bash scripts/onlytrade-ssh-ops.sh tts-status t_003
-bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback openai
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback none
 bash scripts/onlytrade-ssh-ops.sh tts-test t_003 --text "语音连通测试 zsy"
 ```
 
@@ -153,7 +175,7 @@ bash scripts/onlytrade-ssh-ops.sh agent-register t_014
 Fix:
 
 ```bash
-bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback openai
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback none
 ```
 
 ### D) `t_015` shows static/old feed or errors

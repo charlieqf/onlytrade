@@ -6,7 +6,11 @@ import subprocess
 import sys
 from datetime import datetime, time
 from pathlib import Path
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 
 
 SH_TZ = ZoneInfo("Asia/Shanghai")

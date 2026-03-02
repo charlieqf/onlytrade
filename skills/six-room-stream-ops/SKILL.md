@@ -17,8 +17,29 @@ Operator skill for these public rooms:
 ## Aliyun baseline
 
 - SSH: `ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169`
+- Default key (this workstation): `C:\Users\rdpuser\.ssh\cn169_ed25519`
 - Runtime API: `http://127.0.0.1:18080`
 - Web root: `http://zhibo.quickdealservice.com:18000`
+
+`t_003` hot-switch helper (recommended):
+
+```bash
+bash scripts/t003-voice-hot-switch.sh status --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh zsy --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh cosy --vm-key <YOUR_KEY_PATH> --vm-port 21522
+bash scripts/t003-voice-hot-switch.sh cosy --vm-key <YOUR_KEY_PATH> --vm-port 21522 --cosy-voice longfeifei_v3
+```
+
+Cosy voices are routed through the selfhosted TTS gateway (`scripts/tts-gateway/gateway.py`).
+Set `CHAT_TTS_SELFHOSTED_URL=http://127.0.0.1:13003/tts` on VM after deploying the gateway.
+
+Allowed cosy female voices:
+
+- `longanhuan`
+- `longanwen_v3`
+- `longyan_v3`
+- `longwan_v3`
+- `longfeifei_v3`
 
 ## Quick health checks
 
@@ -36,7 +57,7 @@ curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_015/str
 - `t_003` voice baseline:
 
 ```bash
-bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback openai
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback none
 ```
 
 - `t_013`/`t_014` missing room fix:

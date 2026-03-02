@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
-import { useRoomBgm } from '../../hooks/useRoomBgm'
 import { PhoneRealtimeKlineChart } from '../../components/PhoneRealtimeKlineChart'
 import type { Language } from '../../i18n/translations'
 import type { ChatMessage } from '../../types'
@@ -131,15 +130,6 @@ function metricPctClass(value: number | null | undefined): string {
   return 'text-white/80'
 }
 
-function isWeComLikeIPhoneClient(): boolean {
-  if (typeof window === 'undefined') return false
-  const ua = String(window.navigator?.userAgent || '').toLowerCase()
-  if (!ua) return false
-  const isIOS = ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')
-  if (!isIOS) return false
-  return ua.includes('wxwork') || ua.includes('micromessenger')
-}
-
 function localizePositionSide(side: string): string {
   const normalized = String(side || '').trim().toUpperCase()
   if (normalized === 'LONG') return '多头'
@@ -191,31 +181,21 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
-  const { ttsAvailable, setTtsAutoPlay, ttsSpeaking } = useAgentTtsAutoplay({
+  const { ttsAvailable, setTtsAutoPlay } = useAgentTtsAutoplay({
     roomId,
     publicMessages,
     openaiOnly: true,
-  })
-  const { bgmAvailable, setBgmEnabled, setBgmVolume } = useRoomBgm({
-    roomId,
-    ducking: ttsSpeaking,
   })
 
   const [symbolPool, setSymbolPool] = useState<string[]>([])
   const [symbolCursor, setSymbolCursor] = useState(0)
   const [symbolNameMap, setSymbolNameMap] = useState<Record<string, string>>(DEFAULT_CN_SYMBOL_NAMES)
-  const isWeComIPhone = useMemo(() => isWeComLikeIPhoneClient(), [])
+  const [syntheticSupportPct, setSyntheticSupportPct] = useState(67)
 
   useEffect(() => {
     if (!ttsAvailable) return
     setTtsAutoPlay(true)
   }, [roomId, ttsAvailable, setTtsAutoPlay])
-
-  useEffect(() => {
-    if (!bgmAvailable) return
-    setBgmEnabled(true)
-    setBgmVolume(isWeComIPhone ? 0.02 : 0.06)
-  }, [roomId, bgmAvailable, setBgmEnabled, setBgmVolume, isWeComIPhone])
 
   useEffect(() => {
     const query = new URLSearchParams({
@@ -252,6 +232,23 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
       })
       .catch(() => {})
   }, [selectedTrader.trader_id])
+
+  useEffect(() => {
+    let current = 66 + Math.random() * 4
+    const tick = () => {
+      const phase = Date.now() / 14000
+      const waveFast = Math.sin(phase) * 3.8
+      const waveSlow = Math.sin(phase / 2.7) * 2.2
+      const drift = (Math.random() - 0.5) * 1.8
+      current = current * 0.72 + (67.5 + waveFast + waveSlow) * 0.28 + drift
+      current = Math.max(60, Math.min(75, current))
+      setSyntheticSupportPct(Math.round(current))
+    }
+
+    tick()
+    const timer = window.setInterval(tick, 3800)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const displaySymbolPool = useMemo(() => {
     const out: string[] = []
@@ -329,12 +326,13 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
     } else if (crowdPct != null) {
       combined = crowdPct
     } else {
-      combined = 50
+      combined = syntheticSupportPct
     }
 
-    const clamped = Math.max(5, Math.min(95, combined))
+    const smoothed = syntheticSupportPct * 0.55 + combined * 0.45
+    const clamped = Math.max(60, Math.min(75, smoothed))
     return Math.round(clamped)
-  }, [marketBreadth, publicMessages])
+  }, [marketBreadth, publicMessages, syntheticSupportPct])
 
   const sectorDistribution = useMemo(() => {
     const bucket = new Map<string, number>()
@@ -504,43 +502,43 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-col overflow-hidden bg-[#080816]">
-          <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] border-b border-white/10">
-            <div className="border-r border-white/5 py-2 text-center text-[12px] font-bold tracking-wider text-red-300">
+        <div className="flex min-h-0 flex-col overflow-hidden bg-[#080816] text-[11px]">
+          <div className="grid shrink-0 grid-cols-[minmax(0,0.9fr)_minmax(0,2.1fr)] border-b border-white/10">
+            <div className="border-r border-white/5 py-1.5 text-center text-[11px] font-bold tracking-wider text-red-300">
               持仓分布 / 持仓
             </div>
-            <div className="flex items-center justify-center gap-2 py-2 text-[12px] font-bold tracking-wider text-cyan-300">
+            <div className="flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold tracking-wider text-cyan-300">
               <span>实时互动</span>
-              <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[11px] text-cyan-200">{onlineCountLabel}</span>
+              <span className="rounded bg-cyan-500/20 px-1.5 py-0.5 text-[10px] text-cyan-200">{onlineCountLabel}</span>
             </div>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] divide-x divide-white/5">
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,0.9fr)_minmax(0,2.1fr)] divide-x divide-white/5">
             <div className="min-h-0">
               <div className="flex h-full min-h-0 flex-col">
                 <section className="shrink-0 border-b border-white/10">
-                  <div className="border-b border-white/5 px-2 py-1.5 text-[11px] font-bold tracking-wider text-fuchsia-300">
+                  <div className="border-b border-white/5 px-2 py-1 text-[10px] font-bold tracking-wider text-fuchsia-300">
                     持仓分布
                   </div>
-                  <div className="px-2 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="relative h-24 w-24 shrink-0 rounded-full border border-white/15" style={{ background: sectorPieBackground }}>
-                        <div className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[#0A0A16] text-[10px] font-bold text-white/85">
+                  <div className="px-2 py-1.5">
+                    <div className="flex flex-col items-center">
+                      <div className="relative h-16 w-16 shrink-0 rounded-full border border-white/15" style={{ background: sectorPieBackground }}>
+                        <div className="absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[#0A0A16] text-[8px] font-bold text-white/85">
                           {sectorDistribution.slices.length}
                         </div>
                       </div>
-                      <div className="min-w-0 flex-1 space-y-1">
+                      <div className="mt-1.5 w-full space-y-0.5">
                         {sectorDistribution.slices.slice(0, 4).map((slice) => (
-                          <div key={slice.sector} className="flex items-center justify-between text-[11px]">
-                            <span className="inline-flex items-center gap-1 text-white/85">
-                              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: slice.color }} />
-                              {slice.sector}
+                          <div key={slice.sector} className="flex items-center justify-between text-[9px]">
+                            <span className="inline-flex min-w-0 items-center gap-1 text-white/80">
+                              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: slice.color }} />
+                              <span className="truncate">{slice.sector}</span>
                             </span>
-                            <span className="font-mono text-white/75">{slice.pct.toFixed(slice.pct >= 10 ? 0 : 1)}%</span>
+                            <span className="shrink-0 font-mono text-white/70">{slice.pct.toFixed(slice.pct >= 10 ? 0 : 1)}%</span>
                           </div>
                         ))}
                         {!sectorDistribution.slices.length && (
-                          <div className="text-[11px] text-white/50">暂无持仓分布</div>
+                          <div className="text-center text-[9px] text-white/50">暂无持仓分布</div>
                         )}
                       </div>
                     </div>
@@ -548,29 +546,29 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                 </section>
 
                 <section className="min-h-0 flex-1">
-                  <div className="border-b border-white/5 px-2 py-1.5 text-[11px] font-bold tracking-wider text-red-300">
+                  <div className="border-b border-white/5 px-2 py-1 text-[10px] font-bold tracking-wider text-red-300">
                     持仓
                   </div>
-                  <div className="h-[calc(100%-28px)] overflow-y-auto p-2">
-                    <div className="space-y-2">
+                  <div className="h-[calc(100%-24px)] overflow-y-auto p-1.5">
+                    <div className="space-y-1.5">
                       {positions.slice(0, 6).map((pos) => (
-                        <div key={`${pos.symbol}-${pos.side}`} className="rounded border border-white/10 bg-white/[0.03] p-2">
-                          <div className="text-[13px] font-bold text-white">{pos.symbol}</div>
-                          <div className="mt-0.5 text-[11px] text-white/75">
+                        <div key={`${pos.symbol}-${pos.side}`} className="rounded border border-white/10 bg-white/[0.03] p-1.5">
+                          <div className="text-[11px] font-bold text-white">{pos.symbol}</div>
+                          <div className="mt-0.5 text-[9px] text-white/75">
                             {symbolNameMap[String(pos.symbol || '').toUpperCase()] || '—'}
                           </div>
-                          <div className="mt-0.5 text-[11px] font-mono text-white/55">
+                          <div className="mt-0.5 text-[9px] font-mono text-white/55">
                             {localizePositionSide(pos.side)} · {Number(pos.quantity).toLocaleString()} @ {pos.entry_price.toFixed(2)}
                           </div>
                           <div
-                            className={`mt-1 text-[12px] font-mono font-bold ${pos.unrealized_pnl >= 0 ? 'text-red-400' : 'text-green-400'}`}
+                            className={`mt-1 text-[10px] font-mono font-bold ${pos.unrealized_pnl >= 0 ? 'text-red-400' : 'text-green-400'}`}
                           >
                             {formatSignedMoney(pos.unrealized_pnl)} ({formatSignedPct(pos.unrealized_pnl_pct)})
                           </div>
                         </div>
                       ))}
                       {!positions.length && (
-                        <div className="py-6 text-center text-[12px] text-white/45">
+                        <div className="py-5 text-center text-[10px] text-white/45">
                           暂无持仓
                         </div>
                       )}
@@ -584,18 +582,18 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
               <div
                 ref={containerRef}
                 onScroll={onScroll}
-                className="h-full overflow-y-auto p-2.5 pb-10"
+                className="h-full overflow-y-auto p-2 pb-8"
               >
                 <div className="space-y-2">
                   {publicMessages.map((msg, index) => {
                     const visual = messageVisuals[index] || AGENT_DEFAULT_STYLE
                     return (
                       <div key={msg.id} className={`flex flex-col ${msg.sender_type === 'agent' ? 'items-end' : 'items-start'}`}>
-                        <div className={`mb-0.5 flex items-center gap-1 text-[10px] ${visual.senderClass}`}>
+                        <div className={`mb-0.5 flex items-center gap-1 text-[8px] ${visual.senderClass}`}>
                           <span>{msg.sender_name}</span>
                           <span className="text-white/45">{formatBeijingTimeHHmm(msg.created_ts_ms)}</span>
                         </div>
-                        <div className={`max-w-[92%] rounded-lg px-2.5 py-1.5 text-[12px] leading-relaxed ${visual.bubbleClass}`}>
+                        <div className={`max-w-[94%] rounded-lg px-2 py-1.5 text-[10px] leading-snug ${visual.bubbleClass}`}>
                           {msg.text}
                         </div>
                       </div>
@@ -603,7 +601,7 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                   })}
 
                   {!publicMessages.length && (
-                    <div className="py-6 text-center text-[12px] text-white/45">
+                    <div className="py-6 text-center text-[11px] text-white/45">
                       暂无公开聊天
                     </div>
                   )}
@@ -614,7 +612,7 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
                 <button
                   type="button"
                   onClick={jumpToLatest}
-                  className="absolute bottom-2 right-2 rounded-full border border-cyan-400/40 bg-black/80 px-2.5 py-1 text-[12px] text-cyan-300"
+                  className="absolute bottom-2 right-2 rounded-full border border-cyan-400/40 bg-black/80 px-2.5 py-1 text-[11px] text-cyan-300"
                 >
                   新消息 {unseenCount}
                 </button>

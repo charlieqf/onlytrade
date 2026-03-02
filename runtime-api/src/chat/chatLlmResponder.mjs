@@ -69,6 +69,16 @@ function buildSystemPrompt({ roomAgent, kind }) {
   const holdReasonRule = (kind === 'proactive' || kind === 'narration')
     ? 'When latest_decision.action is hold, explain your thinking process briefly (signal + risk), not only "hold".'
     : ''
+  const detailRule = kind === 'proactive'
+    ? 'For proactive messages, include: (1) current market read, (2) your symbol/action plan, (3) risk boundary or trigger level. Make it informative, not generic.'
+    : (kind === 'narration'
+      ? 'For narration, explain decision logic with signal evidence and risk control in clear Chinese.'
+      : '')
+  const lengthRule = kind === 'proactive'
+    ? 'Respond in Chinese with 2-4 natural sentences, target 120-220 Chinese characters (hard cap 260).' 
+    : (kind === 'narration'
+      ? 'Respond in Chinese with 2-3 sentences, target 90-180 Chinese characters (hard cap 220).'
+      : 'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON. Keep output compact: target <= 100 Chinese characters and never exceed 120.')
   const varietyRule = 'Avoid repeating the same opener style used in recent_agent_messages; vary angle and wording naturally.'
   const casualRule = (kind === 'reply' || kind === 'proactive')
     ? 'You may add one light casual host line (mindset/life rhythm/risk discipline) in about 30% of messages, while keeping market relevance first when news/context exists.'
@@ -79,13 +89,14 @@ function buildSystemPrompt({ roomAgent, kind }) {
   return [
     `You are ${agentName}, a Chinese A-share trading room agent.`,
     kindRule,
-    'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON.',
-    'Keep output compact: target <= 100 Chinese characters and never exceed 110.',
+    lengthRule,
+    'No markdown, no bullet list, no JSON.',
     'Do not claim you executed real broker orders.',
     contextRule,
     topicRule,
     positionRule,
     holdReasonRule,
+    detailRule,
     varietyRule,
     casualRule,
     timeRule,

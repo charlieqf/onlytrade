@@ -5,7 +5,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sys
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    from backports.zoneinfo import ZoneInfo  # type: ignore
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -76,6 +80,51 @@ def _collect_titles(symbol: str, limit: int) -> list[dict]:
     return items
 
 
+def _collect_global_flash_titles(limit: int) -> list[dict]:
+    if ak is None:
+        return []
+
+    # ak.stock_info_global_cls columns: 标题, 内容, 发布日期, 发布时间
+    col_title = "\u6807\u9898"  # 标题
+    col_content = "\u5185\u5bb9"  # 内容
+    col_date = "\u53d1\u5e03\u65e5\u671f"  # 发布日期
+    col_time = "\u53d1\u5e03\u65f6\u95f4"  # 发布时间
+
+    try:
+        df = ak.stock_info_global_cls()
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+
+    items: list[dict] = []
+    max_rows = max(1, min(int(limit or 12) * 3, 120))
+    for _, row in df.head(max_rows).iterrows():
+        title = _safe_text(row.get(col_title), 120)
+        content = _safe_text(row.get(col_content), 220)
+        merged_title = title or content
+        if not merged_title:
+            continue
+
+        pub_date = _safe_text(row.get(col_date), 20)
+        pub_time = _safe_text(row.get(col_time), 20)
+        published_at = " ".join(x for x in [pub_date, pub_time] if x).strip() or None
+
+        items.append(
+            {
+                "title": merged_title,
+                "published_at": published_at,
+                "source": "\u8d22\u8054\u793e\u5feb\u8baf",
+                "url": None,
+                "symbol": None,
+                "category": "markets_cn",
+            }
+        )
+        if len(items) >= max(1, int(limit)):
+            break
+    return items
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -137,14 +186,61 @@ def main() -> int:
             if len(headlines) >= limit_total:
                 break
 
+    used_global_fallback = False
+    if len(headlines) < limit_total:
+        remain = max(1, limit_total - len(headlines))
+        for item in _collect_global_flash_titles(min(remain, 20)):
+            key = item.get("title") or ""
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            headlines.append(item)
+            used_global_fallback = True
+            if len(headlines) >= limit_total:
+                break
+
+    if not hot_commentary:
+        picks = [
+            _safe_text(item.get("title"), 40)
+            for item in headlines[:3]
+            if _safe_text(item.get("title"), 40)
+        ]
+        if picks:
+            hot_commentary = [f"\u5e02\u573a\u5feb\u8baf\uff1a{'\uff1b'.join(picks)}"]
+
+    if not hot_titles:
+        fallback_titles = []
+        for item in headlines:
+            label = str(item.get("category") or "").strip()
+            title = _safe_text(item.get("title"), 120)
+            if not title:
+                continue
+            prefix = "[\u5feb\u8baf]"
+            if label == "ai":
+                prefix = "[AI]"
+            elif label == "geopolitics":
+                prefix = "[\u5730\u7f18]"
+            elif label == "global_macro":
+                prefix = "[\u5b8f\u89c2]"
+            elif label == "tech":
+                prefix = "[\u79d1\u6280]"
+            elif label == "markets_cn":
+                prefix = "[\u5e02\u573a]"
+            fallback_titles.append(f"{prefix} {title}")
+            if len(fallback_titles) >= 20:
+                break
+        hot_titles = fallback_titles
+
     payload = {
         "schema_version": "news.digest.v1",
         "market": "CN-A",
         "mode": "real",
         "provider": "akshare" if ak is not None else "rss-hot-news",
-        "source_kind": "hot_news_plus_symbol_news"
-        if ak is not None
-        else "hot_news_only",
+        "source_kind": (
+            "hot_news_plus_symbol_news_plus_global_cls"
+            if (ak is not None and used_global_fallback)
+            else ("hot_news_plus_symbol_news" if ak is not None else "hot_news_only")
+        ),
         "day_key": now.strftime("%Y-%m-%d"),
         "as_of_ts_ms": int(now.timestamp() * 1000),
         "symbols": symbols,

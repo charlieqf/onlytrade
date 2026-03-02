@@ -34,7 +34,7 @@ const DEFAULT_BGM_VOLUME_WECOM = 0.05
 const DUCKING_FACTOR_DEFAULT = 0.35
 const DUCKING_FACTOR_WECOM = 0.08
 const BGM_GAIN_MULTIPLIER_WECOM = 0.3
-const BGM_ENABLED_ROOM_IDS = new Set(['t_003'])
+const BGM_ENABLED_ROOM_IDS = new Set<string>()
 
 function detectPathBase(): string {
   if (typeof window === 'undefined') return ''

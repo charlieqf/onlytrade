@@ -149,7 +149,7 @@ CONTROL_API_TOKEN=<强随机token>
 # 如果你目前没有 OpenAI TTS，建议默认走 selfhosted，避免音频接口打到 Qwen 兼容端点失败。
 CHAT_TTS_ENABLED=true
 CHAT_TTS_PROVIDER_DEFAULT=selfhosted
-CHAT_TTS_SELFHOSTED_URL=http://101.227.82.130:13002/tts
+CHAT_TTS_SELFHOSTED_URL=http://127.0.0.1:13003/tts
 CHAT_TTS_SELFHOSTED_MEDIA_TYPE=wav
 CHAT_TTS_SELFHOSTED_VOICE_DEFAULT=xuanyijiangjie
 EOF
@@ -159,6 +159,20 @@ EOF
 
 - 本项目把 LLM 调用统一走 `OPENAI_BASE_URL` + `OPENAI_API_KEY`，因此切 Qwen 只需替换这两项和模型名。
 - 若你不需要 TTS，可临时 `CHAT_TTS_ENABLED=false`。
+
+### 4.1 安装 Cosy + 本地音色统一网关（推荐）
+
+```bash
+cd /opt/onlytrade
+bash scripts/tts-gateway/install-vm.sh
+curl -fsS http://127.0.0.1:13003/health
+```
+
+说明：
+
+- 网关地址默认 `http://127.0.0.1:13003/tts`。
+- `zsy` / `xuanyijiangjie` 等本地音色仍走原本 `101.227.82.130:13002/tts`。
+- `longfeifei_v3` 等 Cosy 音色由网关转发到 DashScope Cosy SDK。
 
 ---
 

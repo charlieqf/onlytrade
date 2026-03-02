@@ -8,7 +8,16 @@
   "bgm_file": "bgm.mp3",
   "duration_sec": 624,
   "scenes": [
-    "scene_0.png"
+    "scene_1.png",
+    "scene_2.png",
+    "scene_3.png",
+    "scene_4.png",
+    "scene_5.png",
+    "scene_6.png",
+    "scene_7.png",
+    "scene_8.png",
+    "scene_9.png",
+    "scene_10.png"
   ],
   "participants": [
     {

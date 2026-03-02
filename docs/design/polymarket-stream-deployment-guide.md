@@ -8,6 +8,7 @@ Server baseline:
 
 - SSH target: `root@113.125.202.169:21522`
 - SSH template: `ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169`
+- Default key on this workstation: `C:\Users\rdpuser\.ssh\cn169_ed25519`
 
 ## 1) What this room is
 
@@ -56,15 +57,41 @@ Agent manifest (for proper `trader=t_015` resolution in lobby/router):
 - `agents/t_015/agent.json`
 
 ## 3) Important implementation notes
+ 
+ 1. Do not use global API short-circuit mocks in shared HTTP client code.
+    - They can break all `/api/*` calls across the app.
+ 2. The mock generator writes live JSON to:
+    - `onlytrade-web/public/cyber_market_live.json`
+    - `onlytrade-web/dist/cyber_market_live.json` (when `dist/` exists)
+ 3. In production, Nginx serves `onlytrade-web/dist`, so `dist/cyber_market_live.json` must stay fresh.
 
-1. Do not use global API short-circuit mocks in shared HTTP client code.
-   - They can break all `/api/*` calls across the app.
-2. The mock generator writes live JSON to:
-   - `onlytrade-web/public/cyber_market_live.json`
-   - `onlytrade-web/dist/cyber_market_live.json` (when `dist/` exists)
-3. In production, Nginx serves `onlytrade-web/dist`, so `dist/cyber_market_live.json` must stay fresh.
+## 4) Data Ingestion & LLM Engine Logic
 
-## 4) Environment requirements
+### 4.1 Real-time Ingestion (`virtual_market_fetcher_prod.py`)
+- **Sources**: Weibo Hot Search (`realtime`) and Zhihu Hot List (`total`).
+- **Auth**: No login/password required. Uses public REST endpoints with spoofed browser headers and placeholder cookies.
+- **Cycle**: Recommended 15 minutes (via crontab).
+- **LLM Transformation**: Qwen3-Max triggers once per cycle to parse the top trending topic into a standard JSON market object (title, binary outcome, initial probability).
+
+### 4.2 Generative Chat & Trading (`polymarket_engine_agents.py`)
+- **Optimization Strategy**: Batched LLM calls. The system does not call the LLM for every single message (too slow/costly).
+- **Workflow**:
+  1. Calls Qwen-Max to generate a "batch" of 30 context-aware chat messages (slang, reaction, sentiment) for the current market topic.
+  2. Pops messages from this local memory queue every 1-3 seconds.
+  3. Formats "AI Agent Zero" decisions with technical reasoning provided by the LLM.
+- **Robustness**: Uses `extract_json_from_llm_response` to forcefully extract JSON arrays from conversational LLM output.
+
+## 5) TTS Recommendations (Aliyun CosyVoice)
+
+For the **Cyber Polymarket** room (`t_015`), we recommend using the following "Sweet & Intellectual" female voices:
+
+| Voice Name | Character ID | Character Traits | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| **龙成** | `longcheng_v3` | 年轻、甜美、充满活力 (20-25岁) | 制造狂热的交易氛围，吸引流量 |
+| **龙安俐** | `longanli_v3` | 知性、典雅、专业形象 (25-35岁) | 像财经新闻主播一样进行盘口深度解读 |
+| **loongstella** | `loongstella` | 现代、带货、高穿透力 | 强引导性语态，适合在重大行情突破时呼吁交易 |
+
+## 6) Environment requirements
 
 Do not hardcode keys in source code. Provide env vars at runtime:
 
@@ -230,6 +257,13 @@ Check:
 If logs show `401 Unauthorized`:
 
 - key is not accepted by DashScope (wrong key/project/permission), even if env variable is present.
+
+### Symptom: TTS (Audio) not working
+
+Check:
+
+- `CHAT_TTS_ENABLED=true` in `runtime-api/.env.local`
+- `CHAT_TTS_PROFILE_PATH` points to correct JSON mapping for `t_015`.
 
 Cross-room ops reference:
 

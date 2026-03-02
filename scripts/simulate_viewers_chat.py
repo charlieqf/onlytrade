@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 import os
 import random
@@ -125,11 +126,19 @@ TOPIC_GROUPS = {
 }
 
 TOPIC_WEIGHTS = {
-    "stock": 35,
-    "trade": 20,
-    "news": 15,
-    "casual": 20,
-    "offtopic": 10,
+    "stock": 40,
+    "trade": 23,
+    "news": 25,
+    "casual": 10,
+    "offtopic": 2,
+}
+
+CATEGORY_STYLE_HINT = {
+    "stock": "围绕具体股票、价格或分时结构发问，像真实散户。",
+    "trade": "围绕仓位、止损、风控或执行纪律发问。",
+    "news": "结合一条新闻标题，问可能影响到的板块或个股。",
+    "casual": "轻松一句，但要和交易节奏或心态相关。",
+    "offtopic": "可以轻微生活化，但不要偏离盘中场景。",
 }
 
 NICKNAME_PREFIXES = [
@@ -163,6 +172,119 @@ NICKNAME_SUFFIXES = [
 CONTENT_MODES = ("template", "mixed", "llm")
 
 
+def merge_symbol_pool(
+    base_symbols: list[str], extra_symbols: list[str], limit: int = 16
+) -> list[str]:
+    out: list[str] = []
+    for raw in [*(base_symbols or []), *(extra_symbols or [])]:
+        sym = str(raw or "").strip().upper()
+        if not sym:
+            continue
+        if sym not in out:
+            out.append(sym)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def to_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def as_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def build_room_prompt_context(
+    api: ApiClient, room_id: str
+) -> tuple[dict | None, str | None]:
+    safe_room = urllib.parse.quote(str(room_id or "").strip())
+    code, payload = api.get(f"/api/rooms/{safe_room}/stream-packet?decision_limit=3")
+    if code != 200:
+        return None, f"room_context_http_{code}"
+
+    data = unwrap_data(payload)
+    if not isinstance(data, dict):
+        return None, "room_context_invalid_payload"
+
+    ctx = as_dict(data.get("room_context"))
+    latest = as_dict(data.get("decision_latest"))
+    latest_head = {}
+    latest_decisions = latest.get("decisions")
+    if isinstance(latest_decisions, list) and latest_decisions:
+        first = latest_decisions[0]
+        if isinstance(first, dict):
+            latest_head = first
+
+    symbols: list[str] = []
+    decision_symbol = str(latest_head.get("symbol") or "").strip().upper()
+    if decision_symbol:
+        symbols.append(decision_symbol)
+
+    prices: list[str] = []
+    positions_raw = data.get("positions")
+    positions = positions_raw if isinstance(positions_raw, list) else []
+    for row in positions[:6]:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+        if not symbol:
+            continue
+        mark = to_float(row.get("mark_price"))
+        pnl = to_float(row.get("unrealized_pnl"))
+        if mark is None:
+            continue
+        suffix = ""
+        if pnl is not None:
+            suffix = f"(浮盈{pnl:+.0f})"
+        prices.append(f"{symbol}现价{mark:.2f}{suffix}")
+
+    news_titles = []
+    raw_titles = ctx.get("news_digest_titles")
+    if not isinstance(raw_titles, list) or not raw_titles:
+        digest = as_dict(data.get("news_digest"))
+        raw_titles = (
+            digest.get("titles") if isinstance(digest.get("titles"), list) else []
+        )
+    for item in raw_titles or []:
+        title = str(item or "").strip()
+        if title:
+            news_titles.append(title)
+        if len(news_titles) >= 4:
+            break
+
+    decision_line = ""
+    if latest_head:
+        action = str(latest_head.get("action") or "").strip().upper() or "HOLD"
+        conf = to_float(latest_head.get("confidence"))
+        px = to_float(latest_head.get("price"))
+        qty = to_float(latest_head.get("quantity"))
+        conf_text = f" 置信{conf:.2f}" if conf is not None else ""
+        px_text = f" 参考价{px:.2f}" if px is not None else ""
+        qty_text = f" 数量{qty:.0f}" if qty is not None else ""
+        decision_line = f"{decision_symbol or 'UNKNOWN'} {action}{conf_text}{px_text}{qty_text}".strip()
+
+    out = {
+        "market_overview": str(ctx.get("market_overview_brief") or "").strip(),
+        "market_breadth": str(ctx.get("market_breadth_summary") or "").strip(),
+        "news_titles": news_titles,
+        "decision": decision_line,
+        "price_samples": prices[:4],
+        "symbol_candidates": symbols[:12],
+        "time_context": ctx.get("time_context")
+        if isinstance(ctx.get("time_context"), dict)
+        else None,
+    }
+    return out, None
+
+
 class LlmClient:
     def __init__(
         self,
@@ -181,27 +303,70 @@ class LlmClient:
         self.temperature = max(0.0, min(1.5, float(temperature)))
 
     def generate(
-        self, category: str, symbols: list[str], time_context: dict | None = None
+        self,
+        category: str,
+        symbols: list[str],
+        time_context: dict | None = None,
+        room_prompt_context: dict | None = None,
+        recent_texts: list[str] | None = None,
     ) -> dict:
         symbol_hint = ", ".join(symbols[:8]) if symbols else "600519.SH"
         tc = time_context or shanghai_time_context()
         now_iso = str(tc.get("now_iso") or "")
         hhmm = str(tc.get("hhmm") or "")
         day_part = str(tc.get("day_part") or "")
+
+        rpc = room_prompt_context or {}
+        market_line = str(rpc.get("market_overview") or "").strip()[:160]
+        breadth_line = str(rpc.get("market_breadth") or "").strip()[:120]
+        decision_line = str(rpc.get("decision") or "").strip()[:120]
+
+        news_titles_raw = rpc.get("news_titles")
+        news_titles = news_titles_raw if isinstance(news_titles_raw, list) else []
+        news_snippets = [
+            str(x or "").strip() for x in news_titles[:3] if str(x or "").strip()
+        ]
+        news_line = "；".join(news_snippets)[:180]
+
+        price_samples_raw = rpc.get("price_samples")
+        price_samples = price_samples_raw if isinstance(price_samples_raw, list) else []
+        price_snippets = [
+            str(x or "").strip() for x in price_samples[:3] if str(x or "").strip()
+        ]
+        price_line = "；".join(price_snippets)[:180]
+
+        recents = []
+        for item in recent_texts or []:
+            text = str(item or "").strip()
+            if text:
+                recents.append(text[:30])
+            if len(recents) >= 8:
+                break
+        recent_line = " | ".join(recents)
+
+        style_hint = CATEGORY_STYLE_HINT.get(category, CATEGORY_STYLE_HINT["stock"])
         user_prompt = (
             "你在生成直播间观众消息。"
             f"类别: {category}。"
+            f"写作要求: {style_hint}。"
             f"可参考股票代码: {symbol_hint}。"
             f"当前本地时间(Asia/Shanghai): {now_iso} ({hhmm}, {day_part})。"
-            "输出一条中文自然口语，10-28字，单句，不要解释，不要引号。"
+            f"市场摘要: {market_line or '暂无'}。"
+            f"宽度摘要: {breadth_line or '暂无'}。"
+            f"最新决策: {decision_line or '暂无'}。"
+            f"实时价格样本: {price_line or '暂无'}。"
+            f"新闻标题: {news_line or '暂无'}。"
+            f"最近弹幕(避免重复句式): {recent_line or '无'}。"
+            "输出一条中文自然口语，12-34字，单句，不要解释，不要引号。"
             "时间语境必须一致：白天不要出现下班/晚饭/晚安等夜间表达。"
+            "不要复述系统字段名，不要生成空泛鸡汤。"
         )
         payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": "你负责生成真实直播弹幕，语气像普通散户，偶尔随意闲聊。",
+                    "content": "你负责生成真实直播弹幕，语气像普通散户，优先贴合当下行情/新闻/价格上下文。",
                 },
                 {"role": "user", "content": user_prompt},
             ],
@@ -349,6 +514,8 @@ def pick_message_text(
     llm_ratio: float,
     llm_client: LlmClient | None,
     time_context: dict,
+    room_prompt_context: dict | None = None,
+    recent_texts: list[str] | None = None,
 ) -> tuple[str, str, str, str | None]:
     day_part = str(time_context.get("day_part") or "")
     category, template_text = pick_topic_text(symbols, day_part)
@@ -358,17 +525,30 @@ def pick_message_text(
     )
     if use_llm and llm_client is not None:
         result = llm_client.generate(
-            category=category, symbols=symbols, time_context=time_context
+            category=category,
+            symbols=symbols,
+            time_context=time_context,
+            room_prompt_context=room_prompt_context,
+            recent_texts=recent_texts,
         )
         if result.get("ok"):
             text = normalize_generated_text(str(result.get("text") or ""))
-            if text and is_time_appropriate_text(text, day_part):
+            recent_set = {
+                str(x or "").strip()
+                for x in (recent_texts or [])
+                if str(x or "").strip()
+            }
+            if (
+                text
+                and is_time_appropriate_text(text, day_part)
+                and text not in recent_set
+            ):
                 return category, text, "llm", None
             return (
                 category,
                 template_text,
                 "template_fallback",
-                "llm_time_mismatch",
+                "llm_time_mismatch_or_repeat",
             )
         return (
             category,
@@ -437,7 +617,10 @@ def parse_args():
     parser.set_defaults(constant_tempo=True)
     parser.add_argument("--content-mode", choices=CONTENT_MODES, default="template")
     parser.add_argument("--llm-ratio", type=float, default=0.35)
-    parser.add_argument("--llm-model", default="gpt-4o-mini")
+    parser.add_argument(
+        "--llm-model",
+        default=os.environ.get("CHAT_OPENAI_MODEL", "qwen3-max"),
+    )
     parser.add_argument(
         "--llm-base-url",
         default=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
@@ -445,6 +628,15 @@ def parse_args():
     parser.add_argument("--llm-timeout-sec", type=int, default=12)
     parser.add_argument("--llm-max-tokens", type=int, default=64)
     parser.add_argument("--llm-temperature", type=float, default=0.9)
+    parser.add_argument("--context-refresh-sec", type=float, default=15.0)
+    parser.add_argument("--recent-window-size", type=int, default=18)
+    parser.add_argument(
+        "--use-room-context", dest="use_room_context", action="store_true"
+    )
+    parser.add_argument(
+        "--no-use-room-context", dest="use_room_context", action="store_false"
+    )
+    parser.set_defaults(use_room_context=True)
     parser.add_argument(
         "--symbols",
         default="002131.SZ,300058.SZ,002342.SZ,600519.SH,300059.SZ,600089.SH,600986.SH,601899.SH,002050.SZ,002195.SZ",
@@ -539,6 +731,14 @@ def main() -> int:
     llm_used = 0
     llm_fallback = 0
     llm_fail = 0
+    recent_texts = deque(maxlen=max(4, int(args.recent_window_size)))
+
+    room_prompt_context: dict | None = None
+    room_ctx_error: str | None = None
+    room_ctx_fetch_ok = 0
+    room_ctx_fetch_fail = 0
+    room_ctx_next_refresh_ms = 0
+    context_refresh_ms = max(3000, int(float(args.context_refresh_sec) * 1000))
 
     while time.time() < end_at:
         if args.constant_tempo:
@@ -546,14 +746,56 @@ def main() -> int:
             if delay > 0:
                 time.sleep(delay)
 
+        if bool(args.use_room_context):
+            now_tick_ms = now_ms()
+            if room_prompt_context is None or now_tick_ms >= room_ctx_next_refresh_ms:
+                fetched_ctx, fetch_error = build_room_prompt_context(
+                    api, str(args.room_id)
+                )
+                room_ctx_next_refresh_ms = now_tick_ms + context_refresh_ms
+                if fetched_ctx:
+                    room_prompt_context = fetched_ctx
+                    room_ctx_error = None
+                    room_ctx_fetch_ok += 1
+                else:
+                    room_ctx_error = fetch_error or "room_context_fetch_failed"
+                    room_ctx_fetch_fail += 1
+
+        dynamic_symbols_raw = (
+            room_prompt_context.get("symbol_candidates")
+            if isinstance(room_prompt_context, dict)
+            else []
+        )
+        dynamic_symbols = (
+            [
+                str(x or "").strip().upper()
+                for x in dynamic_symbols_raw
+                if str(x or "").strip()
+            ]
+            if isinstance(dynamic_symbols_raw, list)
+            else []
+        )
+        effective_symbols = merge_symbol_pool(symbols, dynamic_symbols, limit=16)
+
         viewer = random.choice(viewers)
-        time_ctx = shanghai_time_context()
+        room_time_ctx = (
+            room_prompt_context.get("time_context")
+            if isinstance(room_prompt_context, dict)
+            else None
+        )
+        time_ctx = (
+            room_time_ctx
+            if isinstance(room_time_ctx, dict)
+            else shanghai_time_context()
+        )
         category, body, content_source, llm_error = pick_message_text(
-            symbols=symbols,
+            symbols=effective_symbols,
             content_mode=str(args.content_mode),
             llm_ratio=float(args.llm_ratio),
             llm_client=llm_client,
             time_context=time_ctx,
+            room_prompt_context=room_prompt_context,
+            recent_texts=list(recent_texts),
         )
         if content_source == "llm":
             llm_used += 1
@@ -587,6 +829,8 @@ def main() -> int:
             "text": text,
         }
         code, resp = api.post(f"/api/chat/rooms/{args.room_id}/messages", payload)
+        if code == 200 and body:
+            recent_texts.append(str(body))
         row = {
             "ts_ms": sent_ts_ms,
             "time_context": time_ctx,
@@ -602,6 +846,8 @@ def main() -> int:
         }
         if llm_error:
             row["llm_error"] = llm_error
+        if room_ctx_error:
+            row["room_context_error"] = room_ctx_error
 
         if expect_reply and str(args.reply_mode) == "blocking":
             reply_expected += 1
@@ -652,6 +898,10 @@ def main() -> int:
         "llm_used": llm_used,
         "llm_fail": llm_fail,
         "llm_fallback": llm_fallback,
+        "use_room_context": bool(args.use_room_context),
+        "room_context_fetch_ok": room_ctx_fetch_ok,
+        "room_context_fetch_fail": room_ctx_fetch_fail,
+        "last_room_context_error": room_ctx_error,
         "log_path": str(log_path),
     }
     print(json.dumps(summary, ensure_ascii=False))

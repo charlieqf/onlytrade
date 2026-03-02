@@ -9,9 +9,7 @@ import {
   type FormalStreamDesignPageProps,
   formatSignedMoney,
   formatSignedPct,
-  PhoneAvatarSlot,
   useAutoScrollFeed,
-  useAvatarSize,
   useAgentTtsAutoplay,
   usePhoneStreamData,
 } from './phoneStreamShared'
@@ -184,12 +182,12 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
     positions,
     publicMessages,
     focusedSymbol,
+    marketBreadth,
   } = usePhoneStreamData({
     ...props,
     language: pageLanguage,
   })
 
-  const { sizePx, decrease, increase } = useAvatarSize('stream-avatar-size-command-deck-new')
   const { containerRef, unseenCount, onScroll, jumpToLatest } = useAutoScrollFeed(
     publicMessages.length
   )
@@ -203,22 +201,10 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
     ducking: ttsSpeaking,
   })
 
-  const [supportPct, setSupportPct] = useState<number>(73)
+  const [symbolPool, setSymbolPool] = useState<string[]>([])
+  const [symbolCursor, setSymbolCursor] = useState(0)
   const [symbolNameMap, setSymbolNameMap] = useState<Record<string, string>>(DEFAULT_CN_SYMBOL_NAMES)
   const isWeComIPhone = useMemo(() => isWeComLikeIPhoneClient(), [])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setSupportPct((prev) => {
-        const driftPool = [-1, 0, 0, 0, 0, 1]
-        const baseDelta = driftPool[Math.floor(Math.random() * driftPool.length)]
-        const next = prev + baseDelta
-        return Math.max(70, Math.min(next, 77))
-      })
-    }, 5000)
-
-    return () => window.clearInterval(timer)
-  }, [])
 
   useEffect(() => {
     if (!ttsAvailable) return
@@ -240,28 +226,115 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
       .then((res) => res.json())
       .then((payload) => {
         const rows = Array.isArray(payload?.symbols) ? (payload.symbols as SymbolInfo[]) : []
-        if (!rows.length) return
+        const nextPool: string[] = []
+        for (const row of rows) {
+          const symbol = String(row?.symbol || '').trim().toUpperCase()
+          if (!symbol) continue
+          if (!nextPool.includes(symbol)) nextPool.push(symbol)
+        }
+        if (nextPool.length > 0) {
+          setSymbolPool(nextPool)
+        }
 
-        setSymbolNameMap((prev) => {
-          const next = { ...prev }
-          for (const row of rows) {
-            const symbol = String(row?.symbol || '').trim().toUpperCase()
-            const name = String(row?.name || '').trim()
-            if (symbol && name) {
-              next[symbol] = name
+        if (rows.length) {
+          setSymbolNameMap((prev) => {
+            const next = { ...prev }
+            for (const row of rows) {
+              const symbol = String(row?.symbol || '').trim().toUpperCase()
+              const name = String(row?.name || '').trim()
+              if (symbol && name) {
+                next[symbol] = name
+              }
             }
-          }
-          return next
-        })
+            return next
+          })
+        }
       })
       .catch(() => {})
   }, [selectedTrader.trader_id])
 
-  const activeSymbol = focusedSymbol || positions[0]?.symbol || ''
+  const displaySymbolPool = useMemo(() => {
+    const out: string[] = []
+    const push = (raw: string | undefined) => {
+      const value = String(raw || '').trim().toUpperCase()
+      if (!value) return
+      if (!out.includes(value)) out.push(value)
+    }
+
+    for (const symbol of symbolPool) push(symbol)
+    for (const pos of positions) push(String(pos.symbol || ''))
+    push(focusedSymbol)
+
+    if (!out.length) {
+      for (const symbol of Object.keys(symbolNameMap)) push(symbol)
+    }
+    if (!out.length) push('600519.SH')
+    return out
+  }, [symbolPool, positions, focusedSymbol, symbolNameMap])
+
+  useEffect(() => {
+    setSymbolCursor(0)
+  }, [selectedTrader.trader_id])
+
+  useEffect(() => {
+    if (displaySymbolPool.length <= 1) return
+    const timer = window.setInterval(() => {
+      setSymbolCursor((prev) => (prev + 1) % displaySymbolPool.length)
+    }, 9000)
+    return () => window.clearInterval(timer)
+  }, [displaySymbolPool.length])
+
+  const activeSymbol = displaySymbolPool[symbolCursor % displaySymbolPool.length] || ''
   const activeSymbolName = useMemo(
     () => symbolNameMap[String(activeSymbol || '').trim().toUpperCase()] || '',
     [activeSymbol, symbolNameMap]
   )
+
+  const supportPct = useMemo(() => {
+    let breadthPct: number | null = null
+    const advRatio = Number(marketBreadth?.advancerRatio)
+    if (Number.isFinite(advRatio)) {
+      breadthPct = advRatio <= 1 ? advRatio * 100 : advRatio
+    } else {
+      const redBlue = Number(marketBreadth?.redBlueRatio)
+      if (Number.isFinite(redBlue) && redBlue >= 0) {
+        breadthPct = (redBlue / (1 + redBlue)) * 100
+      }
+    }
+
+    const bullishTerms = ['看多', '支持', '加仓', '低吸', '上车', '突破', '冲', '买']
+    const bearishTerms = ['看空', '反对', '减仓', '止损', '回撤', '跌', '卖', '风险']
+    const viewerMessages = publicMessages
+      .filter((msg) => msg.sender_type === 'user')
+      .slice(-40)
+
+    let score = 0
+    for (const msg of viewerMessages) {
+      const text = String(msg.text || '').toLowerCase()
+      const bullish = bullishTerms.some((term) => text.includes(term))
+      const bearish = bearishTerms.some((term) => text.includes(term))
+      if (bullish && !bearish) score += 1
+      if (bearish && !bullish) score -= 1
+    }
+
+    const crowdPct = viewerMessages.length
+      ? 50 + (score / viewerMessages.length) * 35
+      : null
+
+    let combined: number
+    if (breadthPct != null && crowdPct != null) {
+      combined = breadthPct * 0.7 + crowdPct * 0.3
+    } else if (breadthPct != null) {
+      combined = breadthPct
+    } else if (crowdPct != null) {
+      combined = crowdPct
+    } else {
+      combined = 50
+    }
+
+    const clamped = Math.max(5, Math.min(95, combined))
+    return Math.round(clamped)
+  }, [marketBreadth, publicMessages])
 
   const sectorDistribution = useMemo(() => {
     const bucket = new Map<string, number>()
@@ -414,16 +487,6 @@ export default function CommandDeckNewPage(props: FormalStreamDesignPageProps) {
               limit={240}
               refreshMs={12_000}
               height="100%"
-            />
-
-            <PhoneAvatarSlot
-              trader={selectedTrader}
-              sizePx={Math.max(36, Math.round(sizePx / 3))}
-              language={pageLanguage}
-              showPlaceholderLabel={false}
-              showTraderName
-              onDecrease={decrease}
-              onIncrease={increase}
             />
           </div>
         </div>

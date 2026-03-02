@@ -3064,14 +3064,14 @@ function extractNewsCommentary(payload) {
 }
 
 const DEFAULT_CASUAL_TOPICS = [
-  '节奏快的时候先慢半拍，别被情绪带着跑。',
-  '先看风险边界再下结论，判断更稳。',
-  '喝口水，深呼吸，再决定这条线值不值得跟。',
-  '不确定就先观察，这是长期有效的耐心。',
-  '比起猜方向，先把思路讲清楚更重要。',
-  '状态一般就先降频，评论质量比数量更关键。',
-  '先盯高确定性信号，其它噪音可以放过。',
-  '留点弹性，不要把一句判断说死。',
+  '行情快的时候先放慢手速，别被情绪带节奏。',
+  '先看风险再看收益，今天先把回撤守住。',
+  '喝口水，深呼吸，再决定要不要出手。',
+  '不确定就少做，这是职业交易员的耐心。',
+  '控制仓位比猜涨跌更重要。',
+  '连亏时先降频，先把状态找回来。',
+  '今天先做高确定性机会，其他都可以放过。',
+  '盘中也要留点余地，别一把梭哈。',
 ]
 
 function shanghaiClockParts(tsMs = Date.now()) {
@@ -4935,68 +4935,68 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
 
   const holdTemplatesByTone = {
     calm: [
-      symbol ? `${symbol}我先放在观察位，等下一次共振再确认。` : '这轮先稳住节奏，等信号更整齐再更新。',
-      symbol ? `先看${symbol}的确认K线，不急着抢结论。` : '先看盘面共振，不在噪音里频繁改口。',
-      symbol ? `${symbol}这边保持耐心，先让结构走清楚。` : '先把节奏放慢，高确定性信号再强调。',
+      symbol ? `${symbol}我先放在观察位，等下一次共振再确认。` : '这轮先稳住手速，等信号更整齐再动。',
+      symbol ? `先看${symbol}的确认K线，不急着抢一步。` : '先看盘面共振，不在噪音里频繁切换。',
+      symbol ? `${symbol}这边保持耐心，先让结构走清楚。` : '先把节奏放慢，高确定性机会再出手。',
     ],
     focused: [
-      symbol ? `我继续盯${symbol}的量价配合，确认后再给结论。` : '我先对齐信号和风险，再给判断。',
-      symbol ? `${symbol}先跟踪关键位，突破确认才强调。` : '我先看关键位是否站稳，再说下一步。',
+      symbol ? `我继续盯${symbol}的量价配合，确认后再执行。` : '我先对齐信号和风险，再决定动作。',
+      symbol ? `${symbol}先跟踪关键位，突破确认才推进。` : '我先看关键位是否站稳，再做下一步。',
       symbol ? `当前${symbol}先观察，不满足条件就继续等待。` : '信号没齐之前我先按计划等待。',
     ],
     energetic: [
       symbol ? `${symbol}这波有节奏感，但我先等确认再提速。` : '节奏开始加快，我先等确认再提速。',
-      symbol ? `这轮${symbol}先盯住预测盘变化，机会出来就同步。` : '预测盘在提速，我会盯住第一波有效信号。',
-      symbol ? `${symbol}先看下一根是否延续，确认再更新。` : '节奏偏快，我先确认再同步观点。',
+      symbol ? `这轮${symbol}先盯住盘口变化，机会出来就跟。` : '盘口在提速，我会盯住第一波有效信号。',
+      symbol ? `${symbol}先看下一根是否延续，确认再上动作。` : '节奏偏快，我先确认再执行。',
     ],
     cautious: [
       symbol ? `${symbol}先以风控为先，信号不够就继续观望。` : '先把风险放第一位，宁可慢半拍。',
-      symbol ? `这轮${symbol}先防回撤，确认后再提高语气。` : '先守回撤线，确认后再提高判断强度。',
-      symbol ? `${symbol}先做防守观察，不急着把结论说满。` : '先防守，等更清晰的观察条件。',
+      symbol ? `这轮${symbol}先防回撤，确认后再考虑参与。` : '先守回撤线，确认后再考虑动作。',
+      symbol ? `${symbol}先做防守观察，不急着增加敞口。` : '先防守，等更清晰的入场条件。',
     ],
   }
   const buyTemplatesByTone = {
     calm: [
-      symbol ? `${symbol}偏多但不追高，我会等回踩确认再强调。` : '偏多思路不变，等更舒服的位置再加判断。',
-      symbol ? `我对${symbol}保持顺势视角，观点会循序增强。` : '顺势为主，先小步强化观点。',
-      symbol ? `${symbol}若延续量能，我会按计划逐步跟进解读。` : '量能延续再加速，先按计划更新。',
+      symbol ? `${symbol}偏多但不追高，我会等回踩确认再跟。` : '偏多思路不变，等更舒服的位置推进。',
+      symbol ? `我对${symbol}保持顺势视角，仓位会循序增加。` : '顺势为主，先小步推进。',
+      symbol ? `${symbol}若延续量能，我会按计划逐步跟进。` : '量能延续再加速，先按计划执行。',
     ],
     focused: [
-      symbol ? `${symbol}若突破关键位并放量，我会直接跟随解读。` : '突破+放量才强化观点，不满足就等待。',
-      symbol ? `我盯${symbol}的延续确认，条件满足就推进判断。` : '我盯延续确认，条件到位立即同步。',
+      symbol ? `${symbol}若突破关键位并放量，我会直接跟随。` : '突破+放量才执行，不满足就等待。',
+      symbol ? `我盯${symbol}的延续确认，条件满足就推进。` : '我盯延续确认，条件到位立即执行。',
       symbol ? `${symbol}这边看多，但必须看到结构确认。` : '看多但先要结构确认。',
     ],
     energetic: [
-      symbol ? `${symbol}节奏在变快，确认后我会果断推进判断。` : '节奏在提速，确认后我会果断同步。',
-      symbol ? `这轮${symbol}如果继续放量，我会积极跟上解读。` : '量能继续放大我就积极跟上。',
-      symbol ? `${symbol}只要不破关键位，我会继续顺势解读。` : '只要结构不破，我会继续顺势。',
+      symbol ? `${symbol}节奏在变快，确认后我会果断推进。` : '节奏在提速，确认后我会果断执行。',
+      symbol ? `这轮${symbol}如果继续放量，我会积极跟上。` : '量能继续放大我就积极跟上。',
+      symbol ? `${symbol}只要不破关键位，我会继续顺势推进。` : '只要结构不破，我会继续顺势。',
     ],
     cautious: [
-      symbol ? `${symbol}方向偏多，但我会把风险边界放前面。` : '偏多但先把风险边界锁住。',
-      symbol ? `我会先轻量跟踪${symbol}，确认后再增强观点。` : '先轻量试探，确认后再加强。',
-      symbol ? `${symbol}若冲高乏力我就不追，等回踩再评论。` : '冲高不追，回踩确认再处理。',
+      symbol ? `${symbol}方向偏多，但我会把止损线放前面。` : '偏多但先把风险边界锁住。',
+      symbol ? `我会先小仓试探${symbol}，确认后再加。` : '先小仓试探，确认后再加。',
+      symbol ? `${symbol}若冲高乏力我就不追，等回踩再说。` : '冲高不追，回踩确认再处理。',
     ],
   }
   const sellTemplatesByTone = {
     calm: [
-      symbol ? `${symbol}这里先收缩风险，反弹力度不足就继续偏谨慎。` : '先降风险，反弹无力就继续保守。',
-      symbol ? `我先降低${symbol}的进攻语气，等结构稳定再评估。` : '先降温判断，等结构稳定后再看。',
-      symbol ? `${symbol}这轮先保护回撤，风险控制放第一位。` : '先把回撤控制住，再看后续。',
+      symbol ? `${symbol}这里先收缩风险，反弹力度不足就继续减。` : '先降风险，反弹无力就继续收。',
+      symbol ? `我先降低${symbol}仓位，等结构稳定再评估。` : '先降仓，等结构稳定后再看。',
+      symbol ? `${symbol}这轮优先兑现，回撤控制放第一位。` : '先兑现一部分，把回撤控制住。',
     ],
     focused: [
-      symbol ? `${symbol}失守关键位我会继续偏谨慎，不犹豫。` : '关键位失守就继续偏谨慎。',
-      symbol ? `我先盯${symbol}反抽强度，弱反弹就不做激进判断。` : '弱反弹不恋战，优先防守。',
-      symbol ? `${symbol}先防守，等下一个稳定结构再考虑转向。` : '先防守，等稳定结构再说。',
+      symbol ? `${symbol}失守关键位我会继续减仓，不犹豫。` : '关键位失守就继续减仓。',
+      symbol ? `我先盯${symbol}反抽强度，弱反弹就不恋战。` : '弱反弹不恋战，优先防守。',
+      symbol ? `${symbol}先防守，等下一个稳定结构再考虑回补。` : '先防守，等稳定结构再说。',
     ],
     energetic: [
       symbol ? `${symbol}这边我先快速降风险，先退出拥挤区。` : '先快速降风险，离开拥挤区。',
       symbol ? `这轮${symbol}我会偏快处理，避免回撤放大。` : '这轮偏快处理，避免回撤扩大。',
-      symbol ? `${symbol}冲高承接弱的话，我会直接收缩乐观预期。` : '冲高承接弱就直接收缩乐观预期。',
+      symbol ? `${symbol}冲高承接弱的话，我会直接收缩仓位。` : '冲高承接弱就直接收缩仓位。',
     ],
     cautious: [
       symbol ? `${symbol}先把风险敞口降下来，再观察反弹质量。` : '先降敞口，再看反弹质量。',
       symbol ? `${symbol}这里先防守，不做情绪化硬扛。` : '先防守，不做情绪化硬扛。',
-      symbol ? `我会先守住风险纪律，${symbol}不强就继续保守。` : '先守风险纪律，不强就继续保守。',
+      symbol ? `我会先守住止损纪律，${symbol}不强就继续减。` : '先守止损纪律，不强就继续减。',
     ],
   }
 
@@ -5020,7 +5020,7 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   const marketTemplates = [
     `盘面节奏是：${normalizedMarketLine}。`,
     `当前市场状态：${normalizedMarketLine}。`,
-    `预测盘给我的感觉是：${normalizedMarketLine}。`,
+    `盘口给我的感觉是：${normalizedMarketLine}。`,
     `今天盘面主线偏${normalizedMarketLine}。`,
     `市场侧重点看起来是${normalizedMarketLine}。`,
     `资金节奏上，${normalizedMarketLine}。`,
@@ -5085,7 +5085,7 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   const sentence3 = casualBias
     ? (casualLine || chatterTail)
     : (chatterTail || casualLine)
-  const text = `${sentence1}。${sentence2}${sentence3}`.trim() || '房间在线，我先继续跟踪预测盘和消息变化。'
+  const text = `${sentence1}。${sentence2}${sentence3}`.trim() || '房间在线，我先继续跟踪盘面和消息变化。'
 
   return {
     text,
@@ -5447,7 +5447,7 @@ function narrationTextFromReasoningSteps(steps) {
       ? `${opener}：${signalPlain}，这轮先观望。`
       : `${opener}：${actionPlain || '先观望'}。`
   } else {
-    const decisionOpeners = ['当前观点', '本轮判断', '这轮解读']
+    const decisionOpeners = ['当前动作', '本轮决策', '这轮执行']
     const opener = decisionOpeners[simpleHash(`${signalPlain}|${actionPlain}|decision`) % decisionOpeners.length]
     text = signalPlain && signalPlain !== actionPlain
       ? `${opener}：${actionPlain}；依据：${signalPlain}`
@@ -5464,9 +5464,6 @@ function fallbackDecisionNarrationText({ trader, decision, context }) {
   const d = decision?.decisions?.[0] || null
   if (!d) return ''
   const action = String(d.action || 'hold').toUpperCase()
-  const actionLabel = action === 'BUY'
-    ? '偏积极'
-    : (action === 'SELL' ? '偏谨慎' : '观望')
   const symbol = String(d.symbol || '').trim() || (String(context?.symbol || '').trim() || 'UNKNOWN')
   const conf = Number.isFinite(Number(d.confidence)) ? Number(d.confidence).toFixed(2) : ''
   const ret5 = toPct(context?.intraday?.feature_snapshot?.ret_5, 2)
@@ -5476,7 +5473,7 @@ function fallbackDecisionNarrationText({ trader, decision, context }) {
   if (Number.isFinite(rsi)) bits.push(`RSI${Number(rsi.toFixed(0))}`)
   const brief = bits.length ? `（${bits.join('，')}）` : ''
   const confText = conf ? `，置信度${conf}` : ''
-  return `本轮${symbol}判断为${actionLabel}${brief}${confText}。`
+  return `本轮${symbol}给出${action}${brief}${confText}。`
 }
 
 async function maybeEmitDecisionNarration({ trader, decision, context }) {

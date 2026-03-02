@@ -304,6 +304,18 @@ def _atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
     tmp.replace(target)
 
 
+def _read_existing_payload(path: str) -> Dict[str, Any]:
+    target = Path(path)
+    if not target.exists() or not target.is_file():
+        return {}
+    try:
+        raw = target.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _normalize_query_list(value: str) -> List[Dict[str, Any]]:
     text = _safe_text(value, 4000)
     if not text:
@@ -430,6 +442,43 @@ def collect_x_hot_events(
     )
     merged = merged[:total_limit]
 
+    existing_payload = _read_existing_payload(output_path)
+    use_cache_fallback = False
+    if not merged:
+        cached_rows = (
+            existing_payload.get("headlines")
+            if isinstance(existing_payload, dict)
+            else None
+        )
+        if isinstance(cached_rows, list) and cached_rows:
+            normalized_cached: List[Dict[str, Any]] = []
+            for row in cached_rows:
+                if not isinstance(row, dict):
+                    continue
+                title = _safe_text(row.get("title"), 220)
+                if not title:
+                    continue
+                normalized_cached.append(
+                    {
+                        "title": title,
+                        "published_at": _safe_text(row.get("published_at"), 120)
+                        or None,
+                        "published_ts_ms": int(row.get("published_ts_ms") or 0) or None,
+                        "source": _safe_text(row.get("source"), 40) or "x.com/cache",
+                        "url": _safe_text(row.get("url"), 400) or None,
+                        "author": _safe_text(row.get("author"), 80) or None,
+                        "category": _safe_text(row.get("category"), 32),
+                        "category_label": _safe_text(row.get("category_label"), 32),
+                        "score": float(row.get("score") or 0),
+                        "engagement": float(row.get("engagement") or 0),
+                    }
+                )
+                if len(normalized_cached) >= total_limit:
+                    break
+            if normalized_cached:
+                merged = normalized_cached
+                use_cache_fallback = True
+
     commentary: List[str] = []
     for cfg in query_list:
         category = _safe_text(cfg.get("category"), 32).lower()
@@ -442,6 +491,19 @@ def collect_x_hot_events(
         ]
         if picks:
             commentary.append(f"{label}热点：{'；'.join(picks)}")
+
+    if use_cache_fallback and not commentary:
+        cached_commentary = (
+            existing_payload.get("commentary")
+            if isinstance(existing_payload, dict)
+            else None
+        )
+        if isinstance(cached_commentary, list):
+            commentary = [
+                _safe_text(item, 120)
+                for item in cached_commentary
+                if _safe_text(item, 120)
+            ][:12]
 
     titles: List[str] = []
     for line in commentary:
@@ -468,20 +530,34 @@ def collect_x_hot_events(
     elif provider_hits:
         source_kind = "nitter_rss"
 
+    as_of_iso = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
+    as_of_ts_ms = now_ts_ms
+    day_key = _shanghai_day_key(now_ts_ms)
+    if use_cache_fallback:
+        source_kind = "cache_fallback"
+        cached_as_of = _safe_text(existing_payload.get("as_of"), 64)
+        cached_ts_ms = int(existing_payload.get("as_of_ts_ms") or 0)
+        if cached_as_of:
+            as_of_iso = cached_as_of
+        if cached_ts_ms > 0:
+            as_of_ts_ms = cached_ts_ms
+            day_key = _shanghai_day_key(cached_ts_ms)
+
     payload = {
         "schema_version": "x.hot.events.v1",
         "provider": "x.com",
         "source_kind": source_kind,
-        "as_of": datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
-        "as_of_ts_ms": now_ts_ms,
-        "day_key": _shanghai_day_key(now_ts_ms),
+        "as_of": as_of_iso,
+        "as_of_ts_ms": as_of_ts_ms,
+        "day_key": day_key,
         "headline_count": len(merged),
         "headlines": merged,
         "categories": categories,
         "commentary": commentary,
         "titles": titles,
+        "cache_fallback": use_cache_fallback,
     }
     _atomic_write_json(output_path, payload)
     return payload

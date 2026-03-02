@@ -28,6 +28,7 @@ bash scripts/x_hot_news_push.sh --limit-total 48 --lookback-hours 18
 - `ONLYTRADE_X_VM_PORT`: default `21522`
 - `ONLYTRADE_X_VM_KEY`: default `~/.ssh/cn169_ed25519`
 - `ONLYTRADE_X_REMOTE_PATH`: default `/opt/onlytrade/data/live/onlytrade/x_hot_events.json`
+- `ONLYTRADE_X_ALLOW_EMPTY_PUSH`: default `false`; when `headline_count=0`, push is skipped to avoid overwriting VM with an empty digest.
 
 ## Schedule every 6 hours (Windows)
 

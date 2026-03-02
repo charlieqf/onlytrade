@@ -85,6 +85,22 @@ run_python() {
   exit 1
 }
 
+json_headline_count() {
+  local file_path="$1"
+  run_python - "$file_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, 'r', encoding='utf-8') as f:
+        payload = json.load(f)
+    print(int(payload.get('headline_count') or 0))
+except Exception:
+    print(0)
+PY
+}
+
 mkdir -p "$(dirname "$LOCAL_OUTPUT")"
 
 if [ "$PUSH_ONLY" != "true" ]; then
@@ -100,6 +116,14 @@ fi
 if [ ! -f "$LOCAL_OUTPUT" ]; then
   echo "[x-hot] ERROR: local output not found: $LOCAL_OUTPUT" >&2
   exit 1
+fi
+
+HEADLINE_COUNT="$(json_headline_count "$LOCAL_OUTPUT")"
+ALLOW_EMPTY_PUSH="${ONLYTRADE_X_ALLOW_EMPTY_PUSH:-false}"
+if [ "$HEADLINE_COUNT" -le 0 ] && [ "${ALLOW_EMPTY_PUSH,,}" != "true" ]; then
+  echo "[x-hot] WARN: headline_count=0, skip VM push to preserve previous remote snapshot"
+  echo "[x-hot] set ONLYTRADE_X_ALLOW_EMPTY_PUSH=true to force pushing empty payload"
+  exit 0
 fi
 
 REMOTE_DIR="$(dirname "$REMOTE_PATH")"

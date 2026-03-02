@@ -91,6 +91,24 @@ For the **Cyber Polymarket** room (`t_015`), we recommend using the following "S
 | **龙安俐** | `longanli_v3` | 知性、典雅、专业形象 (25-35岁) | 像财经新闻主播一样进行盘口深度解读 |
 | **loongstella** | `loongstella` | 现代、带货、高穿透力 | 强引导性语态，适合在重大行情突破时呼吁交易 |
 
+### 5.1 Realtime commentary mode (new)
+
+`t_015` now supports runtime-generated commentary + per-speaker voice profiles:
+
+- `POST /api/polymarket/commentary/generate`
+- `GET /api/polymarket/commentary/feed?room_id=t_015`
+- `GET /api/polymarket/commentary/profile?room_id=t_015`
+- `POST /api/polymarket/commentary/profile/speaker` (control token required)
+
+Speaker voices are intended for `selfhosted` low-latency TTS. Frontend can pass `speaker_id` to `/api/chat/tts` to synthesize with the mapped speaker voice.
+
+Hot-switch one speaker voice quickly:
+
+```bash
+bash scripts/onlytrade-ops.sh poly-commentary-speaker-set t_015 host_a --voice zsy
+bash scripts/onlytrade-ops.sh poly-commentary-speaker-set t_015 host_b --voice xuanyijiangjie
+```
+
 ## 6) Environment requirements
 
 Do not hardcode keys in source code. Provide env vars at runtime:

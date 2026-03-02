@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useFullscreenLock } from '../../hooks/useFullscreenLock'
+import { api } from '../../lib/api'
 import {
     type FormalStreamDesignPageProps,
     usePhoneStreamData,
@@ -31,6 +32,43 @@ interface MarketState {
     }>
     ai_pnl: number
     last_update: number
+}
+
+interface CommentaryItem {
+    id: string
+    event_type: string
+    text: string
+    speaker_id: string
+    speaker_name: string
+    voice_id: string
+    source: string
+    created_ts_ms: number
+    market_id?: string | null
+}
+
+function normalizeProb(value: unknown): number | null {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return null
+    return Math.max(0, Math.min(1, n))
+}
+
+function normalizeCommentaryItem(raw: unknown): CommentaryItem | null {
+    if (!raw || typeof raw !== 'object') return null
+    const row = raw as Record<string, unknown>
+    const id = String(row.id || '').trim()
+    const text = String(row.text || '').trim()
+    if (!id || !text) return null
+    return {
+        id,
+        event_type: String(row.event_type || 'market_tick').trim().toLowerCase(),
+        text,
+        speaker_id: String(row.speaker_id || '').trim().toLowerCase() || 'host_a',
+        speaker_name: String(row.speaker_name || '').trim() || '主播',
+        voice_id: String(row.voice_id || '').trim(),
+        source: String(row.source || '').trim(),
+        created_ts_ms: Number(row.created_ts_ms) || Date.now(),
+        market_id: row.market_id ? String(row.market_id) : null,
+    }
 }
 
 // Format numbers like 25,000,000 -> 25M
@@ -65,6 +103,113 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
     const [state, setState] = useState<MarketState | null>(null)
     const [errorCount, setErrorCount] = useState(0)
+    const [commentaryItems, setCommentaryItems] = useState<CommentaryItem[]>([])
+    const [speakingCommentaryId, setSpeakingCommentaryId] = useState<string | null>(null)
+
+    const snapshotRef = useRef<{
+        marketId: string
+        prob: number | null
+        lastLogId: number | null
+        lastCommentaryTs: number
+    }>({
+        marketId: '',
+        prob: null,
+        lastLogId: null,
+        lastCommentaryTs: 0,
+    })
+    const inFlightRef = useRef(false)
+    const audioQueueRef = useRef<Array<{ id: string; url: string }>>([])
+    const audioPlayingRef = useRef(false)
+    const activeAudioRef = useRef<HTMLAudioElement | null>(null)
+    const knownCommentaryIdsRef = useRef<Set<string>>(new Set())
+
+    const appendCommentary = (item: CommentaryItem) => {
+        if (knownCommentaryIdsRef.current.has(item.id)) return
+        knownCommentaryIdsRef.current.add(item.id)
+        setCommentaryItems((prev) => {
+            const next = [...prev, item]
+            if (next.length > 40) next.splice(0, next.length - 40)
+            return next
+        })
+    }
+
+    const playNextCommentaryAudio = () => {
+        if (audioPlayingRef.current) return
+        const next = audioQueueRef.current.shift()
+        if (!next) {
+            setSpeakingCommentaryId(null)
+            return
+        }
+
+        const audio = new Audio(next.url)
+        activeAudioRef.current = audio
+        audioPlayingRef.current = true
+        setSpeakingCommentaryId(next.id)
+
+        const done = () => {
+            audioPlayingRef.current = false
+            setSpeakingCommentaryId(null)
+            URL.revokeObjectURL(next.url)
+            activeAudioRef.current = null
+            playNextCommentaryAudio()
+        }
+
+        audio.onended = done
+        audio.onerror = done
+        void audio.play().catch(done)
+    }
+
+    const enqueueCommentaryAudio = (id: string, blob: Blob) => {
+        if (!(blob instanceof Blob) || blob.size <= 0) return
+        const url = URL.createObjectURL(blob)
+        audioQueueRef.current.push({ id, url })
+        playNextCommentaryAudio()
+    }
+
+    const requestCommentaryForEvent = async (payload: {
+        eventType: string
+        eventKey: string
+        market: MarketState['market']
+        recentLogs: MarketState['logs']
+        triggerReason: string
+        probDelta?: number
+    }) => {
+        if (inFlightRef.current) return
+        inFlightRef.current = true
+        try {
+            const generated = await api.generatePolymarketCommentary({
+                room_id: selectedTrader.trader_id,
+                event_type: payload.eventType,
+                event_key: payload.eventKey,
+                market: payload.market,
+                recent_logs: payload.recentLogs.slice(-6),
+                trigger: {
+                    reason: payload.triggerReason,
+                    delta_prob: payload.probDelta,
+                },
+            })
+            const item = normalizeCommentaryItem(generated.commentary)
+            if (!item) return
+            appendCommentary(item)
+
+            try {
+                const speechBlob = await api.synthesizeRoomSpeech({
+                    room_id: selectedTrader.trader_id,
+                    text: item.text,
+                    message_id: item.id,
+                    tone: 'energetic',
+                    speaker_id: item.speaker_id,
+                })
+                enqueueCommentaryAudio(item.id, speechBlob)
+            } catch {
+                // keep text commentary even if TTS fails
+            }
+        } catch {
+            // generation failures should not break render loop
+        } finally {
+            inFlightRef.current = false
+        }
+    }
 
     // Poll the static JSON file
     useEffect(() => {
@@ -76,9 +221,86 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 const res = await fetch(`/cyber_market_live.json?t=${Date.now()}`)
                 if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`)
                 const data = await res.json()
+                const nextState = data as MarketState
+                const nowMs = Date.now()
+                const prev = snapshotRef.current
+                const marketId = String(nextState?.market?.id || '').trim()
+                const prob = normalizeProb(nextState?.market?.current_prob)
+                const logs = Array.isArray(nextState?.logs) ? nextState.logs : []
+                const lastLog = logs.length ? logs[logs.length - 1] : null
+                const lastLogId = Number.isFinite(Number(lastLog?.id)) ? Number(lastLog?.id) : null
+
+                let pendingEvent: {
+                    eventType: string
+                    eventKey: string
+                    triggerReason: string
+                    probDelta?: number
+                } | null = null
+
+                const elapsedSinceCommentary = nowMs - Number(prev.lastCommentaryTs || 0)
+                if (!prev.marketId && marketId) {
+                    pendingEvent = {
+                        eventType: 'initial_snapshot',
+                        eventKey: `${marketId}|init`,
+                        triggerReason: 'initial_market_snapshot',
+                    }
+                } else if (prev.marketId && marketId && marketId !== prev.marketId) {
+                    pendingEvent = {
+                        eventType: 'market_switch',
+                        eventKey: `${marketId}|switch`,
+                        triggerReason: 'market_switched',
+                    }
+                } else if (
+                    prob != null
+                    && prev.prob != null
+                    && elapsedSinceCommentary >= 3500
+                ) {
+                    const delta = prob - prev.prob
+                    if (Math.abs(delta) >= 0.012) {
+                        const sign = delta > 0 ? 'up' : 'down'
+                        pendingEvent = {
+                            eventType: delta > 0 ? 'prob_spike_up' : 'prob_spike_down',
+                            eventKey: `${marketId}|prob|${sign}|${Math.round(prob * 1000)}`,
+                            triggerReason: `probability_${sign}_${(Math.abs(delta) * 100).toFixed(2)}pct`,
+                            probDelta: delta,
+                        }
+                    }
+                }
+
+                if (!pendingEvent && lastLogId != null && lastLogId !== prev.lastLogId && elapsedSinceCommentary >= 3500) {
+                    const logType = String(lastLog?.type || '').trim().toLowerCase()
+                    if (logType === 'info') {
+                        pendingEvent = {
+                            eventType: 'headline_change',
+                            eventKey: `${marketId}|info|${lastLogId}`,
+                            triggerReason: 'system_info_log_changed',
+                        }
+                    } else if (logType === 'agent' && elapsedSinceCommentary >= 4500) {
+                        pendingEvent = {
+                            eventType: 'agent_execution',
+                            eventKey: `${marketId}|agent|${lastLogId}`,
+                            triggerReason: 'agent_trade_log_changed',
+                        }
+                    }
+                }
+
+                snapshotRef.current = {
+                    marketId,
+                    prob,
+                    lastLogId,
+                    lastCommentaryTs: pendingEvent ? nowMs : prev.lastCommentaryTs,
+                }
+
                 if (active) {
-                    setState(data as MarketState)
+                    setState(nextState)
                     setErrorCount(0)
+                    if (pendingEvent) {
+                        void requestCommentaryForEvent({
+                            ...pendingEvent,
+                            market: nextState.market,
+                            recentLogs: logs,
+                        })
+                    }
                 }
             } catch (err) {
                 console.warn('Failed to fetch market data:', err)
@@ -93,7 +315,69 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
             active = false
             clearInterval(timer)
         }
+    }, [selectedTrader.trader_id])
+
+    useEffect(() => {
+        return () => {
+            if (activeAudioRef.current) {
+                activeAudioRef.current.pause()
+                activeAudioRef.current = null
+            }
+            for (const item of audioQueueRef.current) {
+                URL.revokeObjectURL(item.url)
+            }
+            audioQueueRef.current = []
+        }
     }, [])
+
+    useEffect(() => {
+        let active = true
+        let afterTsMs = Date.now() - 4000
+
+        const pullFeed = async () => {
+            try {
+                const rows = await api.getPolymarketCommentaryFeed({
+                    room_id: selectedTrader.trader_id,
+                    after_ts_ms: afterTsMs,
+                    limit: 20,
+                })
+                if (!active || !rows.length) return
+
+                for (const raw of rows) {
+                    const item = normalizeCommentaryItem(raw)
+                    if (!item) continue
+                    afterTsMs = Math.max(afterTsMs, Number(item.created_ts_ms) || 0)
+                    const alreadyKnown = knownCommentaryIdsRef.current.has(item.id)
+                    appendCommentary(item)
+                    if (alreadyKnown) continue
+                    try {
+                        const speechBlob = await api.synthesizeRoomSpeech({
+                            room_id: selectedTrader.trader_id,
+                            text: item.text,
+                            message_id: item.id,
+                            tone: 'energetic',
+                            speaker_id: item.speaker_id,
+                        })
+                        enqueueCommentaryAudio(item.id, speechBlob)
+                    } catch {
+                        // keep text-only feed if speech fails
+                    }
+                }
+            } catch {
+                // ignore feed polling errors
+            }
+        }
+
+        void pullFeed()
+        const timer = setInterval(() => {
+            void pullFeed()
+        }, 2500)
+
+        return () => {
+            active = false
+            clearInterval(timer)
+        }
+    }, [selectedTrader.trader_id])
 
     if (!state && errorCount > 5) {
         return (
@@ -117,6 +401,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
     // Format log reversed so newest is at the bottom (or top depending on preference, here we render top-down)
     const displayLogs = [...logs].reverse().slice(0, 15)
+    const displayCommentary = [...commentaryItems].slice(-4).reverse()
 
     return (
         <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[#020509] text-white font-sans max-w-lg mx-auto border-x border-white/5 shadow-2xl relative">
@@ -273,6 +558,36 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                         </span>
+                    </div>
+
+                    <div className="shrink-0 border-b border-white/5 bg-[#070d18]/70 px-3 py-2">
+                        <div className="mb-1 flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-cyan-300/80">
+                            <span>Realtime Commentary</span>
+                            {speakingCommentaryId ? <span className="text-emerald-300">Speaking</span> : <span className="text-white/40">Idle</span>}
+                        </div>
+                        {displayCommentary.length === 0 ? (
+                            <div className="text-[10px] text-white/35 font-mono">No commentary yet.</div>
+                        ) : (
+                            <div className="space-y-1.5">
+                                {displayCommentary.map((item) => {
+                                    const speaking = speakingCommentaryId === item.id
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`rounded border px-2 py-1.5 font-mono ${speaking
+                                                ? 'border-emerald-400/60 bg-emerald-400/10'
+                                                : 'border-cyan-400/20 bg-cyan-500/5'}`}
+                                        >
+                                            <div className="mb-0.5 flex items-center justify-between text-[9px] text-white/60">
+                                                <span className="text-cyan-200/90">{item.speaker_name}</span>
+                                                <span>{formatHHMMSS(item.created_ts_ms)}</span>
+                                            </div>
+                                            <div className="text-[11px] leading-snug text-white/90">{item.text}</div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-[11px]">

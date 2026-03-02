@@ -255,6 +255,7 @@ export const api = {
     text: string
     tone?: string
     message_id?: string
+    speaker_id?: string
   }): Promise<Blob> {
     const res = await fetch(`${API_BASE}/chat/tts`, {
       method: 'POST',
@@ -279,6 +280,49 @@ export const api = {
     }
 
     return await res.blob()
+  },
+
+  async generatePolymarketCommentary(payload: {
+    room_id: string
+    event_type: string
+    event_key?: string
+    trigger?: Record<string, unknown>
+    market?: Record<string, unknown>
+    recent_logs?: Array<Record<string, unknown>>
+  }): Promise<{
+    commentary: Record<string, unknown> | null
+    reused?: boolean
+    skipped?: boolean
+    reason?: string
+  }> {
+    const result = await httpClient.post<{
+      commentary: Record<string, unknown> | null
+      reused?: boolean
+      skipped?: boolean
+      reason?: string
+    }>(`${API_BASE}/polymarket/commentary/generate`, payload)
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '生成解说失败')
+    }
+    return result.data
+  },
+
+  async getPolymarketCommentaryFeed(options: {
+    room_id: string
+    limit?: number
+    after_ts_ms?: number
+  }): Promise<Array<Record<string, unknown>>> {
+    const params = new URLSearchParams()
+    params.set('room_id', String(options.room_id || '').trim())
+    if (options.limit != null) params.set('limit', String(options.limit))
+    if (options.after_ts_ms != null) params.set('after_ts_ms', String(options.after_ts_ms))
+    const result = await httpClient.get<{ items?: Array<Record<string, unknown>> }>(
+      `${API_BASE}/polymarket/commentary/feed?${params.toString()}`
+    )
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '获取解说流失败')
+    }
+    return Array.isArray(result.data.items) ? result.data.items : []
   },
 
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {

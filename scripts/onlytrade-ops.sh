@@ -91,6 +91,11 @@ Commands:
   tts-clear <room_id>              Clear persisted room TTS override
   tts-test <room_id> [--text "..."]
                                    Probe room TTS and report provider/latency/bytes
+  poly-commentary-profile [room_id]
+                                   Show polymarket commentary profile (default t_015)
+  poly-commentary-speaker-set <room_id> <speaker_id> --voice <voice_id>
+                                   Hot-switch a commentary speaker voice (selfhosted)
+                                   Options: [--name DISPLAY] [--style TEXT] [--speed N] [--enabled true|false]
   agents-available                List folder-discovered agents
   agents-registered               List registered agents (registry)
   agent-register <agent_id>       Register an available agent
@@ -959,6 +964,53 @@ tts_clear_profile() {
   curl_delete "/api/chat/tts/profile?room_id=$room_id"
 }
 
+poly_commentary_profile() {
+  local room_id="${1:-t_015}"
+  curl_get "/api/polymarket/commentary/profile?room_id=$room_id"
+}
+
+poly_commentary_speaker_set() {
+  local room_id="$1"
+  local speaker_id="$2"
+  local voice_id="$3"
+  local display_name="$4"
+  local style_prompt="$5"
+  local speed="$6"
+  local enabled="$7"
+
+  local room_json speaker_json voice_json
+  room_json="$(json_escape_py "$room_id")"
+  speaker_json="$(json_escape_py "$speaker_id")"
+  voice_json="$(json_escape_py "$voice_id")"
+
+  local payload
+  payload="{\"room_id\":$room_json,\"speaker_id\":$speaker_json,\"voice_id\":$voice_json,\"provider\":\"selfhosted\""
+
+  if [ -n "$display_name" ]; then
+    payload+=" ,\"display_name\":$(json_escape_py "$display_name")"
+  fi
+  if [ -n "$style_prompt" ]; then
+    payload+=" ,\"style_prompt_cn\":$(json_escape_py "$style_prompt")"
+  fi
+  if [ -n "$speed" ]; then
+    payload+=" ,\"speed\":$speed"
+  fi
+  if [ -n "$enabled" ]; then
+    case "$enabled" in
+      true|false)
+        payload+=" ,\"enabled\":$enabled"
+        ;;
+      *)
+        echo "[ops] ERROR: --enabled must be true|false" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  payload+="}"
+
+  curl_post "/api/polymarket/commentary/profile/speaker" "$payload"
+}
+
 tts_test() {
   local room_id="$1"
   local text="$2"
@@ -1506,6 +1558,58 @@ main() {
         esac
       done
       tts_test "$room_id" "$text"
+      ;;
+    poly-commentary-profile)
+      local room_id="${1:-t_015}"
+      poly_commentary_profile "$room_id" | json_pretty
+      ;;
+    poly-commentary-speaker-set)
+      local room_id="${1:-}"
+      local speaker_id="${2:-}"
+      shift 2 || true
+      if [ -z "$room_id" ] || [ -z "$speaker_id" ]; then
+        echo "[ops] ERROR: poly-commentary-speaker-set requires <room_id> <speaker_id> --voice <voice_id>" >&2
+        exit 1
+      fi
+
+      local voice_id=""
+      local display_name=""
+      local style_prompt=""
+      local speed=""
+      local enabled=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --voice)
+            voice_id="${2:-}"
+            shift 2
+            ;;
+          --name)
+            display_name="${2:-}"
+            shift 2
+            ;;
+          --style)
+            style_prompt="${2:-}"
+            shift 2
+            ;;
+          --speed)
+            speed="${2:-}"
+            shift 2
+            ;;
+          --enabled)
+            enabled="${2:-}"
+            shift 2
+            ;;
+          *)
+            echo "[ops] ERROR: unknown poly-commentary-speaker-set option $1" >&2
+            exit 1
+            ;;
+        esac
+      done
+      if [ -z "$voice_id" ]; then
+        echo "[ops] ERROR: poly-commentary-speaker-set requires --voice <voice_id>" >&2
+        exit 1
+      fi
+      poly_commentary_speaker_set "$room_id" "$speaker_id" "$voice_id" "$display_name" "$style_prompt" "$speed" "$enabled" | json_pretty
       ;;
     agents-available)
       agents_available | json_pretty

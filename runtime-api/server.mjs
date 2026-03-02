@@ -359,6 +359,29 @@ const CHAT_TTS_PROFILE_PATH = path.resolve(
   __dirname,
   process.env.CHAT_TTS_PROFILE_PATH || path.join('data', 'chat', 'tts_profiles.json')
 )
+const POLYMARKET_COMMENTARY_PROFILE_PATH = path.resolve(
+  __dirname,
+  process.env.POLYMARKET_COMMENTARY_PROFILE_PATH || path.join('data', 'chat', 'polymarket_commentary_profiles.json')
+)
+const POLYMARKET_COMMENTARY_LLM_MODEL = String(
+  process.env.POLYMARKET_COMMENTARY_LLM_MODEL || 'qwen3-max'
+).trim() || 'qwen3-max'
+const POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS || Math.max(8_000, CHAT_LLM_TIMEOUT_MS))
+)
+const POLYMARKET_COMMENTARY_MAX_TEXT_CHARS = Math.max(
+  24,
+  Math.min(220, Math.floor(Number(process.env.POLYMARKET_COMMENTARY_MAX_TEXT_CHARS || 96)))
+)
+const POLYMARKET_COMMENTARY_FEED_LIMIT = Math.max(
+  20,
+  Math.min(500, Number(process.env.POLYMARKET_COMMENTARY_FEED_LIMIT || 120))
+)
+const POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS = Math.max(
+  1000,
+  Number(process.env.POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS || 12_000)
+)
 
 const AGENTS_DIR = path.resolve(
   ROOT_DIR,
@@ -2818,6 +2841,11 @@ let betsLedgerState = {
   credits_by_session: {},
 }
 let ttsProfilesState = createDefaultTtsProfilesState()
+let polymarketCommentaryProfilesState = createDefaultPolymarketCommentaryProfilesState()
+const polymarketCommentaryFeedByRoom = new Map()
+const polymarketCommentarySpeakerCursorByRoom = new Map()
+const polymarketCommentarySpeakerLastTsByRoom = new Map()
+const polymarketCommentaryRecentEventByRoom = new Map()
 const lastDecisionMetaByTraderId = new Map()
 const roomEventSubscribersByRoom = new Map()
 const roomEventBufferByRoom = new Map()
@@ -4179,6 +4207,469 @@ async function loadTtsProfilesState() {
   } catch {
     ttsProfilesState = createDefaultTtsProfilesState()
   }
+}
+
+function createDefaultPolymarketRoomProfile(roomId = 't_015') {
+  const safeRoomId = String(roomId || '').trim().toLowerCase() || 't_015'
+  return {
+    room_id: safeRoomId,
+    enabled: true,
+    max_feed_items: POLYMARKET_COMMENTARY_FEED_LIMIT,
+    min_interval_ms: 3000,
+    speakers: [
+      {
+        speaker_id: 'host_a',
+        display_name: '小真',
+        voice_id: 'zsy',
+        provider: 'selfhosted',
+        speed: 1.02,
+        cooldown_ms: 5000,
+        style_prompt_cn: '快节奏盘口主播，侧重价格变化、资金情绪、事件催化，句子短、带节奏但不喊单。',
+        enabled: true,
+      },
+      {
+        speaker_id: 'host_b',
+        display_name: '老K',
+        voice_id: 'xuanyijiangjie',
+        provider: 'selfhosted',
+        speed: 0.96,
+        cooldown_ms: 5000,
+        style_prompt_cn: '稳健风险解读员，侧重概率区间、风控边界、反身性风险，语气沉着。',
+        enabled: true,
+      },
+    ],
+    updated_ts_ms: Date.now(),
+  }
+}
+
+function normalizePolymarketCommentarySpeaker(value, fallback = null) {
+  if (!value || typeof value !== 'object') return null
+  const fallbackRow = fallback && typeof fallback === 'object' ? fallback : null
+  const speakerId = String(value.speaker_id || fallbackRow?.speaker_id || '').trim().toLowerCase()
+  if (!speakerId) return null
+
+  const displayName = String(value.display_name || fallbackRow?.display_name || speakerId).trim().slice(0, 24) || speakerId
+  const voiceId = String(value.voice_id || fallbackRow?.voice_id || '').trim()
+  const stylePromptCn = String(value.style_prompt_cn || fallbackRow?.style_prompt_cn || '').trim().slice(0, 400)
+  const provider = normalizeTtsProvider(value.provider || fallbackRow?.provider || 'selfhosted', 'selfhosted')
+  const enabled = value.enabled === undefined
+    ? (fallbackRow ? fallbackRow.enabled !== false : true)
+    : (value.enabled !== false)
+  const cooldownMsRaw = Number(value.cooldown_ms ?? fallbackRow?.cooldown_ms ?? 5000)
+  const cooldownMs = Number.isFinite(cooldownMsRaw) ? Math.max(0, Math.min(120_000, Math.floor(cooldownMsRaw))) : 5000
+  let speed = null
+  if (value.speed !== undefined || value.speed === null) {
+    if (value.speed === null || String(value.speed).trim() === '') {
+      speed = null
+    } else {
+      const parsedSpeed = Number(value.speed)
+      speed = Number.isFinite(parsedSpeed) ? clampTtsSpeed(parsedSpeed, CHAT_TTS_SPEED) : null
+    }
+  } else if (fallbackRow && fallbackRow.speed !== undefined) {
+    speed = fallbackRow.speed === null ? null : clampTtsSpeed(fallbackRow.speed, CHAT_TTS_SPEED)
+  }
+
+  return {
+    speaker_id: speakerId,
+    display_name: displayName,
+    voice_id: voiceId,
+    provider: provider === 'selfhosted' ? 'selfhosted' : 'openai',
+    speed,
+    cooldown_ms: cooldownMs,
+    style_prompt_cn: stylePromptCn,
+    enabled,
+  }
+}
+
+function normalizePolymarketCommentaryRoomProfile(roomId, value) {
+  if (!value || typeof value !== 'object') return null
+  const safeRoomId = String(roomId || value.room_id || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  const fallback = createDefaultPolymarketRoomProfile(safeRoomId)
+  const rawSpeakers = Array.isArray(value.speakers) ? value.speakers : fallback.speakers
+  const speakers = []
+  for (const item of rawSpeakers) {
+    const speaker = normalizePolymarketCommentarySpeaker(item)
+    if (speaker) speakers.push(speaker)
+  }
+  if (!speakers.length) {
+    for (const fallbackSpeaker of fallback.speakers) {
+      const speaker = normalizePolymarketCommentarySpeaker(fallbackSpeaker)
+      if (speaker) speakers.push(speaker)
+    }
+  }
+
+  const maxFeedItemsRaw = Number(value.max_feed_items ?? fallback.max_feed_items)
+  const minIntervalRaw = Number(value.min_interval_ms ?? fallback.min_interval_ms)
+  return {
+    room_id: safeRoomId,
+    enabled: value.enabled === undefined ? true : value.enabled !== false,
+    max_feed_items: Number.isFinite(maxFeedItemsRaw)
+      ? Math.max(20, Math.min(500, Math.floor(maxFeedItemsRaw)))
+      : fallback.max_feed_items,
+    min_interval_ms: Number.isFinite(minIntervalRaw)
+      ? Math.max(0, Math.min(120_000, Math.floor(minIntervalRaw)))
+      : fallback.min_interval_ms,
+    speakers,
+    updated_ts_ms: Number.isFinite(Number(value.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+function createDefaultPolymarketCommentaryProfilesState() {
+  const roomProfile = createDefaultPolymarketRoomProfile('t_015')
+  return {
+    schema_version: 'polymarket.commentary.profile.v1',
+    rooms: {
+      [roomProfile.room_id]: roomProfile,
+    },
+    updated_ts_ms: Date.now(),
+  }
+}
+
+function normalizePolymarketCommentaryProfilesState(value) {
+  const fallback = createDefaultPolymarketCommentaryProfilesState()
+  if (!value || typeof value !== 'object') return fallback
+  const rooms = {}
+  if (value.rooms && typeof value.rooms === 'object') {
+    for (const [roomIdRaw, row] of Object.entries(value.rooms)) {
+      const roomId = String(roomIdRaw || '').trim().toLowerCase()
+      if (!roomId) continue
+      const normalized = normalizePolymarketCommentaryRoomProfile(roomId, row)
+      if (!normalized) continue
+      rooms[roomId] = normalized
+    }
+  }
+  if (!Object.keys(rooms).length) {
+    const roomProfile = createDefaultPolymarketRoomProfile('t_015')
+    rooms[roomProfile.room_id] = roomProfile
+  }
+  return {
+    schema_version: 'polymarket.commentary.profile.v1',
+    rooms,
+    updated_ts_ms: Number.isFinite(Number(value.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+async function persistPolymarketCommentaryProfilesState() {
+  const dir = path.dirname(POLYMARKET_COMMENTARY_PROFILE_PATH)
+  await mkdir(dir, { recursive: true })
+  const tmpPath = `${POLYMARKET_COMMENTARY_PROFILE_PATH}.tmp`
+  await writeFile(tmpPath, JSON.stringify(polymarketCommentaryProfilesState, null, 2), 'utf8')
+  await rename(tmpPath, POLYMARKET_COMMENTARY_PROFILE_PATH)
+}
+
+async function loadPolymarketCommentaryProfilesState() {
+  try {
+    const raw = await readFile(POLYMARKET_COMMENTARY_PROFILE_PATH, 'utf8')
+    polymarketCommentaryProfilesState = normalizePolymarketCommentaryProfilesState(JSON.parse(raw))
+  } catch {
+    polymarketCommentaryProfilesState = createDefaultPolymarketCommentaryProfilesState()
+  }
+}
+
+function resolvePolymarketCommentaryRoomProfile(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return createDefaultPolymarketRoomProfile('t_015')
+  const explicit = normalizePolymarketCommentaryRoomProfile(
+    safeRoomId,
+    polymarketCommentaryProfilesState?.rooms?.[safeRoomId]
+  )
+  return explicit || createDefaultPolymarketRoomProfile(safeRoomId)
+}
+
+function getPolymarketSpeakerById(roomId, speakerId) {
+  const safeSpeakerId = String(speakerId || '').trim().toLowerCase()
+  if (!safeSpeakerId) return null
+  const profile = resolvePolymarketCommentaryRoomProfile(roomId)
+  return profile.speakers.find((item) => item.speaker_id === safeSpeakerId) || null
+}
+
+function buildPolymarketSpeakerTtsProfileOverride({ roomId, speakerId, baseProfile = null } = {}) {
+  const speaker = getPolymarketSpeakerById(roomId, speakerId)
+  if (!speaker || speaker.enabled === false) return null
+  if (speaker.provider !== 'selfhosted') return null
+  const voice = String(speaker.voice_id || '').trim()
+  if (!voice) return null
+
+  const fallbackProvider = normalizeTtsFallbackProvider(
+    baseProfile?.fallback_provider,
+    'none'
+  )
+
+  return {
+    room_id: String(roomId || '').trim().toLowerCase(),
+    provider: 'selfhosted',
+    voice,
+    speed: speaker.speed == null ? clampTtsSpeed(baseProfile?.speed, CHAT_TTS_SPEED) : clampTtsSpeed(speaker.speed, CHAT_TTS_SPEED),
+    tone: baseProfile?.tone || 'energetic',
+    fallback_provider: fallbackProvider === 'openai' ? 'openai' : 'none',
+    default_provider: baseProfile?.default_provider || effectiveTtsDefaultProvider(),
+    model: 'selfhosted',
+    response_format: CHAT_TTS_SELFHOSTED_MEDIA_TYPE,
+    override: baseProfile?.override || null,
+    speaker_id: speaker.speaker_id,
+    speaker_name: speaker.display_name,
+  }
+}
+
+function getPolymarketSpeakerLastTs(roomId, speakerId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeSpeakerId = String(speakerId || '').trim().toLowerCase()
+  if (!safeRoomId || !safeSpeakerId) return 0
+  const roomMap = polymarketCommentarySpeakerLastTsByRoom.get(safeRoomId)
+  if (!roomMap) return 0
+  return Number(roomMap.get(safeSpeakerId) || 0)
+}
+
+function setPolymarketSpeakerLastTs(roomId, speakerId, tsMs) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeSpeakerId = String(speakerId || '').trim().toLowerCase()
+  if (!safeRoomId || !safeSpeakerId) return
+  let roomMap = polymarketCommentarySpeakerLastTsByRoom.get(safeRoomId)
+  if (!roomMap) {
+    roomMap = new Map()
+    polymarketCommentarySpeakerLastTsByRoom.set(safeRoomId, roomMap)
+  }
+  roomMap.set(safeSpeakerId, Number(tsMs) || Date.now())
+}
+
+function selectPolymarketSpeaker({ roomId, eventType = '', nowMs = Date.now() } = {}) {
+  const profile = resolvePolymarketCommentaryRoomProfile(roomId)
+  const allEnabled = profile.speakers.filter((item) => item.enabled !== false)
+  const speakers = allEnabled.length ? allEnabled : profile.speakers
+  if (!speakers.length) return null
+
+  const eventKey = String(eventType || '').trim().toLowerCase()
+  const preferred = (eventKey === 'market_switch' || eventKey === 'headline_change')
+    ? speakers.filter((item) => item.speaker_id === 'host_a')
+    : (eventKey === 'risk_alert' || eventKey === 'prob_reversal')
+      ? speakers.filter((item) => item.speaker_id === 'host_b')
+      : []
+  const ordered = preferred.length
+    ? [...preferred, ...speakers.filter((item) => !preferred.includes(item))]
+    : speakers
+
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const cursorBase = Number(polymarketCommentarySpeakerCursorByRoom.get(safeRoomId) || 0)
+  const length = ordered.length
+  for (let i = 0; i < length; i += 1) {
+    const idx = (cursorBase + i) % length
+    const candidate = ordered[idx]
+    if (!candidate) continue
+    const lastTs = getPolymarketSpeakerLastTs(safeRoomId, candidate.speaker_id)
+    const cooldownMs = Math.max(0, Number(candidate.cooldown_ms || 0))
+    if (nowMs - lastTs >= cooldownMs) {
+      polymarketCommentarySpeakerCursorByRoom.set(safeRoomId, idx + 1)
+      return candidate
+    }
+  }
+  const fallbackSpeaker = ordered[cursorBase % length] || ordered[0]
+  polymarketCommentarySpeakerCursorByRoom.set(safeRoomId, cursorBase + 1)
+  return fallbackSpeaker
+}
+
+function safePlainText(value, maxLen = 160) {
+  return String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, Math.max(1, Number(maxLen) || 160))
+}
+
+function parseJsonObjectLoose(input) {
+  const text = String(input || '').trim()
+  if (!text) return null
+  const direct = (() => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  })()
+  if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (fenceMatch && fenceMatch[1]) {
+    try {
+      const parsed = JSON.parse(fenceMatch[1])
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+    } catch {
+      // continue
+    }
+  }
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1))
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+async function generatePolymarketCommentaryText({
+  roomId,
+  speaker,
+  eventType = 'market_tick',
+  market = null,
+  trigger = null,
+  recentLogs = [],
+}) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const speakerName = safePlainText(speaker?.display_name || '主持人', 24)
+  const stylePrompt = safePlainText(speaker?.style_prompt_cn || '', 320)
+  const marketTitle = safePlainText(market?.title || '', 140)
+  const yesOutcome = safePlainText(market?.yes_outcome || 'YES', 28)
+  const noOutcome = safePlainText(market?.no_outcome || 'NO', 28)
+  const currentProb = Number(market?.current_prob)
+  const volume = Number(market?.volume)
+  const deltaProb = Number(trigger?.delta_prob ?? trigger?.prob_delta)
+  const triggerReason = safePlainText(trigger?.reason || '', 80)
+  const logs = Array.isArray(recentLogs)
+    ? recentLogs.slice(-4).map((item) => {
+      const sender = safePlainText(item?.sender || '', 20)
+      const text = safePlainText(item?.text || '', 52)
+      return sender && text ? `${sender}: ${text}` : text
+    }).filter(Boolean)
+    : []
+
+  if (!OPENAI_API_KEY) {
+    const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
+    const fallback = `${speakerName}：盘口先看${side}方向，先盯量价是否延续，别追情绪。`
+    return {
+      text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      source: 'fallback_missing_key',
+    }
+  }
+
+  const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`
+  const systemPrompt = [
+    `你是${speakerName}，在预测市场直播里做实时解说。`,
+    stylePrompt || '解说要紧扣盘口变化，专业、简短、自然口语。',
+    '只输出一个JSON对象，不要markdown，不要多余解释。',
+    'JSON格式: {"text":"..."}',
+    'text要求: 1-2句中文，30-80字，必须和给定盘口数据一致，不得编造。',
+  ].join('\n')
+  const userPrompt = [
+    `room_id: ${safeRoomId}`,
+    `event_type: ${safePlainText(eventType, 32)}`,
+    `event_reason: ${triggerReason || 'n/a'}`,
+    `market_title: ${marketTitle || 'n/a'}`,
+    `yes_outcome: ${yesOutcome}`,
+    `no_outcome: ${noOutcome}`,
+    `yes_prob: ${Number.isFinite(currentProb) ? (currentProb * 100).toFixed(2) + '%' : 'n/a'}`,
+    `prob_delta: ${Number.isFinite(deltaProb) ? (deltaProb * 100).toFixed(2) + '%' : 'n/a'}`,
+    `volume: ${Number.isFinite(volume) ? Math.round(volume).toLocaleString('en-US') : 'n/a'}`,
+    `recent_logs: ${logs.length ? logs.join(' | ') : 'none'}`,
+  ].join('\n')
+
+  const controller = new AbortController()
+  const timeoutHandle = setTimeout(() => controller.abort(), POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS)
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: POLYMARKET_COMMENTARY_LLM_MODEL,
+        temperature: 0.45,
+        max_tokens: 180,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      throw new Error(`llm_http_${response.status}:${String(body || '').slice(0, 140)}`)
+    }
+    const parsed = await response.json().catch(() => null)
+    const text = safePlainText(parsed?.choices?.[0]?.message?.content || '', 800)
+    const maybeJson = parseJsonObjectLoose(text)
+    const textRaw = maybeJson?.text || text
+    const cleaned = sanitizeTtsText(textRaw, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS })
+    if (!cleaned) throw new Error('llm_empty')
+    return {
+      text: cleaned,
+      source: 'llm',
+    }
+  } catch (error) {
+    const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
+    const pct = Number.isFinite(currentProb) ? `${(currentProb * 100).toFixed(1)}%` : 'n/a'
+    const fallback = `${speakerName}：当前${side}概率在${pct}附近，先看后续成交是否继续放大。`
+    return {
+      text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      source: `fallback:${String(error?.message || 'llm_error').slice(0, 120)}`,
+    }
+  } finally {
+    clearTimeout(timeoutHandle)
+  }
+}
+
+function appendPolymarketCommentaryFeed(roomId, item) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId || !item || typeof item !== 'object') return
+  const profile = resolvePolymarketCommentaryRoomProfile(safeRoomId)
+  const maxItems = Math.max(20, Number(profile.max_feed_items || POLYMARKET_COMMENTARY_FEED_LIMIT))
+  const prev = polymarketCommentaryFeedByRoom.get(safeRoomId) || []
+  const next = [...prev, item]
+  if (next.length > maxItems) {
+    next.splice(0, next.length - maxItems)
+  }
+  polymarketCommentaryFeedByRoom.set(safeRoomId, next)
+}
+
+function getPolymarketCommentaryFeed(roomId, { limit = 20, afterTsMs = null } = {}) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return []
+  const rows = polymarketCommentaryFeedByRoom.get(safeRoomId) || []
+  const filtered = Number.isFinite(Number(afterTsMs))
+    ? rows.filter((item) => Number(item?.created_ts_ms || 0) > Number(afterTsMs))
+    : rows
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 120))
+  return filtered.slice(-safeLimit)
+}
+
+function findRecentPolymarketCommentaryByEventKey(roomId, eventKey, nowMs = Date.now()) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeEventKey = String(eventKey || '').trim()
+  if (!safeRoomId || !safeEventKey) return null
+  const roomCache = polymarketCommentaryRecentEventByRoom.get(safeRoomId)
+  if (!roomCache) return null
+  const cacheRow = roomCache.get(safeEventKey)
+  if (!cacheRow) return null
+  if (nowMs - Number(cacheRow.ts_ms || 0) > POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS) {
+    roomCache.delete(safeEventKey)
+    return null
+  }
+  const rows = polymarketCommentaryFeedByRoom.get(safeRoomId) || []
+  return rows.find((item) => item?.id === cacheRow.item_id) || null
+}
+
+function rememberPolymarketCommentaryEvent(roomId, eventKey, itemId, nowMs = Date.now()) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeEventKey = String(eventKey || '').trim()
+  if (!safeRoomId || !safeEventKey || !itemId) return
+  let roomCache = polymarketCommentaryRecentEventByRoom.get(safeRoomId)
+  if (!roomCache) {
+    roomCache = new Map()
+    polymarketCommentaryRecentEventByRoom.set(safeRoomId, roomCache)
+  }
+  for (const [key, row] of roomCache.entries()) {
+    if (nowMs - Number(row?.ts_ms || 0) > POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS) {
+      roomCache.delete(key)
+    }
+  }
+  roomCache.set(safeEventKey, {
+    item_id: String(itemId),
+    ts_ms: nowMs,
+  })
 }
 
 async function synthesizeOpenAITts({ text, voice, speed = CHAT_TTS_SPEED }) {
@@ -6437,7 +6928,14 @@ app.post('/api/chat/tts', async (req, res) => {
 
     const tone = normalizeTtsTone(req.body?.tone)
     const seed = String(req.body?.message_id || '').trim() || text
-    const ttsProfile = resolveEffectiveTtsProfileForRoom({ roomId, tone, seed })
+    const speakerId = String(req.body?.speaker_id || '').trim().toLowerCase()
+    const baseTtsProfile = resolveEffectiveTtsProfileForRoom({ roomId, tone, seed })
+    const speakerTtsOverride = buildPolymarketSpeakerTtsProfileOverride({
+      roomId,
+      speakerId,
+      baseProfile: baseTtsProfile,
+    })
+    const ttsProfile = speakerTtsOverride || baseTtsProfile
     const synthesis = await synthesizeTtsWithProviderRouting({
       roomId,
       text,
@@ -6455,6 +6953,10 @@ app.post('/api/chat/tts', async (req, res) => {
     res.set('x-tts-voice', synthesis.voice)
     res.set('x-tts-speed', String(synthesis.speed))
     res.set('x-tts-tone', ttsProfile.tone)
+    if (speakerTtsOverride?.speaker_id) {
+      res.set('x-tts-speaker-id', speakerTtsOverride.speaker_id)
+      res.set('x-tts-speaker-name', String(speakerTtsOverride.speaker_name || ''))
+    }
     res.send(synthesis.audioBuffer)
   } catch (error) {
     res.status(502).json({ success: false, error: error?.message || 'chat_tts_failed' })
@@ -7731,6 +8233,221 @@ app.post('/api/traders/:id/close-position', (_req, res) => {
   res.json(ok({ message: 'Virtual position close queued in runtime-api mode' }))
 })
 
+app.get('/api/polymarket/commentary/profile', (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || 't_015').trim().toLowerCase()
+    const profile = resolvePolymarketCommentaryRoomProfile(roomId)
+    res.json(ok({
+      room_id: roomId,
+      profile,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'polymarket_commentary_profile_read_failed' })
+  }
+})
+
+app.post('/api/polymarket/commentary/profile/speaker', async (req, res) => {
+  if (!requireControlAuthorization(req, res, {
+    action: 'polymarket.commentary.profile.speaker.set',
+    target: String(req.body?.room_id || '').trim() || null,
+  })) return
+
+  try {
+    const roomId = String(req.body?.room_id || '').trim().toLowerCase()
+    const speakerId = String(req.body?.speaker_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    if (!speakerId) {
+      res.status(400).json({ success: false, error: 'speaker_id_required' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    const currentProfile = resolvePolymarketCommentaryRoomProfile(roomId)
+    const currentSpeaker = currentProfile.speakers.find((item) => item.speaker_id === speakerId) || {
+      speaker_id: speakerId,
+      display_name: speakerId,
+      provider: 'selfhosted',
+      voice_id: '',
+      speed: null,
+      cooldown_ms: 5000,
+      style_prompt_cn: '',
+      enabled: true,
+    }
+    const mergedSpeaker = normalizePolymarketCommentarySpeaker({
+      ...currentSpeaker,
+      ...req.body,
+      speaker_id: speakerId,
+    }, currentSpeaker)
+    if (!mergedSpeaker) {
+      res.status(400).json({ success: false, error: 'invalid_speaker_payload' })
+      return
+    }
+    if (mergedSpeaker.provider !== 'selfhosted') {
+      res.status(400).json({ success: false, error: 'speaker_provider_must_be_selfhosted' })
+      return
+    }
+    if (!String(mergedSpeaker.voice_id || '').trim()) {
+      res.status(400).json({ success: false, error: 'voice_id_required' })
+      return
+    }
+
+    const nextSpeakers = [...currentProfile.speakers]
+    const existingIndex = nextSpeakers.findIndex((item) => item.speaker_id === speakerId)
+    if (existingIndex >= 0) {
+      nextSpeakers[existingIndex] = mergedSpeaker
+    } else {
+      nextSpeakers.push(mergedSpeaker)
+    }
+
+    polymarketCommentaryProfilesState.rooms[roomId] = {
+      ...currentProfile,
+      room_id: roomId,
+      speakers: nextSpeakers,
+      updated_ts_ms: Date.now(),
+    }
+    polymarketCommentaryProfilesState.updated_ts_ms = Date.now()
+    await persistPolymarketCommentaryProfilesState()
+
+    const updated = resolvePolymarketCommentaryRoomProfile(roomId)
+    res.json(ok({
+      room_id: roomId,
+      speaker: updated.speakers.find((item) => item.speaker_id === speakerId) || null,
+      profile: updated,
+      persisted: true,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'polymarket_commentary_profile_write_failed' })
+  }
+})
+
+app.post('/api/polymarket/commentary/generate', async (req, res) => {
+  try {
+    const roomId = String(req.body?.room_id || '').trim().toLowerCase()
+    const eventType = String(req.body?.event_type || 'market_tick').trim().toLowerCase()
+    const eventKey = String(req.body?.event_key || '').trim()
+    const trigger = req.body?.trigger && typeof req.body.trigger === 'object' ? req.body.trigger : {}
+    const market = req.body?.market && typeof req.body.market === 'object' ? req.body.market : {}
+    const recentLogs = Array.isArray(req.body?.recent_logs) ? req.body.recent_logs : []
+
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    const profile = resolvePolymarketCommentaryRoomProfile(roomId)
+    if (!profile.enabled) {
+      res.status(503).json({ success: false, error: 'polymarket_commentary_disabled' })
+      return
+    }
+
+    const nowMs = Date.now()
+    if (eventKey) {
+      const existing = findRecentPolymarketCommentaryByEventKey(roomId, eventKey, nowMs)
+      if (existing) {
+        res.json(ok({
+          room_id: roomId,
+          commentary: existing,
+          reused: true,
+        }))
+        return
+      }
+    }
+
+    const lastRows = polymarketCommentaryFeedByRoom.get(roomId) || []
+    const lastItem = lastRows[lastRows.length - 1] || null
+    const elapsedSinceLast = nowMs - Number(lastItem?.created_ts_ms || 0)
+    const forceTypes = new Set(['market_switch', 'headline_change'])
+    if (!forceTypes.has(eventType) && elapsedSinceLast < Number(profile.min_interval_ms || 0)) {
+      res.json(ok({
+        room_id: roomId,
+        commentary: null,
+        skipped: true,
+        reason: 'min_interval_gate',
+      }))
+      return
+    }
+
+    const speaker = selectPolymarketSpeaker({ roomId, eventType, nowMs })
+    if (!speaker) {
+      res.status(503).json({ success: false, error: 'no_commentary_speaker_available' })
+      return
+    }
+
+    const generated = await generatePolymarketCommentaryText({
+      roomId,
+      speaker,
+      eventType,
+      market,
+      trigger,
+      recentLogs,
+    })
+
+    const commentary = {
+      id: `polyc_${nowMs}_${Math.random().toString(36).slice(2, 8)}`,
+      room_id: roomId,
+      event_type: eventType,
+      event_key: eventKey || null,
+      market_id: String(market?.id || '').trim() || null,
+      market_title: safePlainText(market?.title || '', 160) || null,
+      text: sanitizeTtsText(generated?.text, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      speaker_id: speaker.speaker_id,
+      speaker_name: speaker.display_name,
+      voice_id: speaker.voice_id,
+      provider: speaker.provider,
+      source: String(generated?.source || 'fallback'),
+      created_ts_ms: nowMs,
+      target_play_ts_ms: nowMs,
+    }
+    appendPolymarketCommentaryFeed(roomId, commentary)
+    setPolymarketSpeakerLastTs(roomId, speaker.speaker_id, nowMs)
+    if (eventKey) {
+      rememberPolymarketCommentaryEvent(roomId, eventKey, commentary.id, nowMs)
+    }
+
+    res.json(ok({
+      room_id: roomId,
+      commentary,
+      reused: false,
+    }))
+  } catch (error) {
+    res.status(502).json({ success: false, error: error?.message || 'polymarket_commentary_generate_failed' })
+  }
+})
+
+app.get('/api/polymarket/commentary/feed', (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const limit = Number(req.query.limit)
+    const afterTsMs = Number(req.query.after_ts_ms)
+    const rows = getPolymarketCommentaryFeed(roomId, {
+      limit: Number.isFinite(limit) ? limit : 20,
+      afterTsMs: Number.isFinite(afterTsMs) ? afterTsMs : null,
+    })
+    res.json(ok({
+      room_id: roomId,
+      items: rows,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'polymarket_commentary_feed_failed' })
+  }
+})
+
 app.use('/api', (_req, res) => {
   const payload = fail('not_found', 404)
   res.status(404).json({ success: false, error: payload.error })
@@ -7738,6 +8455,7 @@ app.use('/api', (_req, res) => {
 
 await loadKillSwitchState()
 await loadTtsProfilesState()
+await loadPolymarketCommentaryProfilesState()
 await loadReplayBatch()
 await loadDailyHistoryBatch()
 await loadBetsLedgerState()

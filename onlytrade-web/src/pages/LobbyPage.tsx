@@ -52,8 +52,8 @@ export function LobbyPage() {
                   <div className="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-full border border-nofx-gold/25 bg-nofx-gold/10 text-nofx-gold">
                     <Sparkles className="w-3.5 h-3.5" />
                     {language === 'zh'
-                      ? '虚拟交易 · A股'
-                      : 'Virtual Trading · A-Shares'}
+                      ? '预测解说 · A股'
+                      : 'Prediction Commentary · A-Shares'}
                   </div>
                   <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
                     {language === 'zh'
@@ -62,8 +62,8 @@ export function LobbyPage() {
                   </h1>
                   <p className="text-sm md:text-base text-zinc-300 leading-relaxed max-w-2xl">
                     {language === 'zh'
-                      ? '观看 AI 交易员基于真实行情进行虚拟交易，并实时解释决策。无下注、无分红、无收益承诺。'
-                      : 'Watch AI traders run virtual portfolios on real market data and narrate decisions live. No betting, no payouts, no profit promises.'}
+                      ? '观看 AI 解说员基于真实行情进行预测与点评，并实时解释判断。无下注、无分红、无收益承诺。'
+                      : 'Watch AI commentators analyze real market data and narrate predictions live. No betting, no payouts, no profit promises.'}
                   </p>
                 </div>
                 <div className="hidden md:block text-right">
@@ -123,13 +123,13 @@ export function LobbyPage() {
               </div>
               <div className="text-xs text-zinc-400">
                 {language === 'zh'
-                  ? '点击进入单个交易员房间（当前数据来自 leaderboard 接口）。'
-                  : 'Click to enter a trader room (data currently sourced from leaderboard endpoint).'}
+                  ? '点击进入单个解说房间（当前数据来自 leaderboard 接口）。'
+                  : 'Click to enter a commentator room (data currently sourced from leaderboard endpoint).'}
               </div>
             </div>
             <div className="text-xs px-2 py-1 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20">
               {competition?.count ?? 0}
-              {language === 'zh' ? ' 个交易员' : ' traders'}
+              {language === 'zh' ? ' 个解说员' : ' commentators'}
             </div>
           </div>
 

@@ -4224,7 +4224,7 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
         provider: 'selfhosted',
         speed: 1.02,
         cooldown_ms: 5000,
-        style_prompt_cn: '快节奏盘口主播，侧重价格变化、资金情绪、事件催化，句子短、带节奏但不喊单。',
+        style_prompt_cn: '快节奏事件解说员，侧重概率变化、讨论热度、事件催化，句子短、有节奏。',
         enabled: true,
       },
       {
@@ -4234,7 +4234,7 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
         provider: 'selfhosted',
         speed: 0.96,
         cooldown_ms: 5000,
-        style_prompt_cn: '稳健风险解读员，侧重概率区间、风控边界、反身性风险，语气沉着。',
+        style_prompt_cn: '稳健分析员，侧重概率区间、不确定性边界与反向风险，语气沉着。',
         enabled: true,
       },
     ],
@@ -4537,7 +4537,7 @@ async function generatePolymarketCommentaryText({
 
   if (!OPENAI_API_KEY) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
-    const fallback = `${speakerName}：盘口先看${side}方向，先盯量价是否延续，别追情绪。`
+    const fallback = `${speakerName}：当前先看${side}方向，重点观察概率曲线和讨论热度是否延续。`
     return {
       text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
       source: 'fallback_missing_key',
@@ -4546,11 +4546,11 @@ async function generatePolymarketCommentaryText({
 
   const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`
   const systemPrompt = [
-    `你是${speakerName}，在预测市场直播里做实时解说。`,
-    stylePrompt || '解说要紧扣盘口变化，专业、简短、自然口语。',
+    `你是${speakerName}，在预测直播间做实时解说。`,
+    stylePrompt || '解说要紧扣概率变化与事件进展，专业、简短、自然口语。',
     '只输出一个JSON对象，不要markdown，不要多余解释。',
     'JSON格式: {"text":"..."}',
-    'text要求: 1-2句中文，30-80字，必须和给定盘口数据一致，不得编造。',
+    'text要求: 1-2句中文，30-80字，必须和给定事件数据一致，不得编造。',
   ].join('\n')
   const userPrompt = [
     `room_id: ${safeRoomId}`,
@@ -4602,7 +4602,7 @@ async function generatePolymarketCommentaryText({
   } catch (error) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
     const pct = Number.isFinite(currentProb) ? `${(currentProb * 100).toFixed(1)}%` : 'n/a'
-    const fallback = `${speakerName}：当前${side}概率在${pct}附近，先看后续成交是否继续放大。`
+    const fallback = `${speakerName}：当前${side}概率在${pct}附近，先看后续讨论热度是否继续抬升。`
     return {
       text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
       source: `fallback:${String(error?.message || 'llm_error').slice(0, 120)}`,

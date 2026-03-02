@@ -73,13 +73,13 @@ function normalizeCommentaryItem(raw: unknown): CommentaryItem | null {
 
 // Format numbers like 25,000,000 -> 25M
 function formatCompactAmount(num: number) {
-    if (num >= 1000000) {
-        return (num / 1000000).toFixed(1) + 'M'
+    if (num >= 100000000) {
+        return (num / 100000000).toFixed(1) + '亿'
     }
-    if (num >= 1000) {
-        return (num / 1000).toFixed(1) + 'k'
+    if (num >= 10000) {
+        return (num / 10000).toFixed(1) + '万'
     }
-    return num.toString()
+    return Number(num || 0).toLocaleString('zh-CN')
 }
 
 function formatHHMMSS(ms: number) {
@@ -89,6 +89,15 @@ function formatHHMMSS(ms: number) {
         d.getMinutes().toString().padStart(2, '0'),
         d.getSeconds().toString().padStart(2, '0')
     ].join(':')
+}
+
+function localizeOutcomeLabel(label: string, fallback: string) {
+    const text = String(label || '').trim()
+    if (!text) return fallback
+    const normalized = text.toLowerCase()
+    if (['yes', 'true', 'up'].includes(normalized)) return '支持'
+    if (['no', 'false', 'down'].includes(normalized)) return '不支持'
+    return text
 }
 
 export default function CyberPredictionPage(props: FormalStreamDesignPageProps) {
@@ -382,7 +391,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     if (!state && errorCount > 5) {
         return (
             <div className="flex h-screen w-screen items-center justify-center bg-black text-red-500 font-mono tracking-widest text-xl">
-                [!!] DATA LINK SEVERED [!!]
+                [!!] 数据连接中断 [!!]
             </div>
         )
     }
@@ -390,7 +399,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     if (!state) {
         return (
             <div className="flex h-screen w-screen items-center justify-center bg-black text-cyan-500 font-mono tracking-widest text-xl animate-pulse">
-                [ INITIALIZING CYBER-ORACLE FEED... ]
+                [ 正在初始化预测解说流... ]
             </div>
         )
     }
@@ -398,6 +407,8 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     const { market, logs, balances, ai_pnl } = state
     const yesProbStr = (market.current_prob * 100).toFixed(1)
     const noProbStr = ((1 - market.current_prob) * 100).toFixed(1)
+    const yesOutcomeLabel = localizeOutcomeLabel(market.yes_outcome, '支持')
+    const noOutcomeLabel = localizeOutcomeLabel(market.no_outcome, '不支持')
 
     // Format log reversed so newest is at the bottom (or top depending on preference, here we render top-down)
     const displayLogs = [...logs].reverse().slice(0, 15)
@@ -414,24 +425,24 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                         <div className="text-[#00f5a0] text-xl animate-pulse">❖</div>
                         <div>
                             <h1 className="text-[10px] font-black tracking-widest text-[#00f5a0] drop-shadow-[0_0_8px_rgba(0,245,160,0.6)] font-mono uppercase">
-                                Prediction Net // Live
+                                预测解说台 // 直播中
                             </h1>
                             <div className="text-[8px] text-white/50 tracking-widest font-mono">
-                                NODE: {selectedTrader.trader_id}
+                                节点: {selectedTrader.trader_id}
                             </div>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-4 font-mono">
                         <div className="flex flex-col items-end">
-                            <span className="text-[8px] text-white/50">PNL</span>
+                            <span className="text-[8px] text-white/50">趋势分</span>
                             <span className={`text-xs font-bold tracking-tighter ${ai_pnl >= 0 ? 'text-[#00f5a0]' : 'text-red-500'}`}>
-                                {ai_pnl >= 0 ? '+' : ''}${ai_pnl.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                {ai_pnl >= 0 ? '+' : ''}{ai_pnl.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                             </span>
                         </div>
                         <div className="flex flex-col items-end">
-                            <span className="text-[8px] text-white/50">VOL</span>
-                            <span className="text-xs font-bold text-white/90">${formatCompactAmount(market.volume)}</span>
+                            <span className="text-[8px] text-white/50">热度</span>
+                            <span className="text-xs font-bold text-white/90">{formatCompactAmount(market.volume)}</span>
                         </div>
                     </div>
                 </div>
@@ -462,14 +473,14 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                             onError={(e) => { e.currentTarget.style.display = 'none'; }}
                         />
                         <div className="absolute bottom-1 right-2 text-[8px] font-mono text-white/50 bg-black/40 px-1 rounded">
-                            CAM_01
+                            机位_01
                         </div>
                     </div>
 
                     {/* Market Question */}
                     <div className="mb-6 w-full mt-2 pr-32">
                         <div className="inline-block px-2 py-0.5 mb-3 rounded border border-[#00d9ff]/30 bg-[#00d9ff]/10 text-[#00d9ff] text-[10px] tracking-wider font-mono">
-                            RESOLVES: {market.close_time}
+                            截止时间: {market.close_time}
                         </div>
                         <AnimatePresence mode="wait">
                             <motion.h2
@@ -495,13 +506,13 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                                 style={{ width: `${market.current_prob * 100}%` }}
                             >
                                 <div className="pl-3 text-lg font-black text-white/90 drop-shadow-md tracking-wider font-mono whitespace-nowrap overflow-hidden">
-                                    {market.yes_outcome}
+                                    {yesOutcomeLabel}
                                 </div>
                             </div>
                             {/* NO fill */}
                             <div className="h-full flex-1 bg-gradient-to-l from-rose-600 to-rose-400 flex items-center justify-end shadow-[inset_0_0_15px_rgba(255,255,255,0.2)]">
                                 <div className="pr-3 text-lg font-black text-white/90 drop-shadow-md tracking-wider font-mono whitespace-nowrap overflow-hidden">
-                                    {market.no_outcome}
+                                    {noOutcomeLabel}
                                 </div>
                             </div>
                         </div>
@@ -512,13 +523,13 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                                 <span className="text-3xl font-black text-emerald-400 font-mono tracking-tighter drop-shadow-[0_0_8px_rgba(52,211,153,0.4)]">
                                     {yesProbStr}%
                                 </span>
-                                <span className="text-[9px] font-bold text-emerald-400/60 uppercase tracking-widest mt-0.5">Price: ${market.current_prob.toFixed(2)}</span>
+                                <span className="text-[9px] font-bold text-emerald-400/60 tracking-widest mt-0.5">当前概率: {(market.current_prob * 100).toFixed(2)}%</span>
                             </div>
                             <div className="flex flex-col items-end">
                                 <span className="text-3xl font-black text-rose-400 font-mono tracking-tighter drop-shadow-[0_0_8px_rgba(251,113,133,0.4)]">
                                     {noProbStr}%
                                 </span>
-                                <span className="text-[9px] font-bold text-rose-400/60 uppercase tracking-widest mt-0.5">Price: ${(1 - market.current_prob).toFixed(2)}</span>
+                                <span className="text-[9px] font-bold text-rose-400/60 tracking-widest mt-0.5">当前概率: {((1 - market.current_prob) * 100).toFixed(2)}%</span>
                             </div>
                         </div>
                     </div>
@@ -529,7 +540,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                         <div className="relative bg-black/60 border border-white/10 rounded-lg p-3 flex gap-4 items-center backdrop-blur-md">
                             <div className="shrink-0 pl-1">
                                 <div className="w-10 h-10 rounded-full border border-cyan-400 p-0.5 flex items-center justify-center bg-[#050B14] overflow-hidden">
-                                    <img src="/icons/ai_brain.png" alt="AI Core" className="w-full h-full object-cover opacity-80" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                                    <img src="/icons/ai_brain.png" alt="解说引擎核心" className="w-full h-full object-cover opacity-80" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                                     <span className="absolute text-[#00d9ff] font-mono text-[6px] font-bold">{selectedTrader.trader_id.slice(-4)}</span>
                                 </div>
                             </div>
@@ -537,13 +548,13 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                                 <div className="flex justify-between items-center w-full">
                                     <h3 className="text-cyan-400 font-bold text-[10px] uppercase tracking-widest flex items-center gap-1.5">
                                         <span className="h-1.5 w-1.5 bg-cyan-400 rounded-full animate-pulse"></span>
-                                        AGENT ZERO
+                                        解说引擎
                                     </h3>
-                                    <div className="text-[10px] text-white/50 font-mono uppercase tracking-widest">Bankroll</div>
+                                    <div className="text-[10px] text-white/50 font-mono tracking-widest">能量值</div>
                                 </div>
                                 <div className="text-sm mt-0.5 font-mono text-white tracking-widest font-semibold flex justify-between items-baseline">
-                                    <span>READY</span>
-                                    <span className="text-cyan-50">${balances["AI_Agent_Zero"]?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span>在线</span>
+                                    <span className="text-cyan-50">{Number(balances['AI_Agent_Zero'] || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                                 </div>
                             </div>
                         </div>
@@ -553,7 +564,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 {/* BOTTOM SECTION: The Public Square Feed (Scrollable) */}
                 <section className="flex-1 min-h-0 border-t border-white/10 bg-[#050914]/80 backdrop-blur-xl flex flex-col relative z-20 shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
                     <div className="h-8 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-[#0A101C]">
-                        <h3 className="text-[10px] font-bold text-white/60 uppercase tracking-[0.2em] font-mono">Live Protocol Feed</h3>
+                        <h3 className="text-[10px] font-bold text-white/60 tracking-[0.2em] font-mono">实时观察流</h3>
                         <span className="flex h-1.5 w-1.5 relative">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
@@ -562,11 +573,11 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
                     <div className="shrink-0 border-b border-white/5 bg-[#070d18]/70 px-3 py-2">
                         <div className="mb-1 flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-cyan-300/80">
-                            <span>Realtime Commentary</span>
-                            {speakingCommentaryId ? <span className="text-emerald-300">Speaking</span> : <span className="text-white/40">Idle</span>}
+                            <span>实时解说</span>
+                            {speakingCommentaryId ? <span className="text-emerald-300">播报中</span> : <span className="text-white/40">待机</span>}
                         </div>
                         {displayCommentary.length === 0 ? (
-                            <div className="text-[10px] text-white/35 font-mono">No commentary yet.</div>
+                            <div className="text-[10px] text-white/35 font-mono">暂无解说内容</div>
                         ) : (
                             <div className="space-y-1.5">
                                 {displayCommentary.map((item) => {
@@ -592,7 +603,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-[11px]">
                         {displayLogs.length === 0 && (
-                            <div className="text-white/30 text-center py-10 tracking-widest text-xs">AWAITING SIGNALS...</div>
+                            <div className="text-white/30 text-center py-10 tracking-widest text-xs">等待新信号...</div>
                         )}
                         {displayLogs.map(log => {
                             const isAgent = log.type === 'agent'

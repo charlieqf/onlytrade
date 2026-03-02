@@ -44,7 +44,8 @@ def select_candidate_markets(open_markets):
     if not open_markets:
         return []
 
-    now = datetime.now()
+    # SQLite CURRENT_TIMESTAMP is UTC; compare against UTC to avoid timezone skew.
+    now = datetime.utcnow()
     max_age_seconds = MAX_MARKET_AGE_HOURS * 3600.0
     candidates = []
     for market in open_markets:

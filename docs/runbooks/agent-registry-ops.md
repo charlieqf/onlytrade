@@ -71,3 +71,34 @@ Actions:
 - start running agent: success, no-op
 - stop stopped agent: success, no-op
 - unregister missing agent: success (`removed=false`)
+
+## 5-room storytelling agents quick ops (`t_013`, `t_014`)
+
+When story rooms are reachable but `/api/rooms/t_013/*` or `/api/rooms/t_014/*` return 404, the usual root cause is "folder missing on VM" or "not registered".
+
+1. Ensure folders exist on target VM:
+
+```bash
+ls /opt/onlytrade/agents/t_013/agent.json
+ls /opt/onlytrade/agents/t_014/agent.json
+```
+
+2. Register both agents:
+
+```bash
+bash scripts/onlytrade-ops.sh agent-register t_013
+bash scripts/onlytrade-ops.sh agent-register t_014
+```
+
+3. Verify they are visible in traders list:
+
+```bash
+curl -fsS "http://127.0.0.1:8080/api/traders"
+```
+
+4. Verify room packets are available:
+
+```bash
+curl -fsS "http://127.0.0.1:8080/api/rooms/t_013/stream-packet?decision_limit=3"
+curl -fsS "http://127.0.0.1:8080/api/rooms/t_014/stream-packet?decision_limit=3"
+```

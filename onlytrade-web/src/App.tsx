@@ -5,6 +5,7 @@ import Expert2MobileBroadcastPage from './pages/design/Expert2MobileBroadcastPag
 import Expert3StudioTimelinePage from './pages/design/Expert3StudioTimelinePage'
 import StoryOralBroadcastPage from './pages/design/StoryOralBroadcastPage'
 import MultiPersonBroadcastPage from './pages/design/MultiPersonBroadcastPage'
+import CyberPredictionPage from './pages/design/CyberPredictionPage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -52,10 +53,11 @@ type Page =
   | 'expert3'
   | 'story'
   | 'multiBroadcast'
+  | 'polymarket'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
-  window.location.pathname.startsWith('/onlytrade/')
+    window.location.pathname.startsWith('/onlytrade/')
     ? '/onlytrade'
     : ''
 
@@ -105,6 +107,8 @@ function App() {
       return 'story'
     if (path === '/design/multi-broadcast' || path === '/stream/multi-broadcast')
       return 'multiBroadcast'
+    if (path === '/stream/polymarket')
+      return 'polymarket'
     return 'lobby'
   }
 
@@ -133,6 +137,7 @@ function App() {
       expert3: '/stream/studio-timeline',
       story: '/stream/story-broadcast',
       multiBroadcast: '/stream/multi-broadcast',
+      polymarket: '/stream/polymarket',
     }
     const path = pathMap[page]
     if (path) {
@@ -236,6 +241,11 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/stream/polymarket') {
+        setCurrentPage('polymarket')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
       }
       setRoute(path)
     }
@@ -289,7 +299,8 @@ function App() {
         currentPage === 'expert2' ||
         currentPage === 'expert3' ||
         currentPage === 'story' ||
-        currentPage === 'multiBroadcast') &&
+        currentPage === 'multiBroadcast' ||
+        currentPage === 'polymarket') &&
         selectedTraderId
         ? `room-stream-packet-${selectedTraderId}-${decisionsLimit}`
         : null,
@@ -311,7 +322,8 @@ function App() {
       currentPage === 'expert2' ||
       currentPage === 'expert3' ||
       currentPage === 'story' ||
-      currentPage === 'multiBroadcast') &&
+      currentPage === 'multiBroadcast' ||
+      currentPage === 'polymarket') &&
     !!selectedTraderId
   const lastRoomStreamPacketEventTsRef = useRef<number>(0)
 
@@ -396,6 +408,7 @@ function App() {
         || currentPage === 'expert3'
         || currentPage === 'story'
         || currentPage === 'multiBroadcast'
+        || currentPage === 'polymarket'
         ? 'replay-runtime-status'
         : null,
       api.getReplayRuntimeStatus,
@@ -508,6 +521,8 @@ function App() {
       setCurrentPage('story')
     } else if (route === '/design/multi-broadcast' || route === '/stream/multi-broadcast') {
       setCurrentPage('multiBroadcast')
+    } else if (route === '/stream/polymarket') {
+      setCurrentPage('polymarket')
     }
   }, [route])
 
@@ -645,6 +660,26 @@ function App() {
   if (currentPage === 'multiBroadcast') {
     return selectedTrader ? (
       <MultiPersonBroadcastPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=...'
+          : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'polymarket') {
+    return selectedTrader ? (
+      <CyberPredictionPage
         selectedTrader={selectedTrader}
         streamPacket={streamPacket}
         roomSseState={roomSseState}

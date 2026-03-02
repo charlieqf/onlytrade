@@ -20,7 +20,7 @@ type MultiManifest = {
   title: string
   subtitle: string
   narration_file: string
-  bgm_file: string
+  bgm_file?: string
   duration_sec: number
   scenes: string[]
   participants: MultiParticipant[]
@@ -44,7 +44,7 @@ const DEFAULT_MULTI_MANIFEST: MultiManifest = {
   title: '多人直播厅',
   subtitle: 'multi-person / oral broadcast',
   narration_file: 'narration.mp3',
-  bgm_file: 'bgm.mp3',
+  bgm_file: '',
   duration_sec: 900,
   scenes: ['scene_0.png'],
   participants: [],
@@ -58,6 +58,8 @@ const SHOW_SLUG_BY_TRADER: Record<string, string> = {
   t_013: 'mandela_effect',
   t_014: 'libai',
 }
+
+const ENABLE_MULTI_BGM = false
 
 const SPEAKER_NAME_MAP: Record<string, string> = {
   alpha: 'alpha',
@@ -240,6 +242,9 @@ function toParticipantName(id: string): string {
 function parseManifest(payload: unknown): MultiManifest {
   if (!payload || typeof payload !== 'object') return DEFAULT_MULTI_MANIFEST
   const row = payload as Record<string, unknown>
+  const bgmFile = Object.prototype.hasOwnProperty.call(row, 'bgm_file')
+    ? String(row.bgm_file || '').trim()
+    : ''
   const scenes = Array.isArray(row.scenes)
     ? row.scenes.map((item) => String(item || '').trim()).filter(Boolean)
     : []
@@ -266,7 +271,7 @@ function parseManifest(payload: unknown): MultiManifest {
     title: String(row.title || DEFAULT_MULTI_MANIFEST.title).trim() || DEFAULT_MULTI_MANIFEST.title,
     subtitle: String(row.subtitle || DEFAULT_MULTI_MANIFEST.subtitle).trim() || DEFAULT_MULTI_MANIFEST.subtitle,
     narration_file: String(row.narration_file || DEFAULT_MULTI_MANIFEST.narration_file).trim() || DEFAULT_MULTI_MANIFEST.narration_file,
-    bgm_file: String(row.bgm_file || DEFAULT_MULTI_MANIFEST.bgm_file).trim() || DEFAULT_MULTI_MANIFEST.bgm_file,
+    bgm_file: bgmFile,
     duration_sec: Math.max(30, toSafeNumber(row.duration_sec, DEFAULT_MULTI_MANIFEST.duration_sec)),
     scenes: scenes.length ? scenes : DEFAULT_MULTI_MANIFEST.scenes,
     participants,
@@ -354,10 +359,12 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
     () => withAssetVersion(`${storyRoot}/${manifest.narration_file}`, assetVersion),
     [storyRoot, manifest.narration_file, assetVersion]
   )
-  const bgmSrc = useMemo(
-    () => withAssetVersion(`${storyRoot}/${manifest.bgm_file}`, assetVersion),
-    [storyRoot, manifest.bgm_file, assetVersion]
-  )
+  const bgmSrc = useMemo(() => {
+    if (!ENABLE_MULTI_BGM) return ''
+    const bgmFile = String(manifest.bgm_file || '').trim()
+    if (!bgmFile) return ''
+    return withAssetVersion(`${storyRoot}/${bgmFile}`, assetVersion)
+  }, [storyRoot, manifest.bgm_file, assetVersion])
 
   const subtitleCues = useMemo(() => {
     const baseDuration = narrationDurationSec > 0 ? narrationDurationSec : Math.max(1, manifest.duration_sec)
@@ -532,10 +539,12 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
     narration.autoplay = true
     narration.volume = 1
 
-    const bgm = new Audio(bgmSrc)
-    bgm.preload = 'auto'
-    bgm.loop = true
-    bgm.volume = 0.14
+    const bgm = bgmSrc ? new Audio(bgmSrc) : null
+    if (bgm) {
+      bgm.preload = 'auto'
+      bgm.loop = true
+      bgm.volume = 0.14
+    }
 
     narrationAudioRef.current = narration
     bgmAudioRef.current = bgm
@@ -567,12 +576,12 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
     narration.addEventListener('play', onPlay)
     narration.addEventListener('pause', onPause)
     narration.addEventListener('error', onNarrationError)
-    bgm.addEventListener('error', onBgmError)
+    bgm?.addEventListener('error', onBgmError)
 
     globalStore[globalKey] = { narration, bgm }
 
     narration.load()
-    bgm.load()
+    bgm?.load()
 
     return () => {
       narration.removeEventListener('loadedmetadata', onLoadedMetadata)
@@ -580,11 +589,13 @@ export default function MultiPersonBroadcastPage(props: FormalStreamDesignPagePr
       narration.removeEventListener('play', onPlay)
       narration.removeEventListener('pause', onPause)
       narration.removeEventListener('error', onNarrationError)
-      bgm.removeEventListener('error', onBgmError)
+      bgm?.removeEventListener('error', onBgmError)
       narration.pause()
-      bgm.pause()
+      bgm?.pause()
       narration.src = ''
-      bgm.src = ''
+      if (bgm) {
+        bgm.src = ''
+      }
 
       const current = globalStore[globalKey] as
         | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }

@@ -62,3 +62,20 @@ When `avatar_file` is set, backend serves it from:
 - registered: persisted in `data/agents/registry.json`
 - running: registered + status=`running`
 - lobby-visible: registered + `show_in_lobby=true`
+
+## Six-room baseline skills (ops-facing)
+
+Current production room lineup:
+
+- `t_003`: realtime command deck room (self-hosted TTS voice baseline: `zsy`)
+- `t_012`: multi-broadcast + story-broadcast host
+- `t_013`: story host (`mandela_effect`)
+- `t_014`: story host (`libai`)
+- `t_015`: polymarket host (`/stream/polymarket`)
+
+Ops reminders:
+
+- `t_013` and `t_014` must exist as folders and be registered, or their room APIs may return 404.
+- Story/multi pages rely on `/public/story/<slug>/` assets plus deployed `dist/story/<slug>/` files.
+- `t_015` relies on `cyber_market_live.json` + `avatar.mp4` plus polymarket bridge/engine services on Aliyun.
+- For detailed room-by-room checks and incident playbooks, see `docs/runbooks/six-room-stream-ops-skills.md`.

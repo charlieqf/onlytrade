@@ -1,6 +1,6 @@
 # Phone Stream Pages Reference
 
-This document tracks the 4 formal phone-first stream pages, their routes, and the runtime data contract.
+This document tracks the formal phone-first stream pages, their routes, and the runtime data contract.
 
 ## Pages and Routes
 
@@ -51,7 +51,20 @@ Path-based bridge notes:
 - SSE and API calls must resolve under `/onlytrade/api/...` when on `/onlytrade` pages.
 - Story assets are served from `/onlytrade/story/<story_slug>/...` on bridged routes.
 
-All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStreamShared.tsx`.
+These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStreamShared.tsx`.
+
+## Six-room ops quick map
+
+- `t_003` -> `/stream/command-deck-new` (realtime; no static story assets)
+- `t_012` -> `/stream/multi-broadcast?show=qiangqiang_citrini_20260227`
+- `t_012` -> `/stream/story-broadcast?story=ai_tribunal_20260226`
+- `t_013` -> `/stream/story-broadcast?story=mandela_effect`
+- `t_014` -> `/stream/story-broadcast?story=libai`
+- `t_015` -> `/stream/polymarket`
+
+For full operator playbooks and failure recovery, see:
+
+- `docs/runbooks/six-room-stream-ops-skills.md`
 
 ## Common Data Contract
 
@@ -107,10 +120,10 @@ All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneS
 
 ## UX Constraints Applied
 
-- Phone-only layouts for all 4 formal pages.
+- Phone-only layouts for all formal stream pages.
 - Avatar slot fixed to bottom-left area, resizable, with digital human visual slot + live TTS playback.
 - Public chat is display-only.
-- Betting and gifting are not present in these 4 pages.
+- Betting and gifting are not present in these pages.
 
 ### Story Broadcast UI Policy
 
@@ -120,6 +133,7 @@ All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneS
   - removes `Narration loop` badge
   - removes `BGM on/off` toggle and BGM volume slider
 - For single-scene stories, background image uses `object-contain` to avoid aggressive crop under top panel.
+- BGM is disabled by policy for story-broadcast and multi-broadcast pages.
 
 ### Story Speaker Cues
 
@@ -171,18 +185,19 @@ All four pages use shared stream logic in `onlytrade-web/src/pages/design/phoneS
   - `media_type=raw` -> `HTTP 200`, `audio/raw`, first-byte ~`1.47s`, non-empty stream
   - `media_type=mp3` -> `HTTP 400` (unsupported in current backend)
 - Runtime default for self-hosted path is `wav`.
-- Known good room voice id for self-hosted routing: `xuanyijiangjie` (override per room with `tts-set --voice`).
+- Known good voice IDs for self-hosted routing include `xuanyijiangjie` and `zsy`.
+- Current ops baseline: `t_003` should use self-hosted voice `zsy`.
 
 ### Ops commands (local / SSH wrapper)
 
 ```bash
 bash scripts/onlytrade-ops.sh tts-status t_003
-bash scripts/onlytrade-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
+bash scripts/onlytrade-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback openai
 bash scripts/onlytrade-ops.sh tts-test t_003 --text "语音连通测试"
 bash scripts/onlytrade-ops.sh tts-clear t_003
 
 bash scripts/onlytrade-ssh-ops.sh tts-status t_003
-bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
+bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice zsy --fallback openai
 bash scripts/onlytrade-ssh-ops.sh tts-test t_003
 ```
 

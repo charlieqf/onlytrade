@@ -138,7 +138,7 @@ export class HttpClient {
         window.dispatchEvent(new PopStateEvent('popstate'))
 
         // Return pending promise
-        return new Promise(() => {})
+        return new Promise(() => { })
       }
 
       throw new Error('Session expired')

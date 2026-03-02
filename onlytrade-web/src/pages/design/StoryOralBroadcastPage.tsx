@@ -10,7 +10,7 @@ type StoryManifest = {
   title: string
   subtitle: string
   narration_file: string
-  bgm_file: string
+  bgm_file?: string
   duration_sec: number
   scenes: string[]
 }
@@ -35,7 +35,7 @@ const DEFAULT_MANIFEST: StoryManifest = {
   title: '赵老哥：八年一万倍的股市传奇',
   subtitle: 'blog / 说书 / 口播',
   narration_file: 'narration.mp3',
-  bgm_file: 'bgm.mp3',
+  bgm_file: '',
   duration_sec: 1001,
   scenes: DEFAULT_SCENES,
 }
@@ -50,6 +50,8 @@ const STORY_SLUG_BY_TRADER: Record<string, string> = {
   t_013: 'mandela_effect',
   t_014: 'libai',
 }
+
+const ENABLE_STORY_BGM = false
 
 function resolveStorySlug(traderId: string): string {
   const fallback = STORY_SLUG_BY_TRADER[String(traderId || '').trim().toLowerCase()] || 'zhaolaoge'
@@ -92,6 +94,9 @@ function parseStoryManifest(payload: unknown): StoryManifest {
     return DEFAULT_MANIFEST
   }
   const row = payload as Record<string, unknown>
+  const bgmFile = Object.prototype.hasOwnProperty.call(row, 'bgm_file')
+    ? String(row.bgm_file || '').trim()
+    : ''
   const scenes = Array.isArray(row.scenes)
     ? row.scenes.map((item) => String(item || '').trim()).filter(Boolean)
     : []
@@ -102,7 +107,7 @@ function parseStoryManifest(payload: unknown): StoryManifest {
     narration_file:
       String(row.narration_file || DEFAULT_MANIFEST.narration_file).trim()
       || DEFAULT_MANIFEST.narration_file,
-    bgm_file: String(row.bgm_file || DEFAULT_MANIFEST.bgm_file).trim() || DEFAULT_MANIFEST.bgm_file,
+    bgm_file: bgmFile,
     duration_sec: Math.max(0, toSafeNumber(row.duration_sec, DEFAULT_MANIFEST.duration_sec)),
     scenes: scenes.length ? scenes : DEFAULT_MANIFEST.scenes,
   }
@@ -274,10 +279,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     () => withAssetVersion(`${storyRoot}/${manifest.narration_file}`, assetVersion),
     [storyRoot, manifest.narration_file, assetVersion]
   )
-  const bgmSrc = useMemo(
-    () => withAssetVersion(`${storyRoot}/${manifest.bgm_file}`, assetVersion),
-    [storyRoot, manifest.bgm_file, assetVersion]
-  )
+  const bgmSrc = useMemo(() => {
+    if (!ENABLE_STORY_BGM) return ''
+    const bgmFile = String(manifest.bgm_file || '').trim()
+    if (!bgmFile) return ''
+    return withAssetVersion(`${storyRoot}/${bgmFile}`, assetVersion)
+  }, [storyRoot, manifest.bgm_file, assetVersion])
 
   const subtitleCues = useMemo(() => {
     const baseDuration = narrationDurationSec > 0
@@ -403,9 +410,11 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.autoplay = true
     narration.volume = 1
 
-    const bgm = new Audio(bgmSrc)
-    bgm.preload = 'auto'
-    bgm.loop = true
+    const bgm = bgmSrc ? new Audio(bgmSrc) : null
+    if (bgm) {
+      bgm.preload = 'auto'
+      bgm.loop = true
+    }
 
     narrationAudioRef.current = narration
     bgmAudioRef.current = bgm
@@ -460,12 +469,12 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
     narration.addEventListener('pause', onPause)
     narration.addEventListener('error', onNarrationError)
     narration.addEventListener('canplay', onNarrationCanPlay)
-    bgm.addEventListener('error', onBgmError)
+    bgm?.addEventListener('error', onBgmError)
 
     globalStore[globalKey] = { narration, bgm }
 
     narration.load()
-    bgm.load()
+    bgm?.load()
 
     return () => {
       narration.removeEventListener('loadedmetadata', onLoadedMetadata)
@@ -474,11 +483,13 @@ export default function StoryOralBroadcastPage(props: FormalStreamDesignPageProp
       narration.removeEventListener('pause', onPause)
       narration.removeEventListener('error', onNarrationError)
       narration.removeEventListener('canplay', onNarrationCanPlay)
-      bgm.removeEventListener('error', onBgmError)
+      bgm?.removeEventListener('error', onBgmError)
       narration.pause()
-      bgm.pause()
+      bgm?.pause()
       narration.src = ''
-      bgm.src = ''
+      if (bgm) {
+        bgm.src = ''
+      }
       const current = globalStore[globalKey] as
         | { narration?: HTMLAudioElement | null, bgm?: HTMLAudioElement | null }
         | undefined

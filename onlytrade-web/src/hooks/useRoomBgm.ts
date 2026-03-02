@@ -34,6 +34,7 @@ const DEFAULT_BGM_VOLUME_WECOM = 0.05
 const DUCKING_FACTOR_DEFAULT = 0.35
 const DUCKING_FACTOR_WECOM = 0.08
 const BGM_GAIN_MULTIPLIER_WECOM = 0.3
+const BGM_ENABLED_ROOM_IDS = new Set(['t_003'])
 
 function detectPathBase(): string {
   if (typeof window === 'undefined') return ''
@@ -76,6 +77,7 @@ function resolveBgmPlaybackVolume({
 function resolveRoomBgmTracks(roomId: string): BgmTrack[] {
   const key = String(roomId || '').trim().toLowerCase()
   if (!key) return []
+  if (!BGM_ENABLED_ROOM_IDS.has(key)) return []
   const pathBase = detectPathBase()
   return UNIVERSAL_ROOM_BGM_PLAYLIST.map((track) => ({
     ...track,

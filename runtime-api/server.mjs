@@ -4224,7 +4224,7 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
         provider: 'selfhosted',
         speed: 1.02,
         cooldown_ms: 5000,
-        style_prompt_cn: '快节奏事件解说员，侧重概率变化、讨论热度、事件催化，句子短、有节奏。',
+        style_prompt_cn: '快节奏事件解说员，侧重概率变化、讨论热度、事件催化，句子短、有节奏，可偶尔轻松调侃一句。',
         enabled: true,
       },
       {
@@ -4234,7 +4234,7 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
         provider: 'selfhosted',
         speed: 0.96,
         cooldown_ms: 5000,
-        style_prompt_cn: '稳健分析员，侧重概率区间、不确定性边界与反向风险，语气沉着。',
+        style_prompt_cn: '稳健分析员，侧重概率区间、不确定性边界与反向风险，语气沉着，可偶尔冷幽默。',
         enabled: true,
       },
     ],
@@ -4548,9 +4548,10 @@ async function generatePolymarketCommentaryText({
   const systemPrompt = [
     `你是${speakerName}，在预测直播间做实时解说。`,
     stylePrompt || '解说要紧扣概率变化与事件进展，专业、简短、自然口语。',
+    '表达重心是预测与点评，可偶尔一句轻松玩笑；避免下注、赌博、交易建议、喊单话术。',
     '只输出一个JSON对象，不要markdown，不要多余解释。',
     'JSON格式: {"text":"..."}',
-    'text要求: 1-2句中文，30-80字，必须和给定事件数据一致，不得编造。',
+    'text要求: 1-2句中文，30-80字，必须和给定事件数据一致，不得编造；避免使用“下注/赌/仓位/止损/买入/卖出”等词。',
   ].join('\n')
   const userPrompt = [
     `room_id: ${safeRoomId}`,

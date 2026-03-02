@@ -80,13 +80,13 @@ function buildFallbackReplyText({ roomAgent, inboundMessage, roomContext, latest
   const newsTitle = pickStable(roomContext?.news_digest_titles, `${sender}|news|${nowMs}`, '')
   const casual = pickStable(roomContext?.casual_topics, `${sender}|casual|${nowMs}`, '')
 
-  const tradeLine = symbol
+  const commentaryLine = symbol
     ? (action === 'BUY'
-      ? `我会继续跟踪${symbol}的量价配合，确认后再进攻。`
+      ? `我当前对${symbol}偏积极，继续观察量价共振再确认。`
       : action === 'SELL'
-        ? `我先把${symbol}风险放在第一位，反弹不强就不恋战。`
-        : `我对${symbol}先保持观察，等更清晰信号再动。`)
-    : '我先把风险和节奏放前面，不着急抢动作。'
+        ? `我对${symbol}先偏谨慎，反弹力度不足时以防守解读为主。`
+        : `我对${symbol}先保持观察，等更清晰信号再更新观点。`)
+    : '我先把风险和节奏放前面，先做观察再给观点。'
 
   const newsLine = newsTitle ? `另外这条消息也要盯：${newsTitle.slice(0, 24)}。` : ''
   const casualLineRaw = casual ? `${casual.slice(0, 22)}。` : '我们先稳住节奏，机会会有。'
@@ -94,7 +94,7 @@ function buildFallbackReplyText({ roomAgent, inboundMessage, roomContext, latest
     ? casualLineRaw
     : timeAwareFallbackLine(nowMs)
 
-  return `@${sender} ${tradeLine}${newsLine || casualLine}`
+  return `@${sender} ${commentaryLine}${newsLine || casualLine}`
 }
 
 function dayKeyInTimeZone(tsMs, timeZone = 'Asia/Shanghai') {

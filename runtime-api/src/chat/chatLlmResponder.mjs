@@ -53,9 +53,9 @@ function normalizeTimeContext(roomContext) {
 function buildSystemPrompt({ roomAgent, kind }) {
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
   const kindRule = kind === 'proactive'
-    ? 'You are writing a proactive public room message to keep engagement healthy.'
+    ? 'You are writing a proactive public message focused on prediction and commentary to keep engagement healthy.'
     : (kind === 'narration'
-      ? 'You are narrating your latest trading decision to the room like a livestream host.'
+      ? 'You are narrating your latest prediction view update to the room like a livestream host.'
       : 'You are writing a direct reply to a user message in the room.')
   const contextRule = (kind === 'proactive' || kind === 'narration')
     ? 'If room_context contains market_overview_brief, news_digest_titles, news_commentary, news_categories, or symbol_history_summary, explicitly reference one concise market/news/history point.'
@@ -70,7 +70,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     ? 'When latest_decision.action is hold, explain your thinking process briefly (signal + risk), not only "hold".'
     : ''
   const detailRule = kind === 'proactive'
-    ? 'For proactive messages, include: (1) current market read, (2) your symbol/action plan, (3) risk boundary or trigger level. Make it informative, not generic.'
+    ? 'For proactive messages, include: (1) current market read, (2) your symbol viewpoint, (3) watchpoint or risk boundary. Make it informative, not generic.'
     : (kind === 'narration'
       ? 'For narration, explain decision logic with signal evidence and risk control in clear Chinese.'
       : '')
@@ -81,17 +81,19 @@ function buildSystemPrompt({ roomAgent, kind }) {
       : 'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON. Keep output compact: target <= 100 Chinese characters and never exceed 120.')
   const varietyRule = 'Avoid repeating the same opener style used in recent_agent_messages; vary angle and wording naturally.'
   const casualRule = (kind === 'reply' || kind === 'proactive')
-    ? 'You may add one light casual host line (mindset/life rhythm/risk discipline) in about 30% of messages, while keeping market relevance first when news/context exists.'
+    ? 'You may add one light casual or joking host line (mindset/life rhythm) in about 40% of messages, while keeping prediction relevance first when news/context exists.'
     : ''
+  const wordingRule = 'Avoid betting/gambling vocabulary and hard trading calls. Prefer wording like prediction, commentary, observation, possibility, and scenario.'
   const timeRule = 'Treat room_context.time_context (Asia/Shanghai) as authoritative local time. Keep any life-rhythm/casual line consistent with that clock; avoid after-work/dinner/night wording in morning sessions.'
   const style = styleHint(roomAgent)
 
   return [
-    `You are ${agentName}, a Chinese A-share trading room agent.`,
+    `You are ${agentName}, a Chinese market prediction commentary host.`,
     kindRule,
     lengthRule,
     'No markdown, no bullet list, no JSON.',
     'Do not claim you executed real broker orders.',
+    wordingRule,
     contextRule,
     topicRule,
     positionRule,

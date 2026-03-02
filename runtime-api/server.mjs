@@ -298,6 +298,22 @@ const NEWS_DIGEST_PATH_US = path.resolve(
 const NEWS_DIGEST_REFRESH_MS = Math.max(2_000, Number(process.env.NEWS_DIGEST_REFRESH_MS || 60_000))
 const NEWS_DIGEST_STALE_MS = Math.max(60_000, Number(process.env.NEWS_DIGEST_STALE_MS || 12 * 60 * 60 * 1000))
 
+const X_HOT_NEWS_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.X_HOT_NEWS_PATH || path.join('data', 'live', 'onlytrade', 'x_hot_events.json')
+)
+const X_HOT_NEWS_REFRESH_MS = Math.max(10_000, Number(process.env.X_HOT_NEWS_REFRESH_MS || 60_000))
+const X_HOT_NEWS_STALE_MS = Math.max(60_000, Number(process.env.X_HOT_NEWS_STALE_MS || 12 * 60 * 60 * 1000))
+const X_HOT_NEWS_ROOMS = (() => {
+  const raw = String(process.env.X_HOT_NEWS_ROOMS || 't_015')
+  return new Set(
+    raw
+      .split(',')
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean)
+  )
+})()
+
 const MARKET_BREADTH_PATH_CN = path.resolve(
   ROOT_DIR,
   process.env.MARKET_BREADTH_PATH_CN || path.join('data', 'live', 'onlytrade', 'market_breadth.cn-a.json')
@@ -2007,6 +2023,7 @@ function buildLiveDataFreshnessSummary() {
     buildFreshnessCheck('market_overview_us', marketOverviewProviderUs.getStatus()),
     buildFreshnessCheck('news_digest_cn_a', newsDigestProviderCn.getStatus()),
     buildFreshnessCheck('news_digest_us', newsDigestProviderUs.getStatus()),
+    buildFreshnessCheck('x_hot_news', xHotNewsProvider.getStatus()),
     buildFreshnessCheck('market_breadth_cn_a', marketBreadthProviderCn.getStatus()),
     buildFreshnessCheck('market_breadth_us', marketBreadthProviderUs.getStatus()),
   ]
@@ -2883,6 +2900,11 @@ const newsDigestProviderUs = createLiveJsonFileProvider({
   refreshMs: NEWS_DIGEST_REFRESH_MS,
   staleAfterMs: NEWS_DIGEST_STALE_MS,
 })
+const xHotNewsProvider = createLiveJsonFileProvider({
+  filePath: X_HOT_NEWS_PATH,
+  refreshMs: X_HOT_NEWS_REFRESH_MS,
+  staleAfterMs: X_HOT_NEWS_STALE_MS,
+})
 const marketBreadthProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_BREADTH_PATH_CN,
   refreshMs: MARKET_BREADTH_REFRESH_MS,
@@ -3176,6 +3198,69 @@ function extractCasualTopics(payload, { dayKey = '', limit = 8 } = {}) {
     : []
   const merged = [...external, ...DEFAULT_CASUAL_TOPICS]
   return rotatePoolByKey(merged, dayKey || String(Date.now()), limit)
+}
+
+function mergeUniqueTextRows(primary, secondary, { limit = 24 } = {}) {
+  const rows = []
+  const seen = new Set()
+  const pushFrom = (source) => {
+    for (const item of Array.isArray(source) ? source : []) {
+      const text = String(item || '').trim()
+      if (!text) continue
+      const key = text.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      rows.push(text)
+      if (rows.length >= limit) break
+    }
+  }
+  pushFrom(primary)
+  if (rows.length < limit) pushFrom(secondary)
+  return rows
+}
+
+function mergeNewsCategoryRows(primary, secondary, { limit = 6 } = {}) {
+  const counter = new Map()
+  const ingest = (source) => {
+    for (const row of Array.isArray(source) ? source : []) {
+      const category = String(row?.category || '').trim().toLowerCase()
+      if (!category) continue
+      const label = String(row?.label || newsCategoryLabel(category)).trim() || newsCategoryLabel(category)
+      const count = Math.max(0, Math.floor(Number(row?.count || 0)))
+      const prev = counter.get(category)
+      if (!prev) {
+        counter.set(category, { category, label, count })
+      } else {
+        prev.count += count
+        if (!prev.label && label) prev.label = label
+      }
+    }
+  }
+  ingest(primary)
+  ingest(secondary)
+  return Array.from(counter.values())
+    .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
+    .slice(0, Math.max(1, Math.floor(Number(limit) || 6)))
+}
+
+function mergeDigestHeadlines(primary, secondary, { limit = 64 } = {}) {
+  const rows = []
+  const seen = new Set()
+  const pushFrom = (source) => {
+    for (const item of Array.isArray(source) ? source : []) {
+      if (!item || typeof item !== 'object') continue
+      const title = String(item.title || '').trim()
+      if (!title) continue
+      const key = title.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      rows.push(item)
+      if (rows.length >= limit) break
+    }
+  }
+  pushFrom(primary)
+  if (rows.length < limit) pushFrom(secondary)
+  return rows
 }
 
 function compactSymbolHistorySummary(row) {
@@ -3599,10 +3684,48 @@ async function getNewsDigestSnapshot(marketId) {
     source_kind: payload ? 'digest_file' : 'empty',
     market,
     day_key: dayKey || null,
+    headlines,
     titles,
     commentary,
     categories,
     casual_topics: casualTopics,
+    burst_signal: burstSignal,
+    status,
+  }
+}
+
+async function getXHotNewsSnapshot() {
+  const payload = await xHotNewsProvider.getPayload({ forceRefresh: false })
+  const status = xHotNewsProvider.getStatus()
+  const titles = extractNewsTitles(payload)
+  const headlines = normalizeDigestHeadlines(
+    payload && typeof payload === 'object'
+      ? (Array.isArray(payload.headlines)
+        ? payload.headlines
+        : (Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.news) ? payload.news : [])))
+      : []
+  )
+  const commentary = extractNewsCommentary(payload)
+  const categories = extractNewsCategorySummary(payload, headlines)
+  const dayKey = payload && typeof payload === 'object'
+    ? String(payload.day_key || '').trim()
+    : ''
+  const burstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
+    ? selectNewsBurstSignal({
+      headlines,
+      nowMs: Date.now(),
+      freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
+      minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
+    })
+    : null
+
+  return {
+    source_kind: payload ? 'x_hot_file' : 'empty',
+    day_key: dayKey || null,
+    headlines,
+    titles,
+    commentary,
+    categories,
     burst_signal: burstSignal,
     status,
   }
@@ -3682,6 +3805,7 @@ async function buildRoomChatContext(roomId, {
   nowMs = Date.now(),
 } = {}) {
   const safeRoomId = String(roomId || '').trim()
+  const useXHotNews = X_HOT_NEWS_ROOMS.has(safeRoomId.toLowerCase())
   const trader = getTraderById(safeRoomId)
   const marketSpec = getMarketSpecForExchange(trader.exchange_id)
   const market = marketSpec.market
@@ -3726,6 +3850,10 @@ async function buildRoomChatContext(roomId, {
     }
   }
 
+  const xHotDigest = useXHotNews
+    ? await getXHotNewsSnapshot()
+    : null
+
   const symbolBrief = head
     ? (() => {
       const symbolMeta = resolveStockDisplay(headSymbol, trader?.exchange_id)
@@ -3748,20 +3876,55 @@ async function buildRoomChatContext(roomId, {
     nowMs: sessionNowMs,
   })
 
+  const digestHeadlines = Array.isArray(effectiveDigest?.headlines) ? effectiveDigest.headlines : []
+  const digestTitles = Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : []
+  const digestCommentary = Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : []
+  const digestCategories = Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : []
+  const xHeadlines = Array.isArray(xHotDigest?.headlines) ? xHotDigest.headlines : []
+  const xTitles = Array.isArray(xHotDigest?.titles) ? xHotDigest.titles : []
+  const xCommentary = Array.isArray(xHotDigest?.commentary) ? xHotDigest.commentary : []
+  const xCategories = Array.isArray(xHotDigest?.categories) ? xHotDigest.categories : []
+
+  const mergedHeadlines = useXHotNews
+    ? mergeDigestHeadlines(xHeadlines, digestHeadlines, { limit: 72 })
+    : digestHeadlines
+  const mergedTitles = useXHotNews
+    ? mergeUniqueTextRows(xTitles, digestTitles, { limit: 24 })
+    : digestTitles
+  const mergedCommentary = useXHotNews
+    ? mergeUniqueTextRows(xCommentary, digestCommentary, { limit: 10 })
+    : digestCommentary
+  const mergedCategories = useXHotNews
+    ? mergeNewsCategoryRows(xCategories, digestCategories, { limit: 6 })
+    : digestCategories
+  const mergedBurstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
+    ? (
+      selectNewsBurstSignal({
+        headlines: mergedHeadlines,
+        nowMs: Date.now(),
+        freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
+        minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
+      })
+      || xHotDigest?.burst_signal
+      || effectiveDigest?.burst_signal
+      || null
+    )
+    : null
+
   return {
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     time_context: shanghaiClockParts(sessionNowMs),
     market_overview_brief: effectiveOverview?.brief || '',
-    news_digest_titles: Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : [],
-    news_commentary: Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : [],
-    news_categories: Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : [],
+    news_digest_titles: mergedTitles,
+    news_commentary: mergedCommentary,
+    news_categories: mergedCategories,
     casual_topics: filterTimeAwareCasualTopics(
       Array.isArray(effectiveDigest?.casual_topics)
         ? effectiveDigest.casual_topics
         : DEFAULT_CASUAL_TOPICS,
       { tsMs: sessionNowMs, limit: 8 }
     ),
-    news_burst_signal: effectiveDigest?.burst_signal || null,
+    news_burst_signal: mergedBurstSignal,
     market_breadth_summary: effectiveBreadth?.summary || '',
     market_breadth: effectiveBreadth?.breadth || null,
     symbol_brief: symbolBrief,
@@ -5601,6 +5764,7 @@ async function refreshSupplementalLiveProviders() {
     marketOverviewProviderUs,
     newsDigestProviderCn,
     newsDigestProviderUs,
+    xHotNewsProvider,
     marketBreadthProviderCn,
     marketBreadthProviderUs,
   ]
@@ -7138,6 +7302,7 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
         cn_a: newsDigestProviderCn.getStatus(),
         us: newsDigestProviderUs.getStatus(),
       },
+      x_hot_news: xHotNewsProvider.getStatus(),
       market_breadth: {
         cn_a: marketBreadthProviderCn.getStatus(),
         us: marketBreadthProviderUs.getStatus(),
@@ -7593,6 +7758,7 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       cn_a: newsDigestProviderCn.getStatus(),
       us: newsDigestProviderUs.getStatus(),
     },
+    x_hot_news_file: xHotNewsProvider.getStatus(),
     market_breadth_files: {
       cn_a: marketBreadthProviderCn.getStatus(),
       us: marketBreadthProviderUs.getStatus(),

@@ -6955,7 +6955,6 @@ app.post('/api/chat/tts', async (req, res) => {
     res.set('x-tts-tone', ttsProfile.tone)
     if (speakerTtsOverride?.speaker_id) {
       res.set('x-tts-speaker-id', speakerTtsOverride.speaker_id)
-      res.set('x-tts-speaker-name', String(speakerTtsOverride.speaker_name || ''))
     }
     res.send(synthesis.audioBuffer)
   } catch (error) {

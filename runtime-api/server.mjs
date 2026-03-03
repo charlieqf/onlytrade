@@ -3797,6 +3797,18 @@ function buildDataReadinessSnapshotForRoom(trader, { nowMs = Date.now() } = {}) 
   }
 }
 
+function headlineRowToBrief(row) {
+  if (!row || typeof row !== 'object') return ''
+  const title = String(row.title || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 88)
+  if (!title) return ''
+  const source = String(row.source || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 20)
+  const publishedAt = String(row.published_at || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 24)
+  const pieces = [title]
+  if (source) pieces.push(source)
+  if (publishedAt) pieces.push(publishedAt)
+  return pieces.join(' | ').slice(0, 128)
+}
+
 async function buildRoomChatContext(roomId, {
   overview = undefined,
   digest = undefined,
@@ -3910,14 +3922,21 @@ async function buildRoomChatContext(roomId, {
       || null
     )
     : null
+  const mergedHeadlineBriefs = mergedHeadlines
+    .map((row) => headlineRowToBrief(row))
+    .filter(Boolean)
+    .slice(0, 10)
 
   return {
+    room_id: safeRoomId,
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     time_context: shanghaiClockParts(sessionNowMs),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: mergedTitles,
+    news_digest_headline_briefs: mergedHeadlineBriefs,
     news_commentary: mergedCommentary,
     news_categories: mergedCategories,
+    news_as_of: String(xHotDigest?.as_of || effectiveDigest?.as_of || '').trim() || null,
     casual_topics: filterTimeAwareCasualTopics(
       Array.isArray(effectiveDigest?.casual_topics)
         ? effectiveDigest.casual_topics
@@ -4069,6 +4088,44 @@ function sanitizeTtsText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
     .trim()
   if (!text) return ''
   return text.slice(0, Math.max(24, Math.floor(Number(maxChars) || CHAT_TTS_MAX_CHARS))).trim()
+}
+
+const PREDICTION_SAFE_REPLACEMENTS = [
+  [/大额订单|巨额订单/g, '高热度讨论'],
+  [/押注|下注/g, '判断'],
+  [/赌博|赌局/g, '预测'],
+  [/买入/g, '支持'],
+  [/卖出/g, '反对'],
+  [/建仓|加仓/g, '提高关注'],
+  [/减仓/g, '降低关注'],
+  [/仓位/g, '观点权重'],
+  [/止损/g, '风险边界'],
+  [/喊单/g, '指令'],
+  [/盘口/g, '事件'],
+]
+
+function sanitizePredictionCommentaryText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
+  let text = sanitizeTtsText(value, { maxChars })
+  if (!text) return ''
+  for (const [pattern, replacement] of PREDICTION_SAFE_REPLACEMENTS) {
+    text = text.replace(pattern, replacement)
+  }
+  text = text
+    .replace(/\s{2,}/g, ' ')
+    .replace(/，{2,}/g, '，')
+    .replace(/。{2,}/g, '。')
+    .trim()
+  return sanitizeTtsText(text, { maxChars })
+}
+
+function ensurePredictionTopicMention(text, topicTitle, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
+  const cleaned = sanitizePredictionCommentaryText(text, { maxChars })
+  const topic = safePlainText(topicTitle || '', 96).replace(/[。！？!?]+$/g, '')
+  if (!topic) return cleaned
+  const probe = topic.slice(0, Math.min(10, topic.length))
+  if (probe && cleaned.includes(probe)) return cleaned
+  const prefixed = `今天关注事件：${topic}。${cleaned}`
+  return sanitizePredictionCommentaryText(prefixed, { maxChars })
 }
 
 function ttsContentType(format) {
@@ -4679,6 +4736,7 @@ async function generatePolymarketCommentaryText({
   market = null,
   trigger = null,
   recentLogs = [],
+  roomContext = null,
 }) {
   const safeRoomId = String(roomId || '').trim().toLowerCase()
   const speakerName = safePlainText(speaker?.display_name || '主持人', 24)
@@ -4697,12 +4755,37 @@ async function generatePolymarketCommentaryText({
       return sender && text ? `${sender}: ${text}` : text
     }).filter(Boolean)
     : []
+  const evidenceLines = Array.isArray(roomContext?.news_digest_headline_briefs)
+    ? roomContext.news_digest_headline_briefs
+      .map((item) => safePlainText(item, 120))
+      .filter(Boolean)
+      .slice(0, 5)
+    : []
+  const contextCommentary = Array.isArray(roomContext?.news_commentary)
+    ? roomContext.news_commentary
+      .map((item) => safePlainText(item, 120))
+      .filter(Boolean)
+      .slice(0, 4)
+    : []
+  const contextAsOf = safePlainText(roomContext?.news_as_of || '', 40)
+  const eventTitle = safePlainText(
+    trigger?.title
+      || trigger?.event_title
+      || marketTitle
+      || roomContext?.news_burst_signal?.title
+      || '',
+    96,
+  )
 
   if (!OPENAI_API_KEY) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
     const fallback = `${speakerName}：当前先看${side}方向，重点观察概率曲线和讨论热度是否延续。`
     return {
-      text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      text: ensurePredictionTopicMention(
+        fallback,
+        eventTitle,
+        { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS },
+      ),
       source: 'fallback_missing_key',
     }
   }
@@ -4714,7 +4797,10 @@ async function generatePolymarketCommentaryText({
     '表达重心是预测与点评，可偶尔一句轻松玩笑；避免下注、赌博、交易建议、喊单话术。',
     '只输出一个JSON对象，不要markdown，不要多余解释。',
     'JSON格式: {"text":"..."}',
-    'text要求: 1-2句中文，30-80字，必须和给定事件数据一致，不得编造；避免使用“下注/赌/仓位/止损/买入/卖出”等词。',
+    'text要求: 2-3句中文，45-130字，必须和给定事件数据一致，不得编造。',
+    '第一句请自然提到事件标题（可缩写核心词），让听众明确你在讲哪条新闻。',
+    '必须至少提及一条“已检索到的相关信息”中的要点（可概述，不需逐字复述）。',
+    '避免使用“下注/押注/大额订单/仓位/止损/买入/卖出/建仓/减仓”等词。',
   ].join('\n')
   const userPrompt = [
     `room_id: ${safeRoomId}`,
@@ -4726,6 +4812,9 @@ async function generatePolymarketCommentaryText({
     `yes_prob: ${Number.isFinite(currentProb) ? (currentProb * 100).toFixed(2) + '%' : 'n/a'}`,
     `prob_delta: ${Number.isFinite(deltaProb) ? (deltaProb * 100).toFixed(2) + '%' : 'n/a'}`,
     `volume: ${Number.isFinite(volume) ? Math.round(volume).toLocaleString('en-US') : 'n/a'}`,
+    `news_as_of: ${contextAsOf || 'n/a'}`,
+    `related_news: ${evidenceLines.length ? evidenceLines.join(' || ') : 'none'}`,
+    `related_commentary: ${contextCommentary.length ? contextCommentary.join(' || ') : 'none'}`,
     `recent_logs: ${logs.length ? logs.join(' | ') : 'none'}`,
   ].join('\n')
 
@@ -4757,7 +4846,11 @@ async function generatePolymarketCommentaryText({
     const text = safePlainText(parsed?.choices?.[0]?.message?.content || '', 800)
     const maybeJson = parseJsonObjectLoose(text)
     const textRaw = maybeJson?.text || text
-    const cleaned = sanitizeTtsText(textRaw, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS })
+    const cleaned = ensurePredictionTopicMention(
+      textRaw,
+      eventTitle,
+      { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS },
+    )
     if (!cleaned) throw new Error('llm_empty')
     return {
       text: cleaned,
@@ -4768,7 +4861,11 @@ async function generatePolymarketCommentaryText({
     const pct = Number.isFinite(currentProb) ? `${(currentProb * 100).toFixed(1)}%` : 'n/a'
     const fallback = `${speakerName}：当前${side}概率在${pct}附近，先看后续讨论热度是否继续抬升。`
     return {
-      text: sanitizeTtsText(fallback, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      text: ensurePredictionTopicMention(
+        fallback,
+        eventTitle,
+        { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS },
+      ),
       source: `fallback:${String(error?.message || 'llm_error').slice(0, 120)}`,
     }
   } finally {
@@ -5059,6 +5156,79 @@ function chooseProactiveTone({ action, burstSignal, riskProfile, previousTones, 
 function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previousActivity, salt = '' }) {
   const now = Date.now()
   const seedBase = `${now}|${String(salt || '')}`
+  const safeRoomId = String(roomContext?.room_id || roomAgent?.trader_id || roomAgent?.traderId || '').trim().toLowerCase()
+
+  if (safeRoomId === 't_015') {
+    const burstSignal = roomContext?.news_burst_signal || null
+    const newsTitles = Array.isArray(roomContext?.news_digest_titles)
+      ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 16)
+      : []
+    const newsHeadlineBriefs = Array.isArray(roomContext?.news_digest_headline_briefs)
+      ? roomContext.news_digest_headline_briefs.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10)
+      : []
+    const newsCommentary = Array.isArray(roomContext?.news_commentary)
+      ? roomContext.news_commentary.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+      : []
+    const focusTitle = burstSignal?.title
+      ? String(burstSignal.title).trim().slice(0, 34)
+      : pickFromPool(newsTitles, `${seedBase}|poly-topic`, '').slice(0, 34)
+    const tone = chooseProactiveTone({
+      action: 'HOLD',
+      burstSignal,
+      riskProfile: 'conservative',
+      previousTones: previousActivity?.recent_proactive_tones,
+      seed: `${seedBase}|poly-tone|${focusTitle}`,
+    })
+    const openerByTone = {
+      calm: [
+        '这条事件先保持冷静观察，不急着下结论。',
+        '先看公开进展，节奏放慢一点更稳。',
+      ],
+      focused: [
+        '我先盯时间窗口和官方确认信号，再更新判断。',
+        '先把可验证条件列清楚，再做下一步点评。',
+      ],
+      energetic: [
+        '这条事件热度在抬升，我会更快同步关键进展。',
+        '讨论正在升温，我会持续跟进公开信息。',
+      ],
+      cautious: [
+        '先看信息真伪和来源级别，避免被情绪带偏。',
+        '不确定性还在，先守住事实边界。',
+      ],
+    }
+    const openerPool = openerByTone[tone] || openerByTone.calm
+    const opener = pickFromPool(openerPool, `${seedBase}|poly-opener|${tone}`, openerPool[0])
+    const focusLine = focusTitle
+      ? `当前关注事件：${focusTitle.replace(/[。！？!?]+$/g, '')}。`
+      : '当前关注事件仍在演化，我会持续跟进公开信息。'
+    const commentLineRaw = pickFromPool(newsCommentary, `${seedBase}|poly-comment`, '')
+    const commentLine = commentLineRaw
+      ? `核心看点：${commentLineRaw.replace(/[。！？!?]+$/g, '')}。`
+      : pickFromPool([
+        '核心看点是时间窗口内是否出现权威确认。',
+        '核心看点是事件是否出现新增公开证据。',
+        '核心看点是讨论热度与事实进展是否同步。',
+      ], `${seedBase}|poly-default-comment`, '核心看点是时间窗口内是否出现权威确认。')
+    const evidenceRaw = pickFromPool(newsHeadlineBriefs, `${seedBase}|poly-evidence`, '')
+    const evidenceLine = evidenceRaw
+      ? `已检索到的相关信息：${evidenceRaw.replace(/[。！？!?]+$/g, '')}。`
+      : ''
+    const tail = pickFromPool([
+      '仅做预测与点评，不提供任何操作指令。',
+      '我们只讨论可验证进展和概率变化。',
+      '先看事实，再看概率，不做情绪化判断。',
+    ], `${seedBase}|poly-tail|${tone}`, '我们只讨论可验证进展和概率变化。')
+    const text = sanitizePredictionCommentaryText(`${opener}${focusLine}${evidenceLine}${commentLine}${tail}`, {
+      maxChars: CHAT_AGENT_MAX_CHARS,
+    })
+    return {
+      text,
+      tone,
+      opener_stem: proactiveOpenerStem(opener),
+    }
+  }
+
   const symbolBrief = roomContext?.symbol_brief || null
   const marketBrief = String(roomContext?.market_overview_brief || '').trim()
   const breadthSummary = String(roomContext?.market_breadth_summary || '').trim()
@@ -5314,13 +5484,18 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     let openerStem = ''
     let llmError = null
 
-    const llmEnabledForProactive = !!chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0
+    const isPredictionRoom = safeRoomId === 't_015'
+    const llmEnabledForProactive = !isPredictionRoom && !!chatLlmResponder && CHAT_PROACTIVE_LLM_MAX_CONCURRENCY > 0
     if (!llmEnabledForProactive) {
-      generationReason = chatLlmResponder ? 'llm_concurrency_disabled' : 'llm_unavailable'
-      updateProactiveGenerationStats(safeRoomId, (stats) => {
-        if (!chatLlmResponder) stats.llm_unavailable += 1
-        return stats
-      })
+      if (isPredictionRoom) {
+        generationReason = 'llm_disabled_prediction_room'
+      } else {
+        generationReason = chatLlmResponder ? 'llm_concurrency_disabled' : 'llm_unavailable'
+        updateProactiveGenerationStats(safeRoomId, (stats) => {
+          if (!chatLlmResponder) stats.llm_unavailable += 1
+          return stats
+        })
+      }
     } else if (proactiveLlmInFlight >= CHAT_PROACTIVE_LLM_MAX_CONCURRENCY) {
       generationReason = 'llm_skipped_concurrency'
       updateProactiveGenerationStats(safeRoomId, (stats) => {
@@ -5387,6 +5562,9 @@ async function maybeEmitProactivePublicMessageForRoom(roomId) {
     }
 
     text = String(text || '').trim()
+    if (isPredictionRoom) {
+      text = sanitizePredictionCommentaryText(text, { maxChars: CHAT_AGENT_MAX_CHARS })
+    }
     if (!text) return false
 
     if (!isTimeAwareChatTextAllowed(text, { tsMs: now })) {
@@ -8501,6 +8679,7 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
     const trigger = req.body?.trigger && typeof req.body.trigger === 'object' ? req.body.trigger : {}
     const market = req.body?.market && typeof req.body.market === 'object' ? req.body.market : {}
     const recentLogs = Array.isArray(req.body?.recent_logs) ? req.body.recent_logs : []
+    const roomContext = await buildRoomChatContext(roomId)
 
     if (!roomId) {
       res.status(400).json({ success: false, error: 'room_id_required' })
@@ -8558,6 +8737,7 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       market,
       trigger,
       recentLogs,
+      roomContext,
     })
 
     const commentary = {
@@ -8567,7 +8747,7 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       event_key: eventKey || null,
       market_id: String(market?.id || '').trim() || null,
       market_title: safePlainText(market?.title || '', 160) || null,
-      text: sanitizeTtsText(generated?.text, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      text: sanitizePredictionCommentaryText(generated?.text, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
       speaker_id: speaker.speaker_id,
       speaker_name: speaker.display_name,
       voice_id: speaker.voice_id,

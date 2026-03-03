@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import re
 from datetime import datetime
 from virtual_exchange_db import DB_FILE, get_open_markets
 
@@ -46,9 +47,18 @@ def select_candidate_markets(open_markets):
 
     # SQLite CURRENT_TIMESTAMP is UTC; compare against UTC to avoid timezone skew.
     now = datetime.utcnow()
+    current_year = now.year
     max_age_seconds = MAX_MARKET_AGE_HOURS * 3600.0
     candidates = []
     for market in open_markets:
+        title = str(market.get("title") or "").strip()
+        old_year = False
+        for token in re.findall(r"(20\d{2})年", title):
+            if int(token) < current_year:
+                old_year = True
+                break
+        if old_year:
+            continue
         created_dt = _parse_sqlite_created_at(market.get("created_at"))
         if created_dt is None:
             continue

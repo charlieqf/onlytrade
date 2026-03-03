@@ -226,6 +226,59 @@ def _title_is_duplicate(title, title_seen, recent_titles):
     return False, "ok", norm_title
 
 
+def _validate_market_payload(market_json):
+    if not isinstance(market_json, dict):
+        return False, "invalid_payload", None
+
+    title = str(market_json.get("title") or "").strip()
+    yes_outcome = str(market_json.get("yes_outcome") or "").strip()
+    no_outcome = str(market_json.get("no_outcome") or "").strip()
+    close_time_raw = str(market_json.get("close_time") or "T+24H").strip()
+
+    if not title or not yes_outcome or not no_outcome:
+        return False, "missing_required_fields", None
+    if len(title) < 8 or len(title) > 180:
+        return False, "title_length_out_of_range", None
+    if yes_outcome == no_outcome:
+        return False, "same_yes_no_outcome", None
+
+    prob_raw = market_json.get("initial_yes_probability")
+    if prob_raw is None:
+        return False, "missing_probability", None
+    try:
+        prob = float(prob_raw)
+    except Exception:
+        return False, "invalid_probability", None
+    if prob < 0.05 or prob > 0.95:
+        return False, "probability_out_of_range", None
+
+    merged_text = f"{title} {yes_outcome} {no_outcome}"
+    current_year = datetime.utcnow().year
+    for y in re.findall(r"(20\d{2})年", merged_text):
+        year = int(y)
+        if year < current_year:
+            return False, f"past_year_{year}", None
+
+    if re.search(r"(去年|前年|上年)", merged_text):
+        return False, "past_relative_time", None
+
+    if "?" not in title and "？" not in title:
+        title = f"{title}？"
+
+    normalized_close_time = close_time_raw.upper().replace(" ", "")
+    if not re.match(r"^T\+(12|24|48)H$", normalized_close_time):
+        normalized_close_time = "T+24H"
+
+    cleaned = {
+        "title": title,
+        "yes_outcome": yes_outcome,
+        "no_outcome": no_outcome,
+        "initial_yes_probability": round(prob, 4),
+        "close_time": normalized_close_time,
+    }
+    return True, "ok", cleaned
+
+
 # ----------------- 数据抓取模块 (Data Fetching) -----------------
 
 
@@ -315,6 +368,7 @@ def generate_market_via_llm(topic_data):
 1. 盘口事件必须是短期内（例如 12 小时、24 小时或 48 小时）能看到结果的。
 2. 初始胜率 (initial_yes_probability) 必须在你根据常理和经验判断后给出一个 0.10 到 0.90 之间的合理浮点数。
 3. 返回的结果必须是纯粹的 JSON 格式，不要包含任何 Markdown 语法（如 ```json 等），不要任何前言后语。
+4. 严禁使用早于当前年份的具体历史时间点（例如“在2024年xx月xx日当天”）；如果热点可能是旧闻，请改写为“未来24/48小时内是否有官方确认或新增进展”。
 
 返回 JSON 结构体如下：
 {{
@@ -413,6 +467,24 @@ def process_markets():
 
         market_data = generate_market_via_llm(topic)
         if market_data:
+            is_valid, valid_reason, cleaned_market = _validate_market_payload(
+                market_data
+            )
+            if not is_valid:
+                logging.info(
+                    f"Skip invalid market payload ({valid_reason}) for topic: {topic_title}"
+                )
+                topic_seen[topic_key] = now_ms
+                continue
+
+            if not cleaned_market:
+                logging.info(
+                    f"Skip invalid market payload (empty_cleaned_payload) for topic: {topic_title}"
+                )
+                topic_seen[topic_key] = now_ms
+                continue
+
+            market_data = cleaned_market
             title = str(market_data.get("title") or "").strip()
             is_dup, reason, norm_title = _title_is_duplicate(
                 title,

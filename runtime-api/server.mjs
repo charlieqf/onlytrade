@@ -5166,12 +5166,20 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     const newsHeadlineBriefs = Array.isArray(roomContext?.news_digest_headline_briefs)
       ? roomContext.news_digest_headline_briefs.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10)
       : []
+    const briefTitles = newsHeadlineBriefs
+      .map((item) => String(item || '').split('|')[0]?.trim() || '')
+      .filter(Boolean)
+      .slice(0, 10)
     const newsCommentary = Array.isArray(roomContext?.news_commentary)
       ? roomContext.news_commentary.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
       : []
     const focusTitle = burstSignal?.title
       ? String(burstSignal.title).trim().slice(0, 34)
-      : pickFromPool(newsTitles, `${seedBase}|poly-topic`, '').slice(0, 34)
+      : pickFromPool(
+        [...newsTitles, ...briefTitles],
+        `${seedBase}|poly-topic`,
+        '',
+      ).slice(0, 34)
     const tone = chooseProactiveTone({
       action: 'HOLD',
       burstSignal,

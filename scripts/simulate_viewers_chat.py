@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import argparse
 from collections import deque
 import json
 import os
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 import urllib.error
@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 
 def now_ms() -> int:
@@ -125,6 +126,69 @@ TOPIC_GROUPS = {
     "offtopic": OFFTOPIC_TOPICS,
 }
 
+POLYMARKET_PREDICT_TOPICS = [
+    "你觉得这条事件接下来24小时会继续发酵吗？",
+    "我倾向正方，但还想听听反方最强理由。",
+    "这条消息如果被权威确认，概率会不会再抬一档？",
+    "现在看更像短时噪声还是趋势变化？",
+    "这条线索里你最看重哪一个事实点？",
+    "这事件像烟雾弹还是前奏？大家来押观点，不押情绪。",
+]
+
+POLYMARKET_COMMENT_TOPICS = [
+    "这条新闻信息量挺大，先把时间线捋一下。",
+    "我更关心消息源可靠性，谁有一手来源？",
+    "先不急下结论，等下一条权威更新再看。",
+    "这个事件背景挺复杂，求主播拆一下关键节点。",
+    "同样是高热度，这条和上一条的性质不太一样。",
+]
+
+POLYMARKET_JOKE_TOPICS = [
+    "我先端好瓜子看剧情反转，谁先来写结局。",
+    "今天不是刷K线，是追事件更新速度。",
+    "我这边弹幕比电视剧还精彩，继续继续。",
+    "我家猫刚点头，表示反方也有戏。",
+    "先别吵，给正方反方都留一口气。",
+]
+
+POLYMARKET_TOPIC_GROUPS = {
+    "predict": POLYMARKET_PREDICT_TOPICS,
+    "comment": POLYMARKET_COMMENT_TOPICS,
+    "joke": POLYMARKET_JOKE_TOPICS,
+}
+
+POLYMARKET_TOPIC_WEIGHTS = {
+    "predict": 55,
+    "comment": 30,
+    "joke": 15,
+}
+
+POLYMARKET_BANNED_WORDS = [
+    "出手",
+    "下单",
+    "交易",
+    "买入",
+    "卖出",
+    "建仓",
+    "加仓",
+    "减仓",
+    "止损",
+    "仓位",
+]
+
+POLYMARKET_WORD_REPLACEMENTS = {
+    "出手": "发言",
+    "下单": "下判断",
+    "交易": "讨论",
+    "买入": "支持",
+    "卖出": "反对",
+    "建仓": "表态",
+    "加仓": "提高关注",
+    "减仓": "降低关注",
+    "止损": "风险边界",
+    "仓位": "观点权重",
+}
+
 TOPIC_WEIGHTS = {
     "stock": 40,
     "trade": 23,
@@ -146,7 +210,7 @@ NICKNAME_PREFIXES = [
     "小北",
     "木子",
     "云朵",
-    "老K",
+    "阿宁",
     "星河",
     "小橙",
     "山海",
@@ -169,13 +233,24 @@ NICKNAME_SUFFIXES = [
     "不追高",
 ]
 
+POLYMARKET_NICKNAME_SUFFIXES = [
+    "路人",
+    "学徒",
+    "打工人",
+    "夜猫",
+    "慢慢来",
+    "稳一点",
+    "围观",
+    "吃瓜",
+]
+
 CONTENT_MODES = ("template", "mixed", "llm")
 
 
 def merge_symbol_pool(
-    base_symbols: list[str], extra_symbols: list[str], limit: int = 16
-) -> list[str]:
-    out: list[str] = []
+    base_symbols: List[str], extra_symbols: List[str], limit: int = 16
+) -> List[str]:
+    out: List[str] = []
     for raw in [*(base_symbols or []), *(extra_symbols or [])]:
         sym = str(raw or "").strip().upper()
         if not sym:
@@ -187,7 +262,7 @@ def merge_symbol_pool(
     return out
 
 
-def to_float(value) -> float | None:
+def to_float(value) -> Optional[float]:
     try:
         if value is None:
             return None
@@ -196,13 +271,13 @@ def to_float(value) -> float | None:
         return None
 
 
-def as_dict(value) -> dict:
+def as_dict(value) -> Dict:
     return value if isinstance(value, dict) else {}
 
 
 def build_room_prompt_context(
     api: ApiClient, room_id: str
-) -> tuple[dict | None, str | None]:
+) -> Tuple[Optional[Dict], Optional[str]]:
     safe_room = urllib.parse.quote(str(room_id or "").strip())
     code, payload = api.get(f"/api/rooms/{safe_room}/stream-packet?decision_limit=3")
     if code != 200:
@@ -221,12 +296,12 @@ def build_room_prompt_context(
         if isinstance(first, dict):
             latest_head = first
 
-    symbols: list[str] = []
+    symbols: List[str] = []
     decision_symbol = str(latest_head.get("symbol") or "").strip().upper()
     if decision_symbol:
         symbols.append(decision_symbol)
 
-    prices: list[str] = []
+    prices: List[str] = []
     positions_raw = data.get("positions")
     positions = positions_raw if isinstance(positions_raw, list) else []
     for row in positions[:6]:
@@ -305,11 +380,11 @@ class LlmClient:
     def generate(
         self,
         category: str,
-        symbols: list[str],
-        time_context: dict | None = None,
-        room_prompt_context: dict | None = None,
-        recent_texts: list[str] | None = None,
-    ) -> dict:
+        symbols: List[str],
+        time_context: Optional[Dict] = None,
+        room_prompt_context: Optional[Dict] = None,
+        recent_texts: Optional[List[str]] = None,
+    ) -> Dict:
         symbol_hint = ", ".join(symbols[:8]) if symbols else "600519.SH"
         tc = time_context or shanghai_time_context()
         now_iso = str(tc.get("now_iso") or "")
@@ -414,7 +489,7 @@ def normalize_generated_text(text: str) -> str:
     return value[:120].strip()
 
 
-def shanghai_time_context(ts_ms: int | None = None) -> dict:
+def shanghai_time_context(ts_ms: Optional[int] = None) -> Dict:
     tz = timezone(timedelta(hours=8))
     now = (
         datetime.now(tz)
@@ -477,12 +552,86 @@ def is_time_appropriate_text(text: str, day_part: str) -> bool:
     return True
 
 
-def filter_templates_for_time(templates: list[str], day_part: str) -> list[str]:
+def filter_templates_for_time(templates: List[str], day_part: str) -> List[str]:
     out = [item for item in templates if is_time_appropriate_text(item, day_part)]
     return out if out else templates
 
 
-def pick_topic_text(symbols: list[str], day_part: str) -> tuple[str, str]:
+def is_polymarket_room(room_id: str) -> bool:
+    rid = str(room_id or "").strip().lower()
+    if rid == "t_015":
+        return True
+    extra = str(os.environ.get("POLYMARKET_VIEWER_ROOM_IDS") or "").strip()
+    if not extra:
+        return False
+    rows = [x.strip().lower() for x in extra.split(",") if x.strip()]
+    return rid in rows
+
+
+def sanitize_polymarket_viewer_text(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    for src, dst in POLYMARKET_WORD_REPLACEMENTS.items():
+        value = value.replace(src, dst)
+    for token in POLYMARKET_BANNED_WORDS:
+        value = value.replace(token, "")
+    value = " ".join(value.split())
+    return value[:120].strip()
+
+
+def looks_stock_like_text(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    if re.search(r"\b\d{6}\.(?:SZ|SH)\b", value):
+        return True
+    stock_tokens = [
+        "量能",
+        "资金",
+        "利好",
+        "利空",
+        "涨停",
+        "跌停",
+        "涨幅",
+        "跌幅",
+        "开盘",
+        "收盘",
+        "中间价",
+        "主力合约",
+        "净回笼",
+    ]
+    return any(token in value for token in stock_tokens)
+
+
+def pick_topic_text(
+    symbols: List[str],
+    day_part: str,
+    polymarket_mode: bool = False,
+    room_prompt_context: Optional[Dict] = None,
+) -> Tuple[str, str]:
+    if polymarket_mode:
+        categories = list(POLYMARKET_TOPIC_WEIGHTS.keys())
+        weights = [POLYMARKET_TOPIC_WEIGHTS[key] for key in categories]
+        category = random.choices(categories, weights=weights, k=1)[0]
+        pool = filter_templates_for_time(
+            list(POLYMARKET_TOPIC_GROUPS.get(category) or []),
+            day_part,
+        )
+        template = random.choice(pool)
+        rpc = room_prompt_context if isinstance(room_prompt_context, dict) else {}
+        raw_news_titles = rpc.get("news_titles")
+        news_titles = raw_news_titles if isinstance(raw_news_titles, list) else []
+        event_title = ""
+        for item in news_titles:
+            text = str(item or "").strip()
+            if text:
+                event_title = re.sub(r"^\s*[\[【][^\]】]{1,12}[\]】]\s*", "", text)
+                break
+        if event_title and random.random() < 0.45:
+            template = f"就这条“{event_title[:24]}”，你更站正方还是反方？"
+        return category, sanitize_polymarket_viewer_text(template)
+
     categories = list(TOPIC_WEIGHTS.keys())
     weights = [TOPIC_WEIGHTS[key] for key in categories]
     category = random.choices(categories, weights=weights, k=1)[0]
@@ -492,11 +641,14 @@ def pick_topic_text(symbols: list[str], day_part: str) -> tuple[str, str]:
     return category, template.format(symbol=symbol)
 
 
-def build_random_nickname(index: int, used: set[str]) -> str:
+def build_random_nickname(
+    index: int, used: Set[str], polymarket_mode: bool = False
+) -> str:
+    suffix_pool = POLYMARKET_NICKNAME_SUFFIXES if polymarket_mode else NICKNAME_SUFFIXES
     for _ in range(24):
         candidate = (
             f"{random.choice(NICKNAME_PREFIXES)}"
-            f"{random.choice(NICKNAME_SUFFIXES)}"
+            f"{random.choice(suffix_pool)}"
             f"{random.randint(0, 99):02d}"
         )
         if candidate not in used:
@@ -509,16 +661,22 @@ def build_random_nickname(index: int, used: set[str]) -> str:
 
 
 def pick_message_text(
-    symbols: list[str],
+    symbols: List[str],
     content_mode: str,
     llm_ratio: float,
-    llm_client: LlmClient | None,
-    time_context: dict,
-    room_prompt_context: dict | None = None,
-    recent_texts: list[str] | None = None,
-) -> tuple[str, str, str, str | None]:
+    llm_client: Optional[LlmClient],
+    time_context: Dict,
+    polymarket_mode: bool = False,
+    room_prompt_context: Optional[Dict] = None,
+    recent_texts: Optional[List[str]] = None,
+) -> Tuple[str, str, str, Optional[str]]:
     day_part = str(time_context.get("day_part") or "")
-    category, template_text = pick_topic_text(symbols, day_part)
+    category, template_text = pick_topic_text(
+        symbols,
+        day_part,
+        polymarket_mode=polymarket_mode,
+        room_prompt_context=room_prompt_context,
+    )
     ratio = max(0.0, min(1.0, float(llm_ratio)))
     use_llm = content_mode == "llm" or (
         content_mode == "mixed" and random.random() < ratio
@@ -543,6 +701,15 @@ def pick_message_text(
                 and is_time_appropriate_text(text, day_part)
                 and text not in recent_set
             ):
+                if polymarket_mode:
+                    text = sanitize_polymarket_viewer_text(text)
+                if not text:
+                    return (
+                        category,
+                        template_text,
+                        "template_fallback",
+                        "polymarket_sanitized_empty",
+                    )
                 return category, text, "llm", None
             return (
                 category,
@@ -557,6 +724,8 @@ def pick_message_text(
             str(result.get("error") or "llm_failed"),
         )
 
+    if polymarket_mode:
+        template_text = sanitize_polymarket_viewer_text(template_text)
     return category, template_text, "template", None
 
 
@@ -604,6 +773,12 @@ def parse_args():
     )
     parser.add_argument("--api-base", default="http://127.0.0.1:18080")
     parser.add_argument("--room-id", default="t_001")
+    parser.add_argument(
+        "--room-mode",
+        choices=("auto", "stock", "polymarket"),
+        default="auto",
+        help="Force viewer content mode by room type",
+    )
     parser.add_argument("--viewers", type=int, default=8)
     parser.add_argument("--duration-min", type=int, default=30)
     parser.add_argument("--min-interval-sec", type=float, default=3.0)
@@ -655,8 +830,15 @@ def main() -> int:
     ]
     api = ApiClient(args.api_base)
     log_path = Path(args.log_path)
+    room_mode = str(getattr(args, "room_mode", "auto") or "auto").strip().lower()
+    if room_mode == "polymarket":
+        polymarket_mode = True
+    elif room_mode == "stock":
+        polymarket_mode = False
+    else:
+        polymarket_mode = is_polymarket_room(str(args.room_id))
 
-    llm_client: LlmClient | None = None
+    llm_client: Optional[LlmClient] = None
     api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
     if args.content_mode in ("mixed", "llm"):
         if not api_key:
@@ -682,10 +864,12 @@ def main() -> int:
                 temperature=float(args.llm_temperature),
             )
 
-    viewers: list[Viewer] = []
-    used_nicknames: set[str] = set()
+    viewers: List[Viewer] = []
+    used_nicknames: Set[str] = set()
     for i in range(max(1, int(args.viewers))):
-        nickname = build_random_nickname(i, used_nicknames)
+        nickname = build_random_nickname(
+            i, used_nicknames, polymarket_mode=polymarket_mode
+        )
         code, payload = api.post(
             "/api/chat/session/bootstrap", {"user_nickname": nickname}
         )
@@ -733,8 +917,8 @@ def main() -> int:
     llm_fail = 0
     recent_texts = deque(maxlen=max(4, int(args.recent_window_size)))
 
-    room_prompt_context: dict | None = None
-    room_ctx_error: str | None = None
+    room_prompt_context: Optional[Dict] = None
+    room_ctx_error: Optional[str] = None
     room_ctx_fetch_ok = 0
     room_ctx_fetch_fail = 0
     room_ctx_next_refresh_ms = 0
@@ -794,6 +978,7 @@ def main() -> int:
             llm_ratio=float(args.llm_ratio),
             llm_client=llm_client,
             time_context=time_ctx,
+            polymarket_mode=polymarket_mode,
             room_prompt_context=room_prompt_context,
             recent_texts=list(recent_texts),
         )

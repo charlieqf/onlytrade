@@ -4,6 +4,13 @@ function clampThreshold(value, fallback = 0.05) {
   return Math.max(0, Math.min(parsed, 1))
 }
 
+function resolveRoomAgentDisplayName(roomId, fallbackName) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (safeRoomId === 't_015') return '小真'
+  const name = String(fallbackName || '').trim()
+  return name || 'Agent'
+}
+
 function stripMarkdown(value) {
   const text = String(value || '')
   if (!text) return ''
@@ -146,7 +153,8 @@ export function buildAgentReply({
 } = {}) {
   const safeNowMs = Number(nowMs)
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
-  const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const fallbackName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const agentName = resolveRoomAgentDisplayName(inboundMessage?.room_id, fallbackName)
 
   const inboundSenderName = String(inboundMessage?.sender_name || '').trim()
   const fallbackText = `${agentName}：收到。`
@@ -181,7 +189,8 @@ export function buildProactiveAgentMessage({
 } = {}) {
   const safeNowMs = Number(nowMs)
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
-  const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const fallbackName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const agentName = resolveRoomAgentDisplayName(roomId, fallbackName)
 
   return {
     id: `msg_agent_${messageTs}_${Math.random().toString(36).slice(2, 8)}`,
@@ -207,7 +216,8 @@ export function buildNarrationAgentMessage({
 } = {}) {
   const safeNowMs = Number(nowMs)
   const messageTs = Number.isFinite(safeNowMs) ? safeNowMs : Date.now()
-  const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const fallbackName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
+  const agentName = resolveRoomAgentDisplayName(roomId, fallbackName)
 
   return {
     id: `msg_agent_${messageTs}_${Math.random().toString(36).slice(2, 8)}`,

@@ -50,9 +50,36 @@ TITLE_COOLDOWN_HOURS = max(
 TITLE_SIMILARITY_THRESHOLD = min(
     0.99, max(0.70, float(os.environ.get("POLYMARKET_TITLE_SIMILARITY") or 0.88))
 )
+TOPIC_SIMILARITY_THRESHOLD = min(
+    0.99, max(0.75, float(os.environ.get("POLYMARKET_TOPIC_SIMILARITY") or 0.90))
+)
 MAX_MARKETS_PER_CYCLE = max(
     1, int(os.environ.get("POLYMARKET_MAX_MARKETS_PER_CYCLE") or 2)
 )
+HOT_NEWS_TOPIC_LIMIT = max(
+    5, int(os.environ.get("POLYMARKET_HOT_NEWS_TOPIC_LIMIT") or 20)
+)
+NEWS_DIGEST_PATH = str(
+    os.environ.get("POLYMARKET_NEWS_DIGEST_PATH")
+    or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "data",
+        "live",
+        "onlytrade",
+        "news_digest.cn-a.json",
+    )
+).strip()
+X_HOT_PATH = str(
+    os.environ.get("POLYMARKET_X_HOT_PATH")
+    or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "data",
+        "live",
+        "onlytrade",
+        "x_hot_events.json",
+    )
+).strip()
+BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
 
 # System Configuration
 LOG_FILE = os.path.join(
@@ -127,6 +154,89 @@ def _normalize_text(value):
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"[\[\]\(\)【】{}<>《》'\"“”‘’·,.;:!?！？。，、\-_/|]", "", text)
     return text
+
+
+def _contains_banned_topic(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return any(token in text for token in BANNED_TOPIC_SUBSTRINGS)
+
+
+def _is_stock_like_topic(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if re.search(r"\b\d{6}\.(?:SZ|SH)\b", text):
+        return True
+    if re.search(r"\b(?:HSI|HSCEI|KOSPI|KOSDAQ|DJIA|SPX|NDX)\b", text, re.I):
+        return True
+    if re.search(
+        r"指数|期货|主力合约|中间价|净回笼|开盘|收盘|涨幅|跌幅|涨停|跌停|报\d",
+        text,
+    ):
+        return True
+    return False
+
+
+def _load_headlines_from_path(path, source_name, limit):
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        logging.warning(f"Failed reading headlines from {path}: {e}")
+        return []
+
+    rows = payload.get("headlines") if isinstance(payload, dict) else []
+    out = []
+    for item in rows if isinstance(rows, list) else []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        category = str(item.get("category") or "").strip().lower()
+        if category == "markets_cn":
+            continue
+        if _contains_banned_topic(title):
+            continue
+        if _is_stock_like_topic(title):
+            continue
+        out.append(
+            {
+                "source": source_name,
+                "title": title,
+                "hot_score": str(item.get("score") or ""),
+                "label": str(item.get("category") or ""),
+            }
+        )
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def fetch_latest_hot_news_topics(limit=20):
+    out = []
+    out.extend(_load_headlines_from_path(NEWS_DIGEST_PATH, "NewsDigest", limit))
+    if len(out) < limit:
+        remain = max(1, int(limit) - len(out))
+        out.extend(_load_headlines_from_path(X_HOT_PATH, "XHot", remain))
+
+    dedup = []
+    seen = set()
+    for row in out:
+        key = _normalize_text(row.get("title") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        dedup.append(row)
+        if len(dedup) >= max(1, int(limit)):
+            break
+    if dedup:
+        logging.info(f"Loaded {len(dedup)} hot news topics from digest/xhot sources.")
+    return dedup
 
 
 def _load_dedup_state(path):
@@ -226,6 +336,24 @@ def _title_is_duplicate(title, title_seen, recent_titles):
     return False, "ok", norm_title
 
 
+def _topic_is_duplicate(topic_key, topic_seen, now_ms):
+    if not topic_key:
+        return True, "empty_topic"
+    cooldown_ms = int(TOPIC_COOLDOWN_HOURS * 3600 * 1000)
+    for seen_key, seen_ts in (topic_seen or {}).items():
+        ts = int(seen_ts or 0)
+        if ts <= 0:
+            continue
+        if (now_ms - ts) >= cooldown_ms:
+            continue
+        if seen_key == topic_key:
+            return True, "topic_exact"
+        score = difflib.SequenceMatcher(None, topic_key, str(seen_key or "")).ratio()
+        if score >= TOPIC_SIMILARITY_THRESHOLD:
+            return True, f"topic_fuzzy_{score:.2f}"
+    return False, "ok"
+
+
 def _validate_market_payload(market_json):
     if not isinstance(market_json, dict):
         return False, "invalid_payload", None
@@ -237,6 +365,12 @@ def _validate_market_payload(market_json):
 
     if not title or not yes_outcome or not no_outcome:
         return False, "missing_required_fields", None
+    if (
+        _contains_banned_topic(title)
+        or _contains_banned_topic(yes_outcome)
+        or _contains_banned_topic(no_outcome)
+    ):
+        return False, "banned_topic_detected", None
     if len(title) < 8 or len(title) > 180:
         return False, "title_length_out_of_range", None
     if yes_outcome == no_outcome:
@@ -265,6 +399,34 @@ def _validate_market_payload(market_json):
     if "?" not in title and "？" not in title:
         title = f"{title}？"
 
+    raw_summary = (
+        market_json.get("news_summary")
+        or market_json.get("event_summary")
+        or market_json.get("summary")
+        or market_json.get("news_abstract")
+        or ""
+    )
+    news_summary = str(raw_summary or "").strip()
+    if not news_summary:
+        return False, "missing_news_summary", None
+    if _contains_banned_topic(news_summary):
+        return False, "banned_topic_detected", None
+    news_summary = re.sub(r"\s+", " ", news_summary)
+    if len(news_summary) < 20 or len(news_summary) > 320:
+        return False, "news_summary_length_out_of_range", None
+
+    raw_key_points = market_json.get("news_key_points")
+    key_points = []
+    if isinstance(raw_key_points, list):
+        key_points = [str(item or "").strip() for item in raw_key_points]
+    elif isinstance(raw_key_points, str) and raw_key_points.strip():
+        key_points = [
+            seg.strip()
+            for seg in re.split(r"[；;。.!！？\n]", raw_key_points)
+            if str(seg or "").strip()
+        ]
+    key_points = [item for item in key_points if item][:3]
+
     normalized_close_time = close_time_raw.upper().replace(" ", "")
     if not re.match(r"^T\+(12|24|48)H$", normalized_close_time):
         normalized_close_time = "T+24H"
@@ -275,6 +437,8 @@ def _validate_market_payload(market_json):
         "no_outcome": no_outcome,
         "initial_yes_probability": round(prob, 4),
         "close_time": normalized_close_time,
+        "news_summary": news_summary,
+        "news_key_points": key_points,
     }
     return True, "ok", cleaned
 
@@ -372,11 +536,13 @@ def generate_market_via_llm(topic_data):
 
 返回 JSON 结构体如下：
 {{
-  "title": "[热点分类前缀] 具体的盘口描述问题？",
+  "title": "具体的盘口描述问题？",
   "yes_outcome": "是，发生XXX情况",
   "no_outcome": "否，发生XXX情况（与Yes对立）",
   "initial_yes_probability": 0.50,
-  "close_time": "T+24H"
+  "close_time": "T+24H",
+  "news_summary": "2-3句、40-140字的事件摘要，交代背景+当前最新进展+未来12/24/48小时关键观察点",
+  "news_key_points": ["关键事实1", "关键事实2", "关键事实3"]
 }}
 """
     result_text = ""
@@ -436,7 +602,8 @@ def process_markets():
     time.sleep(2)  # Be polite to APIs
     zhihu_topics = fetch_zhihu_hot()
 
-    all_topics = weibo_topics + zhihu_topics
+    hot_news_topics = fetch_latest_hot_news_topics(HOT_NEWS_TOPIC_LIMIT)
+    all_topics = hot_news_topics + weibo_topics + zhihu_topics
 
     if not all_topics:
         logging.warning("No topics fetched from any source. Cycle ending.")
@@ -452,16 +619,19 @@ def process_markets():
             break
 
         topic_title = str(topic.get("title") or "").strip()
+        if _contains_banned_topic(topic_title):
+            logging.info(f"Skip banned source topic: {topic_title}")
+            continue
         topic_key = _normalize_text(topic_title)
         if not topic_key:
             continue
 
-        last_seen_ms = int(topic_seen.get(topic_key) or 0)
-        cooldown_ms = int(TOPIC_COOLDOWN_HOURS * 3600 * 1000)
-        if last_seen_ms > 0 and (now_ms - last_seen_ms) < cooldown_ms:
-            age_sec = int((now_ms - last_seen_ms) / 1000)
+        is_topic_dup, topic_dup_reason = _topic_is_duplicate(
+            topic_key, topic_seen, now_ms
+        )
+        if is_topic_dup:
             logging.info(
-                f"Skip duplicate source topic within cooldown ({age_sec}s): {topic_title}"
+                f"Skip duplicate source topic within cooldown ({topic_dup_reason}): {topic_title}"
             )
             continue
 
@@ -485,6 +655,11 @@ def process_markets():
                 continue
 
             market_data = cleaned_market
+            market_data["source_topic"] = topic_title
+            market_data["source_source"] = str(topic.get("source") or "").strip()
+            market_data["source_hot_score"] = str(
+                topic.get("label") or topic.get("hot_score") or ""
+            ).strip()
             title = str(market_data.get("title") or "").strip()
             is_dup, reason, norm_title = _title_is_duplicate(
                 title,

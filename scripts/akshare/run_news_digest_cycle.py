@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 import argparse
+import difflib
 import json
 from datetime import datetime
 from pathlib import Path
 import sys
+from typing import Dict, List, Set, Tuple
 
 try:
     from zoneinfo import ZoneInfo
@@ -38,6 +38,8 @@ CASUAL_PROMPT_POOL = [
     "先把计划写清楚，再执行会更稳。",
 ]
 
+BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+
 
 def _safe_text(value: object, max_len: int = 240) -> str:
     text = str(value or "").strip()
@@ -46,7 +48,94 @@ def _safe_text(value: object, max_len: int = 240) -> str:
     return text[:max_len]
 
 
-def _collect_titles(symbol: str, limit: int) -> list[dict]:
+def _first_row_text(row: object, keys: List[str], max_len: int) -> str:
+    try:
+        getter = row.get  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+    for key in keys:
+        text = _safe_text(getter(key), max_len)
+        if text:
+            return text
+    return ""
+
+
+def _headline_background_brief(item: dict) -> str:
+    title = _safe_text(item.get("title"), 40)
+    summary = _safe_text(
+        item.get("summary") or item.get("description") or item.get("content"),
+        72,
+    )
+    if title and summary:
+        return f"{title}：{summary}"
+    if summary:
+        return summary
+    return title
+
+
+def _contains_banned_topic(text: object) -> bool:
+    value = _safe_text(text, 300)
+    if not value:
+        return False
+    return any(token in value for token in BANNED_TOPIC_SUBSTRINGS)
+
+
+def _topic_fingerprint(text: object) -> str:
+    value = _safe_text(text, 260).lower()
+    if not value:
+        return ""
+    value = value.replace("http://", " ").replace("https://", " ")
+    value = "".join(value.split())
+    for token in ["[ai]", "[地缘]", "[宏观]", "[科技]", "[市场]", "[快讯]"]:
+        value = value.replace(token, "")
+    for ch in [
+        "，",
+        ",",
+        "。",
+        ".",
+        "！",
+        "!",
+        "？",
+        "?",
+        "：",
+        ":",
+        "；",
+        ";",
+        "[",
+        "]",
+        "(",
+        ")",
+        "-",
+        "_",
+        "/",
+        "|",
+        "\\",
+    ]:
+        value = value.replace(ch, "")
+    return value[:120]
+
+
+def _is_topic_duplicate(
+    title: object,
+    seen_fingerprints: Set[str],
+    recent_fingerprints: List[str],
+    similarity_threshold: float = 0.90,
+) -> Tuple[bool, str]:
+    fp = _topic_fingerprint(title)
+    if not fp:
+        return True, ""
+    if fp in seen_fingerprints:
+        return True, fp
+    for prev in recent_fingerprints[-80:]:
+        if not prev:
+            continue
+        score = difflib.SequenceMatcher(None, fp, prev).ratio()
+        if score >= similarity_threshold:
+            return True, fp
+    return False, fp
+
+
+def _collect_titles(symbol: str, limit: int) -> List[Dict]:
     if ak is None:
         return []
 
@@ -63,14 +152,27 @@ def _collect_titles(symbol: str, limit: int) -> list[dict]:
     if df is None or df.empty:
         return []
 
-    items: list[dict] = []
+    items: List[Dict] = []
     for _, row in df.head(max(1, int(limit))).iterrows():
         title = _safe_text(row.get(col_title), 200)
-        if not title:
+        if not title or _contains_banned_topic(title):
             continue
+        summary = _first_row_text(
+            row,
+            [
+                "新闻内容",
+                "内容",
+                "摘要",
+                "新闻摘要",
+                "资讯内容",
+                "新闻简介",
+            ],
+            220,
+        )
         items.append(
             {
                 "title": title,
+                "summary": summary or None,
                 "published_at": _safe_text(row.get(col_time), 40) or None,
                 "source": _safe_text(row.get(col_source), 60) or None,
                 "url": _safe_text(row.get(col_url), 240) or None,
@@ -80,7 +182,7 @@ def _collect_titles(symbol: str, limit: int) -> list[dict]:
     return items
 
 
-def _collect_global_flash_titles(limit: int) -> list[dict]:
+def _collect_global_flash_titles(limit: int) -> List[Dict]:
     if ak is None:
         return []
 
@@ -97,13 +199,15 @@ def _collect_global_flash_titles(limit: int) -> list[dict]:
     if df is None or df.empty:
         return []
 
-    items: list[dict] = []
+    items: List[Dict] = []
     max_rows = max(1, min(int(limit or 12) * 3, 120))
     for _, row in df.head(max_rows).iterrows():
         title = _safe_text(row.get(col_title), 120)
         content = _safe_text(row.get(col_content), 220)
         merged_title = title or content
         if not merged_title:
+            continue
+        if _contains_banned_topic(merged_title) or _contains_banned_topic(content):
             continue
 
         pub_date = _safe_text(row.get(col_date), 20)
@@ -113,6 +217,7 @@ def _collect_global_flash_titles(limit: int) -> list[dict]:
         items.append(
             {
                 "title": merged_title,
+                "summary": content or None,
                 "published_at": published_at,
                 "source": "\u8d22\u8054\u793e\u5feb\u8baf",
                 "url": None,
@@ -141,8 +246,9 @@ def main() -> int:
     per_symbol = max(1, min(int(args.limit_per_symbol or 6), 20))
     limit_total = max(1, min(int(args.limit_total or 20), 50))
 
-    headlines: list[dict] = []
-    seen = set()
+    headlines: List[Dict] = []
+    seen_fingerprints: Set[str] = set()
+    recent_fingerprints: List[str] = []
 
     hot_bundle = collect_hot_news_bundle(
         limit_per_category=max(1, int(args.hot_limit_per_category or 4)),
@@ -167,9 +273,13 @@ def main() -> int:
 
     for item in hot_bundle.get("headlines") or []:
         title = str(item.get("title") or "").strip()
-        if not title or title in seen:
+        if _contains_banned_topic(title):
             continue
-        seen.add(title)
+        is_dup, fp = _is_topic_duplicate(title, seen_fingerprints, recent_fingerprints)
+        if not title or is_dup:
+            continue
+        seen_fingerprints.add(fp)
+        recent_fingerprints.append(fp)
         headlines.append(item)
         if len(headlines) >= limit_total:
             break
@@ -179,9 +289,15 @@ def main() -> int:
             break
         for item in _collect_titles(sym, per_symbol):
             key = item.get("title") or ""
-            if not key or key in seen:
+            if _contains_banned_topic(key):
                 continue
-            seen.add(key)
+            is_dup, fp = _is_topic_duplicate(
+                key, seen_fingerprints, recent_fingerprints
+            )
+            if not key or is_dup:
+                continue
+            seen_fingerprints.add(fp)
+            recent_fingerprints.append(fp)
             headlines.append(item)
             if len(headlines) >= limit_total:
                 break
@@ -191,9 +307,18 @@ def main() -> int:
         remain = max(1, limit_total - len(headlines))
         for item in _collect_global_flash_titles(min(remain, 20)):
             key = item.get("title") or ""
-            if not key or key in seen:
+            if _contains_banned_topic(key):
                 continue
-            seen.add(key)
+            is_dup, fp = _is_topic_duplicate(
+                key,
+                seen_fingerprints,
+                recent_fingerprints,
+                similarity_threshold=0.92,
+            )
+            if not key or is_dup:
+                continue
+            seen_fingerprints.add(fp)
+            recent_fingerprints.append(fp)
             headlines.append(item)
             used_global_fallback = True
             if len(headlines) >= limit_total:
@@ -201,12 +326,21 @@ def main() -> int:
 
     if not hot_commentary:
         picks = [
-            _safe_text(item.get("title"), 40)
+            _headline_background_brief(item)
             for item in headlines[:3]
-            if _safe_text(item.get("title"), 40)
+            if _headline_background_brief(item)
         ]
         if picks:
-            hot_commentary = [f"\u5e02\u573a\u5feb\u8baf\uff1a{'\uff1b'.join(picks)}"]
+            hot_commentary = ["\u5e02\u573a\u5feb\u8baf\uff1a" + "\uff1b".join(picks)]
+
+    background_notes = []
+    for item in headlines:
+        brief = _headline_background_brief(item)
+        if not brief:
+            continue
+        background_notes.append(brief)
+        if len(background_notes) >= 12:
+            break
 
     if not hot_titles:
         fallback_titles = []
@@ -248,6 +382,7 @@ def main() -> int:
         "headlines": headlines,
         "categories": hot_categories,
         "commentary": hot_commentary,
+        "background_notes": background_notes,
         "titles": hot_titles,
         "casual_prompts": casual_prompts,
     }

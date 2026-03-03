@@ -164,8 +164,8 @@ const CHAT_PUBLIC_PLAIN_REPLY_RATE = (() => {
   if (!Number.isFinite(parsed)) return 0.05
   return Math.max(0, Math.min(parsed, 1))
 })()
-const CHAT_AGENT_MAX_CHARS = Math.max(24, Math.min(800, Math.floor(Number(process.env.CHAT_AGENT_MAX_CHARS || 120))))
-const CHAT_AGENT_MAX_SENTENCES = Math.max(1, Math.min(4, Math.floor(Number(process.env.CHAT_AGENT_MAX_SENTENCES || 2))))
+const CHAT_AGENT_MAX_CHARS = Math.max(24, Math.min(800, Math.floor(Number(process.env.CHAT_AGENT_MAX_CHARS || 180))))
+const CHAT_AGENT_MAX_SENTENCES = Math.max(1, Math.min(4, Math.floor(Number(process.env.CHAT_AGENT_MAX_SENTENCES || 3))))
 const CHAT_DECISION_NARRATION_ENABLED = String(process.env.CHAT_DECISION_NARRATION_ENABLED || 'true').toLowerCase() !== 'false'
 const CHAT_DECISION_NARRATION_USE_LLM = String(process.env.CHAT_DECISION_NARRATION_USE_LLM || 'false').toLowerCase() === 'true'
 const CHAT_DECISION_NARRATION_MIN_INTERVAL_MS = Math.max(
@@ -232,7 +232,7 @@ const CHAT_TTS_PROVIDER_DEFAULT = String(process.env.CHAT_TTS_PROVIDER_DEFAULT |
   : 'openai'
 const CHAT_TTS_MODEL = String(process.env.CHAT_TTS_MODEL || 'tts-1-hd').trim() || 'tts-1-hd'
 const CHAT_TTS_RESPONSE_FORMAT = String(process.env.CHAT_TTS_RESPONSE_FORMAT || 'mp3').trim().toLowerCase()
-const CHAT_TTS_MAX_CHARS = Math.max(48, Math.min(600, Math.floor(Number(process.env.CHAT_TTS_MAX_CHARS || 220))))
+const CHAT_TTS_MAX_CHARS = Math.max(48, Math.min(600, Math.floor(Number(process.env.CHAT_TTS_MAX_CHARS || 320))))
 const CHAT_TTS_SPEED = (() => {
   const parsed = Number(process.env.CHAT_TTS_SPEED || 1)
   if (!Number.isFinite(parsed)) return 1
@@ -388,7 +388,7 @@ const POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS = Math.max(
 )
 const POLYMARKET_COMMENTARY_MAX_TEXT_CHARS = Math.max(
   24,
-  Math.min(220, Math.floor(Number(process.env.POLYMARKET_COMMENTARY_MAX_TEXT_CHARS || 96)))
+  Math.min(360, Math.floor(Number(process.env.POLYMARKET_COMMENTARY_MAX_TEXT_CHARS || 220)))
 )
 const POLYMARKET_COMMENTARY_FEED_LIMIT = Math.max(
   20,
@@ -3263,6 +3263,57 @@ function mergeDigestHeadlines(primary, secondary, { limit = 64 } = {}) {
   return rows
 }
 
+function normalizeHeadlineTitleForDedupe(title) {
+  return String(title || '')
+    .trim()
+    .replace(/^\s*[\[【][^\]】]{1,12}[\]】]\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function isStockLikeHeadlineRow(row) {
+  if (!row || typeof row !== 'object') return false
+  const title = String(row.title || '').trim()
+  if (!title) return false
+  const category = String(row.category || '').trim().toLowerCase()
+  const symbol = String(row.symbol || '').trim().toUpperCase()
+  if (category === 'markets_cn') return true
+  if (symbol) return true
+  if (/\b\d{6}\.(?:SZ|SH)\b/.test(title)) return true
+  if (/\b(?:HSI|HSCEI|KOSPI|KOSDAQ|DJIA|SPX|NDX)\b/i.test(title)) return true
+  if (/财联社\d+月\d+日电/.test(title) && /(指数|期货|主力合约|中间价|净回笼|开盘|收盘|涨幅|跌幅|涨停|跌停|报\d)/.test(title)) {
+    return true
+  }
+  return false
+}
+
+function selectPolymarketHeadlinePool(headlines, { limit = 20 } = {}) {
+  const maxLen = Math.max(8, Math.min(40, Math.floor(Number(limit) || 20)))
+  const eventLike = []
+  const fallback = []
+  const seen = new Set()
+
+  for (const row of Array.isArray(headlines) ? headlines : []) {
+    if (!row || typeof row !== 'object') continue
+    const title = String(row.title || '').trim()
+    if (!title) continue
+    const key = normalizeHeadlineTitleForDedupe(title)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    if (isStockLikeHeadlineRow(row)) continue
+    const category = String(row.category || '').trim().toLowerCase()
+    if (category === 'ai' || category === 'geopolitics' || category === 'global_macro' || category === 'tech') {
+      eventLike.push(row)
+    } else {
+      fallback.push(row)
+    }
+    if (eventLike.length + fallback.length >= maxLen) break
+  }
+
+  const merged = eventLike.concat(fallback)
+  return merged.slice(0, maxLen)
+}
+
 function compactSymbolHistorySummary(row) {
   const safe = row && typeof row === 'object' ? row : {}
   return {
@@ -3801,12 +3852,30 @@ function headlineRowToBrief(row) {
   if (!row || typeof row !== 'object') return ''
   const title = String(row.title || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 88)
   if (!title) return ''
+  const summary = String(row.summary || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 88)
   const source = String(row.source || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 20)
-  const publishedAt = String(row.published_at || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 24)
-  const pieces = [title]
+  const publishedAt = String(row.published_at || row.published_ts_ms || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 24)
+  const pieces = [summary && summary !== title ? `${title}（${summary}）` : title]
   if (source) pieces.push(source)
   if (publishedAt) pieces.push(publishedAt)
   return pieces.join(' | ').slice(0, 128)
+}
+
+function headlineRowToBackgroundNote(row) {
+  if (!row || typeof row !== 'object') return ''
+  const title = String(row.title || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 56)
+  const summary = String(row.summary || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 110)
+  if (title && summary && summary !== title) return `${title}：${summary}`.slice(0, 160)
+  return (title || summary || '').slice(0, 160)
+}
+
+function viewerMessageToBrief(row) {
+  if (!row || typeof row !== 'object') return ''
+  if (String(row.sender_type || '').trim().toLowerCase() !== 'user') return ''
+  const sender = String(row.sender_name || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 20)
+  const text = String(row.text || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 56)
+  if (!text) return ''
+  return sender ? `${sender}: ${text}` : text
 }
 
 async function buildRoomChatContext(roomId, {
@@ -3891,28 +3960,43 @@ async function buildRoomChatContext(roomId, {
   const digestHeadlines = Array.isArray(effectiveDigest?.headlines) ? effectiveDigest.headlines : []
   const digestTitles = Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : []
   const digestCommentary = Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : []
+  const digestBackgroundNotes = Array.isArray(effectiveDigest?.background_notes) ? effectiveDigest.background_notes : []
   const digestCategories = Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : []
   const xHeadlines = Array.isArray(xHotDigest?.headlines) ? xHotDigest.headlines : []
   const xTitles = Array.isArray(xHotDigest?.titles) ? xHotDigest.titles : []
   const xCommentary = Array.isArray(xHotDigest?.commentary) ? xHotDigest.commentary : []
+  const xBackgroundNotes = Array.isArray(xHotDigest?.background_notes) ? xHotDigest.background_notes : []
   const xCategories = Array.isArray(xHotDigest?.categories) ? xHotDigest.categories : []
 
   const mergedHeadlines = useXHotNews
     ? mergeDigestHeadlines(xHeadlines, digestHeadlines, { limit: 72 })
     : digestHeadlines
+  const roomIsPolymarket = safeRoomId === 't_015'
+  const effectiveHeadlines = roomIsPolymarket
+    ? selectPolymarketHeadlinePool(mergedHeadlines, { limit: 20 })
+    : mergedHeadlines
   const mergedTitles = useXHotNews
     ? mergeUniqueTextRows(xTitles, digestTitles, { limit: 24 })
     : digestTitles
+  const effectiveTitles = roomIsPolymarket
+    ? effectiveHeadlines
+      .map((row) => String(row?.title || '').trim())
+      .filter(Boolean)
+      .slice(0, 20)
+    : mergedTitles
   const mergedCommentary = useXHotNews
     ? mergeUniqueTextRows(xCommentary, digestCommentary, { limit: 10 })
     : digestCommentary
+  const mergedBackgroundNotes = useXHotNews
+    ? mergeUniqueTextRows(xBackgroundNotes, digestBackgroundNotes, { limit: 18 })
+    : mergeUniqueTextRows(digestBackgroundNotes, [], { limit: 18 })
   const mergedCategories = useXHotNews
     ? mergeNewsCategoryRows(xCategories, digestCategories, { limit: 6 })
     : digestCategories
   const mergedBurstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
     ? (
       selectNewsBurstSignal({
-        headlines: mergedHeadlines,
+        headlines: effectiveHeadlines,
         nowMs: Date.now(),
         freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
         minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
@@ -3922,18 +4006,40 @@ async function buildRoomChatContext(roomId, {
       || null
     )
     : null
-  const mergedHeadlineBriefs = mergedHeadlines
+  const mergedHeadlineBriefs = effectiveHeadlines
     .map((row) => headlineRowToBrief(row))
     .filter(Boolean)
-    .slice(0, 10)
+    .slice(0, roomIsPolymarket ? 20 : 10)
+  const derivedBackgroundNotes = effectiveHeadlines
+    .map((row) => headlineRowToBackgroundNote(row))
+    .filter(Boolean)
+    .slice(0, roomIsPolymarket ? 20 : 14)
+  const finalBackgroundNotes = mergeUniqueTextRows(
+    mergedBackgroundNotes,
+    derivedBackgroundNotes,
+    { limit: roomIsPolymarket ? 20 : 16 },
+  )
+
+  let recentViewerMessages = []
+  try {
+    const chatRows = await chatStore.readPublic(safeRoomId, 60, null)
+    recentViewerMessages = (Array.isArray(chatRows) ? chatRows : [])
+      .map((row) => viewerMessageToBrief(row))
+      .filter(Boolean)
+      .slice(-8)
+  } catch {
+    recentViewerMessages = []
+  }
 
   return {
     room_id: safeRoomId,
     data_readiness: buildDataReadinessSnapshotForRoom(trader, { nowMs: sessionNowMs }),
     time_context: shanghaiClockParts(sessionNowMs),
     market_overview_brief: effectiveOverview?.brief || '',
-    news_digest_titles: mergedTitles,
+    news_digest_titles: effectiveTitles,
     news_digest_headline_briefs: mergedHeadlineBriefs,
+    news_background_notes: finalBackgroundNotes,
+    recent_viewer_messages: recentViewerMessages,
     news_commentary: mergedCommentary,
     news_categories: mergedCategories,
     news_as_of: String(xHotDigest?.as_of || effectiveDigest?.as_of || '').trim() || null,
@@ -4087,13 +4193,32 @@ function sanitizeTtsText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
     .replace(/\s{2,}/g, ' ')
     .trim()
   if (!text) return ''
-  return text.slice(0, Math.max(24, Math.floor(Number(maxChars) || CHAT_TTS_MAX_CHARS))).trim()
+  const limit = Math.max(24, Math.floor(Number(maxChars) || CHAT_TTS_MAX_CHARS))
+  if (text.length <= limit) return text
+  const sliced = text.slice(0, limit)
+  const softBoundary = Math.max(20, Math.floor(limit * 0.55))
+  let cutIdx = -1
+  for (let i = sliced.length - 1; i >= softBoundary; i -= 1) {
+    const ch = sliced[i]
+    if (ch === '。' || ch === '！' || ch === '？' || ch === '!' || ch === '?' || ch === '；' || ch === ';') {
+      cutIdx = i
+      break
+    }
+  }
+  if (cutIdx >= 0) {
+    return sliced.slice(0, cutIdx + 1).trim()
+  }
+  return sliced.replace(/[，,、:：;；\-\s]+$/g, '').trim()
 }
 
 const PREDICTION_SAFE_REPLACEMENTS = [
   [/大额订单|巨额订单/g, '高热度讨论'],
   [/押注|下注/g, '判断'],
   [/赌博|赌局/g, '预测'],
+  [/\bYES\b/gi, '正方'],
+  [/\bNO\b/gi, '反方'],
+  [/\bBUY\b/gi, '支持'],
+  [/\bSELL\b/gi, '反对'],
   [/买入/g, '支持'],
   [/卖出/g, '反对'],
   [/建仓|加仓/g, '提高关注'],
@@ -4104,9 +4229,28 @@ const PREDICTION_SAFE_REPLACEMENTS = [
   [/盘口/g, '事件'],
 ]
 
+const PREDICTION_TOPIC_BLOCK_PATTERNS = [
+  /\b\d{6}\.(?:SH|SZ)\b/i,
+  /\b(?:HSI|HSCEI|KOSPI|KOSDAQ|DJIA|SPX|NDX)\b/i,
+  /财联社\d+月\d+日电.*(?:开盘|收盘|涨停|跌停|涨幅|跌幅|报\d)/,
+  /主力合约|中间价|净回笼/,
+]
+
+function isPredictionTopicAllowed(value) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  for (const pattern of PREDICTION_TOPIC_BLOCK_PATTERNS) {
+    if (pattern.test(text)) return false
+  }
+  return true
+}
+
 function sanitizePredictionCommentaryText(value, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
   let text = sanitizeTtsText(value, { maxChars })
   if (!text) return ''
+  text = text
+    .replace(/(^|[。！？!?，,\s])[\[【][\u4e00-\u9fa5A-Za-z0-9_\-]{1,10}[\]】](?=\s*)/g, '$1')
+    .replace(/^\s*[\[【][^\]】]{1,12}[\]】]\s*/g, '')
   for (const [pattern, replacement] of PREDICTION_SAFE_REPLACEMENTS) {
     text = text.replace(pattern, replacement)
   }
@@ -4120,12 +4264,30 @@ function sanitizePredictionCommentaryText(value, { maxChars = CHAT_TTS_MAX_CHARS
 
 function ensurePredictionTopicMention(text, topicTitle, { maxChars = CHAT_TTS_MAX_CHARS } = {}) {
   const cleaned = sanitizePredictionCommentaryText(text, { maxChars })
-  const topic = safePlainText(topicTitle || '', 96).replace(/[。！？!?]+$/g, '')
+  const topic = safePlainText(topicTitle || '', 96)
+    .replace(/^\s*[\[【][^\]】]{1,12}[\]】]\s*/g, '')
+    .replace(/[。！？!?]+$/g, '')
+    .trim()
   if (!topic) return cleaned
   const probe = topic.slice(0, Math.min(10, topic.length))
   if (probe && cleaned.includes(probe)) return cleaned
-  const prefixed = `今天关注事件：${topic}。${cleaned}`
-  return sanitizePredictionCommentaryText(prefixed, { maxChars })
+  const mentionVariants = [
+    `先补一句背景：${topic}。`,
+    `这一段主要聊的是${topic}。`,
+    `当前焦点落在${topic}。`,
+    `这条线索指向的是${topic}。`,
+    `相关事件是${topic}。`,
+  ]
+  const variantIndex = simpleHash(`${topic}|${cleaned}`) % mentionVariants.length
+  const mention = mentionVariants[variantIndex]
+  const mode = simpleHash(`${cleaned}|${topic}|mention_mode`) % 3
+  let stitched = ''
+  if (mode === 0) {
+    stitched = `${mention}${cleaned}`
+  } else {
+    stitched = `${cleaned}${/[。！？!?]$/.test(cleaned) ? '' : '。'}${mention}`
+  }
+  return sanitizePredictionCommentaryText(stitched, { maxChars })
 }
 
 function ttsContentType(format) {
@@ -4440,11 +4602,11 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
       {
         speaker_id: 'host_a',
         display_name: '小真',
-        voice_id: 'zsy',
+        voice_id: 'longanhuan',
         provider: 'selfhosted',
-        speed: 1.02,
+        speed: 1.0,
         cooldown_ms: 5000,
-        style_prompt_cn: '快节奏事件解说员，侧重概率变化、讨论热度、事件催化，句子短、有节奏，可偶尔轻松调侃一句。',
+        style_prompt_cn: '单人事件解说主持，围绕事件背景、最新进展与后续观察点做预测点评，不给交易指令。',
         enabled: true,
       },
       {
@@ -4455,7 +4617,7 @@ function createDefaultPolymarketRoomProfile(roomId = 't_015') {
         speed: 0.96,
         cooldown_ms: 5000,
         style_prompt_cn: '稳健分析员，侧重概率区间、不确定性边界与反向风险，语气沉着，可偶尔冷幽默。',
-        enabled: true,
+        enabled: false,
       },
     ],
     updated_ts_ms: Date.now(),
@@ -4594,7 +4756,40 @@ function resolvePolymarketCommentaryRoomProfile(roomId) {
     safeRoomId,
     polymarketCommentaryProfilesState?.rooms?.[safeRoomId]
   )
-  return explicit || createDefaultPolymarketRoomProfile(safeRoomId)
+  const base = explicit || createDefaultPolymarketRoomProfile(safeRoomId)
+
+  // t_015 is configured as single-host room (小真 + longanhuan).
+  if (safeRoomId === 't_015') {
+    const defaultA = normalizePolymarketCommentarySpeaker({
+      speaker_id: 'host_a',
+      display_name: '小真',
+      voice_id: 'longanhuan',
+      provider: 'selfhosted',
+      speed: 1.0,
+      cooldown_ms: 5000,
+      style_prompt_cn: '单人事件解说主持，围绕事件背景、最新进展与后续观察点做预测点评，不给交易指令。',
+      enabled: true,
+    })
+    const fromBase = Array.isArray(base?.speakers)
+      ? base.speakers.find((item) => item?.speaker_id === 'host_a')
+      : null
+    const hostA = normalizePolymarketCommentarySpeaker({
+      ...(fromBase || {}),
+      speaker_id: 'host_a',
+      display_name: '小真',
+      voice_id: 'longanhuan',
+      provider: 'selfhosted',
+      enabled: true,
+    }, defaultA) || defaultA
+
+    return {
+      ...base,
+      room_id: safeRoomId,
+      speakers: hostA ? [hostA] : [],
+    }
+  }
+
+  return base
 }
 
 function getPolymarketSpeakerById(roomId, speakerId) {
@@ -4607,9 +4802,14 @@ function getPolymarketSpeakerById(roomId, speakerId) {
 function buildPolymarketSpeakerTtsProfileOverride({ roomId, speakerId, baseProfile = null } = {}) {
   const speaker = getPolymarketSpeakerById(roomId, speakerId)
   if (!speaker || speaker.enabled === false) return null
-  if (speaker.provider !== 'selfhosted') return null
+  if (speaker.provider !== 'selfhosted' && speaker.provider !== 'openai') return null
   const voice = String(speaker.voice_id || '').trim()
   if (!voice) return null
+
+  const provider = normalizeTtsProvider(
+    speaker.provider,
+    normalizeTtsProvider(baseProfile?.provider, effectiveTtsDefaultProvider())
+  )
 
   const fallbackProvider = normalizeTtsFallbackProvider(
     baseProfile?.fallback_provider,
@@ -4618,14 +4818,14 @@ function buildPolymarketSpeakerTtsProfileOverride({ roomId, speakerId, baseProfi
 
   return {
     room_id: String(roomId || '').trim().toLowerCase(),
-    provider: 'selfhosted',
+    provider,
     voice,
     speed: speaker.speed == null ? clampTtsSpeed(baseProfile?.speed, CHAT_TTS_SPEED) : clampTtsSpeed(speaker.speed, CHAT_TTS_SPEED),
     tone: baseProfile?.tone || 'energetic',
     fallback_provider: fallbackProvider === 'openai' ? 'openai' : 'none',
     default_provider: baseProfile?.default_provider || effectiveTtsDefaultProvider(),
-    model: 'selfhosted',
-    response_format: CHAT_TTS_SELFHOSTED_MEDIA_TYPE,
+    model: provider === 'selfhosted' ? 'selfhosted' : CHAT_TTS_MODEL,
+    response_format: provider === 'selfhosted' ? CHAT_TTS_SELFHOSTED_MEDIA_TYPE : CHAT_TTS_RESPONSE_FORMAT,
     override: baseProfile?.override || null,
     speaker_id: speaker.speaker_id,
     speaker_name: speaker.display_name,
@@ -4658,6 +4858,21 @@ function selectPolymarketSpeaker({ roomId, eventType = '', nowMs = Date.now() } 
   const allEnabled = profile.speakers.filter((item) => item.enabled !== false)
   const speakers = allEnabled.length ? allEnabled : profile.speakers
   if (!speakers.length) return null
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+
+  // t_015 is a single-host room: always stick to host_a style/speaker.
+  if (safeRoomId === 't_015') {
+    const hostA = speakers.find((item) => item.speaker_id === 'host_a') || speakers[0]
+    if (!hostA) return null
+    polymarketCommentarySpeakerCursorByRoom.set(safeRoomId, 1)
+    return {
+      ...hostA,
+      speaker_id: 'host_a',
+      display_name: '小真',
+      voice_id: 'longanhuan',
+      provider: 'selfhosted',
+    }
+  }
 
   const eventKey = String(eventType || '').trim().toLowerCase()
   const preferred = (eventKey === 'market_switch' || eventKey === 'headline_change')
@@ -4669,7 +4884,6 @@ function selectPolymarketSpeaker({ roomId, eventType = '', nowMs = Date.now() } 
     ? [...preferred, ...speakers.filter((item) => !preferred.includes(item))]
     : speakers
 
-  const safeRoomId = String(roomId || '').trim().toLowerCase()
   const cursorBase = Number(polymarketCommentarySpeakerCursorByRoom.get(safeRoomId) || 0)
   const length = ordered.length
   for (let i = 0; i < length; i += 1) {
@@ -4729,6 +4943,48 @@ function parseJsonObjectLoose(input) {
   return null
 }
 
+function normalizeSingleHostRoomMessages(roomId, messages) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (safeRoomId !== 't_015') return Array.isArray(messages) ? messages : []
+  return (Array.isArray(messages) ? messages : []).map((item) => {
+    if (!item || typeof item !== 'object') return item
+    if (String(item.sender_type || '').toLowerCase() !== 'agent') return item
+    return {
+      ...item,
+      sender_name: '小真',
+    }
+  })
+}
+
+function parseLooseStringArray(input, { limit = 4, maxLen = 80 } = {}) {
+  const cap = Math.max(1, Number(limit) || 4)
+  const trimLen = Math.max(8, Number(maxLen) || 80)
+  const fromArray = Array.isArray(input)
+    ? input
+    : (() => {
+      const text = String(input || '').trim()
+      if (!text) return []
+      try {
+        const parsed = JSON.parse(text)
+        return Array.isArray(parsed) ? parsed : []
+      } catch {
+        return text
+          .split(/[|；;。.!！？\n]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+      }
+    })()
+
+  const out = []
+  for (const item of fromArray) {
+    const text = safePlainText(item, trimLen)
+    if (!text) continue
+    out.push(text)
+    if (out.length >= cap) break
+  }
+  return out
+}
+
 async function generatePolymarketCommentaryText({
   roomId,
   speaker,
@@ -4742,8 +4998,10 @@ async function generatePolymarketCommentaryText({
   const speakerName = safePlainText(speaker?.display_name || '主持人', 24)
   const stylePrompt = safePlainText(speaker?.style_prompt_cn || '', 320)
   const marketTitle = safePlainText(market?.title || '', 140)
-  const yesOutcome = safePlainText(market?.yes_outcome || 'YES', 28)
-  const noOutcome = safePlainText(market?.no_outcome || 'NO', 28)
+  const yesOutcomeRaw = safePlainText(market?.yes_outcome || '支持', 28)
+  const noOutcomeRaw = safePlainText(market?.no_outcome || '反对', 28)
+  const yesOutcome = /^(yes|y|true|up)$/i.test(yesOutcomeRaw) ? '支持' : yesOutcomeRaw
+  const noOutcome = /^(no|n|false|down)$/i.test(noOutcomeRaw) ? '反对' : noOutcomeRaw
   const currentProb = Number(market?.current_prob)
   const volume = Number(market?.volume)
   const deltaProb = Number(trigger?.delta_prob ?? trigger?.prob_delta)
@@ -4767,10 +5025,31 @@ async function generatePolymarketCommentaryText({
       .filter(Boolean)
       .slice(0, 4)
     : []
+  const contextBackgroundNotes = Array.isArray(roomContext?.news_background_notes)
+    ? roomContext.news_background_notes
+      .map((item) => safePlainText(item, 140))
+      .filter(Boolean)
+      .slice(0, 6)
+    : []
   const contextAsOf = safePlainText(roomContext?.news_as_of || '', 40)
+  const marketNewsSummary = safePlainText(
+    market?.news_summary || market?.event_summary || '',
+    220,
+  )
+  const marketSourceTopic = safePlainText(
+    market?.source_topic || trigger?.topic || '',
+    100,
+  )
+  const marketSourceName = safePlainText(market?.source_source || '', 24)
+  const marketSourceHeat = safePlainText(market?.source_hot_score || '', 24)
+  const marketKeyPoints = parseLooseStringArray(
+    market?.news_key_points,
+    { limit: 4, maxLen: 72 },
+  )
   const eventTitle = safePlainText(
     trigger?.title
       || trigger?.event_title
+      || marketSourceTopic
       || marketTitle
       || roomContext?.news_burst_signal?.title
       || '',
@@ -4779,7 +5058,11 @@ async function generatePolymarketCommentaryText({
 
   if (!OPENAI_API_KEY) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
-    const fallback = `${speakerName}：当前先看${side}方向，重点观察概率曲线和讨论热度是否延续。`
+    const fallbackContextSummary = marketNewsSummary || contextBackgroundNotes[0] || ''
+    const summaryLine = fallbackContextSummary
+      ? `事件脉络是：${fallbackContextSummary.replace(/[。！？!?]+$/g, '')}。`
+      : '先看公开进展是否出现权威确认。'
+    const fallback = `${speakerName}：当前先看${side}方向。${summaryLine}重点观察概率曲线和讨论热度是否延续。`
     return {
       text: ensurePredictionTopicMention(
         fallback,
@@ -4797,8 +5080,9 @@ async function generatePolymarketCommentaryText({
     '表达重心是预测与点评，可偶尔一句轻松玩笑；避免下注、赌博、交易建议、喊单话术。',
     '只输出一个JSON对象，不要markdown，不要多余解释。',
     'JSON格式: {"text":"..."}',
-    'text要求: 2-3句中文，45-130字，必须和给定事件数据一致，不得编造。',
-    '第一句请自然提到事件标题（可缩写核心词），让听众明确你在讲哪条新闻。',
+    'text要求: 2-3句中文，55-180字，必须和给定事件数据一致，不得编造。',
+    '可以先用一句自然口语开场（不要直接念标题），并在前两句内自然提到事件标题核心词。',
+    '正文必须解释事件背景/进展，不要只重复标题，至少提到一个具体事实点。',
     '必须至少提及一条“已检索到的相关信息”中的要点（可概述，不需逐字复述）。',
     '避免使用“下注/押注/大额订单/仓位/止损/买入/卖出/建仓/减仓”等词。',
   ].join('\n')
@@ -4806,7 +5090,12 @@ async function generatePolymarketCommentaryText({
     `room_id: ${safeRoomId}`,
     `event_type: ${safePlainText(eventType, 32)}`,
     `event_reason: ${triggerReason || 'n/a'}`,
+    `source_topic: ${marketSourceTopic || 'n/a'}`,
+    `source_meta: ${[marketSourceName, marketSourceHeat].filter(Boolean).join(' | ') || 'n/a'}`,
     `market_title: ${marketTitle || 'n/a'}`,
+    `event_summary: ${marketNewsSummary || 'n/a'}`,
+    `event_key_points: ${marketKeyPoints.length ? marketKeyPoints.join(' || ') : 'none'}`,
+    `news_background_notes: ${contextBackgroundNotes.length ? contextBackgroundNotes.join(' || ') : 'none'}`,
     `yes_outcome: ${yesOutcome}`,
     `no_outcome: ${noOutcome}`,
     `yes_prob: ${Number.isFinite(currentProb) ? (currentProb * 100).toFixed(2) + '%' : 'n/a'}`,
@@ -4859,7 +5148,11 @@ async function generatePolymarketCommentaryText({
   } catch (error) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
     const pct = Number.isFinite(currentProb) ? `${(currentProb * 100).toFixed(1)}%` : 'n/a'
-    const fallback = `${speakerName}：当前${side}概率在${pct}附近，先看后续讨论热度是否继续抬升。`
+    const fallbackContextSummary = marketNewsSummary || contextBackgroundNotes[0] || ''
+    const summaryLine = fallbackContextSummary
+      ? `事件脉络是：${fallbackContextSummary.replace(/[。！？!?]+$/g, '')}。`
+      : '先看后续公开进展是否出现新增证据。'
+    const fallback = `${speakerName}：当前${side}概率在${pct}附近。${summaryLine}再看讨论热度是否继续抬升。`
     return {
       text: ensurePredictionTopicMention(
         fallback,
@@ -5161,10 +5454,16 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
   if (safeRoomId === 't_015') {
     const burstSignal = roomContext?.news_burst_signal || null
     const newsTitles = Array.isArray(roomContext?.news_digest_titles)
-      ? roomContext.news_digest_titles.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 16)
+      ? roomContext.news_digest_titles
+        .map((item) => String(item || '').trim())
+        .filter((item) => isPredictionTopicAllowed(item))
+        .slice(0, 16)
       : []
     const newsHeadlineBriefs = Array.isArray(roomContext?.news_digest_headline_briefs)
-      ? roomContext.news_digest_headline_briefs.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10)
+      ? roomContext.news_digest_headline_briefs
+        .map((item) => String(item || '').trim())
+        .filter((item) => isPredictionTopicAllowed(item))
+        .slice(0, 10)
       : []
     const briefTitles = newsHeadlineBriefs
       .map((item) => String(item || '').split('|')[0]?.trim() || '')
@@ -5172,6 +5471,12 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
       .slice(0, 10)
     const newsCommentary = Array.isArray(roomContext?.news_commentary)
       ? roomContext.news_commentary.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+      : []
+    const backgroundNotes = Array.isArray(roomContext?.news_background_notes)
+      ? roomContext.news_background_notes.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 10)
+      : []
+    const viewerMessages = Array.isArray(roomContext?.recent_viewer_messages)
+      ? roomContext.recent_viewer_messages.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
       : []
     const focusTitle = burstSignal?.title
       ? String(burstSignal.title).trim().slice(0, 34)
@@ -5213,21 +5518,31 @@ function fallbackProactiveText({ roomContext, latestDecision, roomAgent, previou
     const commentLineRaw = pickFromPool(newsCommentary, `${seedBase}|poly-comment`, '')
     const commentLine = commentLineRaw
       ? `核心看点：${commentLineRaw.replace(/[。！？!?]+$/g, '')}。`
-      : pickFromPool([
-        '核心看点是时间窗口内是否出现权威确认。',
-        '核心看点是事件是否出现新增公开证据。',
-        '核心看点是讨论热度与事实进展是否同步。',
-      ], `${seedBase}|poly-default-comment`, '核心看点是时间窗口内是否出现权威确认。')
+      : (() => {
+        const bg = pickFromPool(backgroundNotes, `${seedBase}|poly-bg`, '')
+        if (bg) {
+          return `补充背景：${bg.replace(/[。！？!?]+$/g, '')}。`
+        }
+        return pickFromPool([
+          '核心看点是时间窗口内是否出现权威确认。',
+          '核心看点是事件是否出现新增公开证据。',
+          '核心看点是讨论热度与事实进展是否同步。',
+        ], `${seedBase}|poly-default-comment`, '核心看点是时间窗口内是否出现权威确认。')
+      })()
     const evidenceRaw = pickFromPool(newsHeadlineBriefs, `${seedBase}|poly-evidence`, '')
     const evidenceLine = evidenceRaw
       ? `已检索到的相关信息：${evidenceRaw.replace(/[。！？!?]+$/g, '')}。`
+      : ''
+    const viewerRaw = pickFromPool(viewerMessages, `${seedBase}|poly-viewer`, '')
+    const viewerLine = viewerRaw && (simpleHash(`${seedBase}|poly-viewer-bias`) % 100) < 42
+      ? `刚看到观众在聊：${viewerRaw.replace(/[。！？!?]+$/g, '')}。`
       : ''
     const tail = pickFromPool([
       '仅做预测与点评，不提供任何操作指令。',
       '我们只讨论可验证进展和概率变化。',
       '先看事实，再看概率，不做情绪化判断。',
     ], `${seedBase}|poly-tail|${tone}`, '我们只讨论可验证进展和概率变化。')
-    const text = sanitizePredictionCommentaryText(`${opener}${focusLine}${evidenceLine}${commentLine}${tail}`, {
+    const text = sanitizePredictionCommentaryText(`${opener}${focusLine}${viewerLine}${evidenceLine}${commentLine}${tail}`, {
       maxChars: CHAT_AGENT_MAX_CHARS,
     })
     return {
@@ -7010,10 +7325,11 @@ app.get('/api/chat/rooms/:roomId/public', async (req, res) => {
     const limit = parseChatLimit(req.query.limit, 20)
     const beforeTsMs = parseBeforeTs(req.query.before_ts_ms)
     const messages = await chatService.getPublicMessages(roomId, { limit, beforeTsMs })
+    const normalizedMessages = normalizeSingleHostRoomMessages(roomId, messages)
     res.json(ok({
       room_id: roomId,
       visibility: 'public',
-      messages,
+      messages: normalizedMessages,
     }))
   } catch (error) {
     res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_public_read_failed' })
@@ -7027,11 +7343,12 @@ app.get('/api/chat/rooms/:roomId/private', async (req, res) => {
     const limit = parseChatLimit(req.query.limit, 20)
     const beforeTsMs = parseBeforeTs(req.query.before_ts_ms)
     const messages = await chatService.getPrivateMessages(roomId, userSessionId, { limit, beforeTsMs })
+    const normalizedMessages = normalizeSingleHostRoomMessages(roomId, messages)
     res.json(ok({
       room_id: roomId,
       user_session_id: userSessionId,
       visibility: 'private',
-      messages,
+      messages: normalizedMessages,
     }))
   } catch (error) {
     res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_private_read_failed' })
@@ -7056,7 +7373,13 @@ app.post('/api/chat/rooms/:roomId/messages', async (req, res) => {
       text,
     })
 
-    res.json(ok(result))
+    const normalized = {
+      ...result,
+      message: normalizeSingleHostRoomMessages(roomId, [result?.message])[0] || result?.message,
+      agent_reply: normalizeSingleHostRoomMessages(roomId, [result?.agent_reply])[0] || result?.agent_reply,
+    }
+
+    res.json(ok(normalized))
   } catch (error) {
     res.status(chatErrorStatus(error)).json({ success: false, error: error?.code || error?.message || 'chat_post_failed' })
   }

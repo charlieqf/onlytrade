@@ -62,6 +62,9 @@ export function normalizeDigestHeadlines(headlines, { limit = 24 } = {}) {
 
     const category = normalizeNewsCategory(row?.category || row?.topic || row?.tag || '')
     const score = toFiniteNumber(row?.score, 0) || 0
+    const summary = String(row?.summary || row?.description || row?.content || '').trim()
+    const source = String(row?.source || '').trim()
+    const publishedAt = String(row?.published_at || row?.pub_date || '').trim()
     const publishedTs = toTimestampMs(
       row?.published_ts_ms
       ?? row?.publish_ts_ms
@@ -73,6 +76,9 @@ export function normalizeDigestHeadlines(headlines, { limit = 24 } = {}) {
 
     out.push({
       title,
+      summary: summary || null,
+      source: source || null,
+      published_at: publishedAt || null,
       category: category || null,
       score,
       published_ts_ms: publishedTs,

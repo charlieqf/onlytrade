@@ -5,10 +5,36 @@ import logging
 import os
 import random
 import re
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from virtual_exchange_db import DB_FILE, get_open_markets
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_optional_env_file(file_path):
+    if not file_path or not os.path.isfile(file_path):
+        return
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = str(raw_line or "").strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = str(key or "").strip()
+                if not key:
+                    continue
+                if key in os.environ:
+                    continue
+                os.environ[key] = str(value or "").strip()
+    except Exception:
+        return
+
+
+_load_optional_env_file(os.path.join(REPO_ROOT, "runtime-api", ".env.local"))
+
 PUBLIC_OUTPUT_FILE = os.path.join(
     REPO_ROOT, "onlytrade-web", "public", "cyber_market_live.json"
 )
@@ -19,8 +45,39 @@ MAX_MARKET_AGE_HOURS = max(
     0.5, float(os.environ.get("POLYMARKET_MAX_MARKET_AGE_HOURS", "4"))
 )
 MAX_MARKET_POOL_SIZE = max(
-    1, int(os.environ.get("POLYMARKET_MAX_MARKET_POOL_SIZE", "12"))
+    1, int(os.environ.get("POLYMARKET_MAX_MARKET_POOL_SIZE", "20"))
 )
+MARKET_ROTATION_SECONDS = max(
+    8, int(float(os.environ.get("POLYMARKET_BRIDGE_ROTATE_SEC", "28")))
+)
+BRIDGE_ROOM_ID = str(os.environ.get("POLYMARKET_BRIDGE_ROOM_ID") or "t_015").strip()
+RUNTIME_API_BASE = (
+    str(os.environ.get("POLYMARKET_BRIDGE_RUNTIME_BASE") or "http://127.0.0.1:18080")
+    .strip()
+    .rstrip("/")
+)
+FOLLOW_COMMENTARY_FINISH = (
+    str(os.environ.get("POLYMARKET_BRIDGE_FOLLOW_COMMENTARY_FINISH") or "true")
+    .strip()
+    .lower()
+    != "false"
+)
+COMMENTARY_POLL_INTERVAL_SEC = max(
+    0.5, float(os.environ.get("POLYMARKET_BRIDGE_COMMENTARY_POLL_SEC") or 1.2)
+)
+MIN_ROTATE_AFTER_COMMENTARY_MS = max(
+    6000,
+    int(
+        float(
+            os.environ.get("POLYMARKET_BRIDGE_MIN_ROTATE_AFTER_COMMENTARY_MS") or 26000
+        )
+    ),
+)
+PIN_ACTIVE_COMMENTARY_MS = max(
+    5000,
+    int(float(os.environ.get("POLYMARKET_BRIDGE_PIN_ACTIVE_COMMENTARY_MS") or 45000)),
+)
+BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
 
 
 def resolve_output_files():
@@ -52,6 +109,10 @@ def select_candidate_markets(open_markets):
     candidates = []
     for market in open_markets:
         title = str(market.get("title") or "").strip()
+        source_topic = str(market.get("source_topic") or "").strip()
+        merged_topic_text = f"{title} {source_topic}".strip()
+        if any(token in merged_topic_text for token in BANNED_TOPIC_SUBSTRINGS):
+            continue
         old_year = False
         for token in re.findall(r"(20\d{2})年", title):
             if int(token) < current_year:
@@ -73,6 +134,69 @@ def select_candidate_markets(open_markets):
     if candidates:
         return candidates
     return open_markets[:MAX_MARKET_POOL_SIZE]
+
+
+def _estimate_tts_duration_ms(text):
+    body = str(text or "")
+    if not body:
+        return 2200
+    char_count = len(body)
+    punct_count = len(re.findall(r"[。！？!?；;，,]", body))
+    # Be conservative: longanhuan + stream playback can be noticeably slower.
+    base = int((char_count / 2.4) * 1000)
+    pauses = punct_count * 260
+    return max(2800, min(base + pauses + 1200, 120000))
+
+
+def _fetch_latest_commentary(room_id):
+    if not room_id:
+        return None
+    try:
+        query = urllib.parse.urlencode({"room_id": room_id, "limit": 1})
+        url = f"{RUNTIME_API_BASE}/api/polymarket/commentary/feed?{query}"
+        req = urllib.request.Request(url=url, method="GET")
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        payload = json.loads(body) if body else {}
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or not items:
+            return None
+        row = items[0] if isinstance(items[0], dict) else None
+        if not row:
+            return None
+        return {
+            "id": str(row.get("id") or "").strip(),
+            "market_id": str(row.get("market_id") or "").strip(),
+            "text": str(row.get("text") or "").strip(),
+            "created_ts_ms": int(row.get("created_ts_ms") or 0),
+        }
+    except Exception:
+        return None
+
+
+def _pick_next_market_id(candidate_markets, current_market_id):
+    if not candidate_markets:
+        return None
+    ids = [str(m.get("id") or "").strip() for m in candidate_markets if m.get("id")]
+    ids = [x for x in ids if x]
+    if not ids:
+        return None
+    if len(ids) == 1:
+        return ids[0]
+    pool = [x for x in ids if x != str(current_market_id or "").strip()]
+    if not pool:
+        pool = ids
+    return random.choice(pool)
+
+
+def _bet_side_label(bet_type):
+    side = str(bet_type or "").strip().upper()
+    if side == "YES":
+        return "正方"
+    if side == "NO":
+        return "反方"
+    return "中立"
 
 
 def calculate_ai_pnl(cursor):
@@ -115,6 +239,14 @@ def build_state(conn, cursor, market_id):
     cursor.execute("SELECT SUM(amount) FROM BETS WHERE market_id = ?", (market_id,))
     volume = (cursor.fetchone()[0] or 0.0) + 150000.0  # Add base simulated volume
 
+    row_keys = set(m_row.keys())
+
+    def col(name, default=""):
+        if name not in row_keys:
+            return default
+        value = m_row[name]
+        return default if value is None else value
+
     market_data = {
         "id": m_row["id"],
         "title": m_row["title"],
@@ -125,6 +257,11 @@ def build_state(conn, cursor, market_id):
         "close_time": m_row["close_time"],
         "volume": volume,
         "liquidity": volume * 0.15,  # Approx liquidity depth
+        "source_topic": str(col("source_topic", "") or "").strip(),
+        "source_source": str(col("source_source", "") or "").strip(),
+        "source_hot_score": str(col("source_hot_score", "") or "").strip(),
+        "news_summary": str(col("news_summary", "") or "").strip(),
+        "news_key_points": str(col("news_key_points", "") or "").strip(),
     }
 
     # 2. Balances
@@ -157,13 +294,15 @@ def build_state(conn, cursor, market_id):
             ts_ms = int(time.time() * 1000)
 
         is_ai = b["username"] == "AI_Agent_Zero"
+        side_label = _bet_side_label(b["bet_type"])
+        amount_text = f"{float(b['amount']):,.0f}"
 
         # We don't have reasoning stored in base BETS table yet, so we generate a UI string
         if is_ai:
-            text = f"[{b['bet_type']} 建仓 ${b['amount']:,.0f}] AI Execution"
+            text = f"AI观点更新：观点值{amount_text}，倾向{side_label}。"
             msg_type = "agent"
         else:
-            text = f"下单 ${b['amount']:,.0f} 买入 {b['bet_type']}。"
+            text = f"观众观点：观点值{amount_text}，倾向{side_label}。"
             msg_type = "user"
 
         logs.append(
@@ -209,6 +348,10 @@ def run_bridge():
 
     last_rotation_time = time.time()
     current_market_id = None
+    next_rotate_after_ts_ms = 0
+    last_seen_commentary_id = ""
+    last_commentary_poll_ts = 0.0
+    latest_commentary_row = None
 
     while True:
         try:
@@ -227,15 +370,75 @@ def run_bridge():
                 continue
             candidate_ids = {m["id"] for m in candidate_markets if m.get("id")}
 
-            # Rotate target market every 15 seconds for UI viewing
+            now_ts = time.time()
+            now_ms = int(now_ts * 1000)
+
+            if (
+                FOLLOW_COMMENTARY_FINISH
+                and (now_ts - last_commentary_poll_ts) >= COMMENTARY_POLL_INTERVAL_SEC
+            ):
+                last_commentary_poll_ts = now_ts
+                latest_commentary = _fetch_latest_commentary(BRIDGE_ROOM_ID)
+                if latest_commentary:
+                    latest_commentary_row = latest_commentary
+                    commentary_id = str(latest_commentary.get("id") or "")
+                    if commentary_id and commentary_id != last_seen_commentary_id:
+                        last_seen_commentary_id = commentary_id
+                        created_ts_ms = int(latest_commentary.get("created_ts_ms") or 0)
+                        text = str(latest_commentary.get("text") or "")
+                        market_id = str(
+                            latest_commentary.get("market_id") or ""
+                        ).strip()
+                        if market_id and (
+                            not current_market_id or market_id == current_market_id
+                        ):
+                            estimated_finish_ms = (
+                                created_ts_ms + _estimate_tts_duration_ms(text)
+                            )
+                            next_rotate_after_ts_ms = max(
+                                now_ms,
+                                estimated_finish_ms,
+                                now_ms + MIN_ROTATE_AFTER_COMMENTARY_MS,
+                            )
+
+            active_commentary_pin = False
+            if FOLLOW_COMMENTARY_FINISH and isinstance(latest_commentary_row, dict):
+                pin_market_id = str(
+                    latest_commentary_row.get("market_id") or ""
+                ).strip()
+                pin_created_ms = int(latest_commentary_row.get("created_ts_ms") or 0)
+                pin_age_ms = now_ms - pin_created_ms if pin_created_ms > 0 else None
+                if (
+                    pin_market_id
+                    and pin_market_id in candidate_ids
+                    and pin_age_ms is not None
+                    and 0 <= pin_age_ms <= PIN_ACTIVE_COMMENTARY_MS
+                ):
+                    if current_market_id != pin_market_id:
+                        current_market_id = pin_market_id
+                        last_rotation_time = now_ts
+                    active_commentary_pin = True
+
+            should_rotate_after_commentary = (
+                next_rotate_after_ts_ms > 0 and now_ms >= next_rotate_after_ts_ms
+            )
+
+            # Rotate by fallback cadence, or immediately after TTS-estimated finish.
             if (
                 current_market_id is None
                 or current_market_id not in candidate_ids
-                or (time.time() - last_rotation_time > 15)
+                or (not active_commentary_pin and should_rotate_after_commentary)
+                or (
+                    not active_commentary_pin
+                    and (now_ts - last_rotation_time > MARKET_ROTATION_SECONDS)
+                )
             ):
-                # Pick a random open market to focus the stream on
-                current_market_id = random.choice(candidate_markets)["id"]
-                last_rotation_time = time.time()
+                picked = _pick_next_market_id(candidate_markets, current_market_id)
+                if picked:
+                    current_market_id = picked
+                    last_rotation_time = now_ts
+                    if should_rotate_after_commentary:
+                        next_rotate_after_ts_ms = 0
 
             state = build_state(conn, cursor, current_market_id)
             conn.close()

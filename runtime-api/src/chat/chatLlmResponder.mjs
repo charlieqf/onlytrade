@@ -35,6 +35,10 @@ function styleHint(roomAgent) {
   return bits.join(' | ')
 }
 
+function isPolymarketRoomId(value) {
+  return String(value || '').trim().toLowerCase() === 't_015'
+}
+
 function normalizeTimeContext(roomContext) {
   const ctx = toSafeObject(roomContext)
   const raw = toSafeObject(ctx?.time_context)
@@ -51,6 +55,7 @@ function normalizeTimeContext(roomContext) {
 }
 
 function buildSystemPrompt({ roomAgent, kind }) {
+  const isPolymarket = isPolymarketRoomId(roomAgent?.roomId || roomAgent?.agentId)
   const agentName = String(roomAgent?.agentName || roomAgent?.agentHandle || 'Agent').trim() || 'Agent'
   const kindRule = kind === 'proactive'
     ? 'You are writing a proactive public room message to keep engagement healthy.'
@@ -58,19 +63,23 @@ function buildSystemPrompt({ roomAgent, kind }) {
       ? 'You are narrating your latest trading decision to the room like a livestream host.'
       : 'You are writing a direct reply to a user message in the room.')
   const contextRule = (kind === 'proactive' || kind === 'narration')
-    ? 'If room_context contains market_overview_brief, news_digest_titles, news_commentary, news_categories, or symbol_history_summary, explicitly reference one concise market/news/history point.'
+    ? (isPolymarket
+      ? 'If room_context contains news_digest_titles, news_background_notes, news_commentary, or news_categories, explicitly reference one concise event/news point.'
+      : 'If room_context contains market_overview_brief, news_digest_titles, news_background_notes, news_commentary, news_categories, or symbol_history_summary, explicitly reference one concise market/news/history point.')
     : ''
   const topicRule = kind === 'proactive'
     ? 'Prioritize topic rotation around tech, macro economy, and geopolitics when those signals exist.'
     : ''
-  const positionRule = (kind === 'proactive' || kind === 'narration')
+  const positionRule = (!isPolymarket && (kind === 'proactive' || kind === 'narration'))
     ? 'If room_context.symbol_brief.position_shares_on_symbol is 0, do not claim you are currently holding that symbol; describe it as no-position/watchlist instead.'
     : ''
-  const holdReasonRule = (kind === 'proactive' || kind === 'narration')
+  const holdReasonRule = (!isPolymarket && (kind === 'proactive' || kind === 'narration'))
     ? 'When latest_decision.action is hold, explain your thinking process briefly (signal + risk), not only "hold".'
     : ''
   const detailRule = kind === 'proactive'
-    ? 'For proactive messages, include: (1) current market read, (2) your symbol/action plan, (3) risk boundary or trigger level. Make it informative, not generic.'
+    ? (isPolymarket
+      ? 'For proactive messages, include: (1) current event read, (2) one verifiable background/evidence point, (3) what to watch next in 24h. Make it informative, not generic. If recent_viewer_messages exists, you may naturally react to one viewer point in one short clause.'
+      : 'For proactive messages, include: (1) current market read, (2) your symbol/action plan, (3) risk boundary or trigger level. Make it informative, not generic. If recent_viewer_messages exists, you may naturally react to one viewer point in one short clause.')
     : (kind === 'narration'
       ? 'For narration, explain decision logic with signal evidence and risk control in clear Chinese.'
       : '')
@@ -84,10 +93,15 @@ function buildSystemPrompt({ roomAgent, kind }) {
     ? 'You may add one light casual host line (mindset/life rhythm/risk discipline) in about 30% of messages, while keeping market relevance first when news/context exists.'
     : ''
   const timeRule = 'Treat room_context.time_context (Asia/Shanghai) as authoritative local time. Keep any life-rhythm/casual line consistent with that clock; avoid after-work/dinner/night wording in morning sessions.'
+  const vocabRule = isPolymarket
+    ? 'This room is prediction/commentary only. Avoid stock-trading words such as 量能, 资金, 利好, 涨跌, 买入, 卖出, 仓位, 止损, 下单, 交易.'
+    : ''
   const style = styleHint(roomAgent)
 
   return [
-    `You are ${agentName}, a Chinese A-share trading room agent.`,
+    isPolymarket
+      ? `You are ${agentName}, a Chinese prediction-event livestream host.`
+      : `You are ${agentName}, a Chinese A-share trading room agent.`,
     kindRule,
     lengthRule,
     'No markdown, no bullet list, no JSON.',
@@ -100,6 +114,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
     varietyRule,
     casualRule,
     timeRule,
+    vocabRule,
     style ? `Agent profile: ${style}.` : '',
   ].filter(Boolean).join(' ')
 }
@@ -111,9 +126,11 @@ function toSafeObject(value) {
 function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, historyContext, roomContext }) {
   const latest = latestDecision?.decisions?.[0] || null
   const ctx = toSafeObject(roomContext)
+  const roomId = String(roomAgent?.roomId || inboundMessage?.room_id || '').trim().toLowerCase()
+  const isPolymarket = isPolymarketRoomId(roomId)
   const payload = {
     kind,
-    room_id: roomAgent?.roomId || inboundMessage?.room_id || '',
+    room_id: roomId,
     incoming_message: inboundMessage
       ? {
         message_type: inboundMessage?.message_type,
@@ -121,7 +138,7 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
         text: inboundMessage?.text,
       }
       : null,
-    latest_decision: latest
+    latest_decision: (!isPolymarket && latest)
       ? {
         symbol: latest?.symbol || null,
         action: latest?.action || null,
@@ -139,10 +156,16 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
           ? ctx.market_overview_brief.slice(0, 240)
           : null,
         news_digest_titles: Array.isArray(ctx.news_digest_titles)
-          ? ctx.news_digest_titles.map((t) => String(t || '').slice(0, 80)).filter(Boolean).slice(0, 6)
+          ? ctx.news_digest_titles
+            .map((t) => String(t || '').replace(/^\s*[\[【][^\]】]{1,12}[\]】]\s*/g, '').slice(0, 80))
+            .filter(Boolean)
+            .slice(0, isPolymarket ? 10 : 6)
           : [],
         news_commentary: Array.isArray(ctx.news_commentary)
           ? ctx.news_commentary.map((t) => String(t || '').slice(0, 100)).filter(Boolean).slice(0, 3)
+          : [],
+        news_background_notes: Array.isArray(ctx.news_background_notes)
+          ? ctx.news_background_notes.map((t) => String(t || '').slice(0, 120)).filter(Boolean).slice(0, 4)
           : [],
         news_categories: Array.isArray(ctx.news_categories)
           ? ctx.news_categories
@@ -165,7 +188,7 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
             priority: toNumber(ctx.news_burst_signal.priority, null),
           }
           : null,
-        symbol_brief: toSafeObject(ctx.symbol_brief)
+        symbol_brief: (!isPolymarket && toSafeObject(ctx.symbol_brief))
           ? {
             symbol: ctx.symbol_brief.symbol || null,
             action: ctx.symbol_brief.action || null,
@@ -177,7 +200,7 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
               : null,
           }
           : null,
-        symbol_history_summary: toSafeObject(ctx.symbol_history_summary)
+        symbol_history_summary: (!isPolymarket && toSafeObject(ctx.symbol_history_summary))
           ? {
             symbol: String(ctx.symbol_history_summary.symbol || '').slice(0, 24) || null,
             past_6m: String(ctx.symbol_history_summary.past_6m || '').slice(0, 180) || null,
@@ -188,6 +211,9 @@ function buildUserPrompt({ kind, roomAgent, inboundMessage, latestDecision, hist
           : null,
         casual_topics: Array.isArray(ctx.casual_topics)
           ? ctx.casual_topics.map((t) => String(t || '').slice(0, 60)).filter(Boolean).slice(0, 8)
+          : [],
+        recent_viewer_messages: Array.isArray(ctx.recent_viewer_messages)
+          ? ctx.recent_viewer_messages.map((t) => String(t || '').slice(0, 60)).filter(Boolean).slice(0, 4)
           : [],
         time_context: normalizeTimeContext(ctx),
       }

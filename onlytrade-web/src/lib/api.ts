@@ -184,11 +184,26 @@ export const api = {
       params.set('before_ts_ms', String(beforeTsMs))
     }
 
-    const result = await httpClient.get<ChatHistoryResult>(
-      `${API_BASE}/chat/rooms/${encodeURIComponent(roomId)}/public?${params.toString()}`
+    const res = await fetch(
+      `${API_BASE}/chat/rooms/${encodeURIComponent(roomId)}/public?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      }
     )
-    if (!result.success) throw new Error(result.message || '获取公开聊天失败')
-    return Array.isArray(result.data?.messages) ? result.data.messages : []
+    const payload = await handleJSONResponse<
+      ChatHistoryResult | { success?: boolean; data?: ChatHistoryResult; message?: string }
+    >(res)
+    if (payload && typeof payload === 'object' && 'success' in payload) {
+      const wrapped = payload as { success?: boolean; data?: ChatHistoryResult; message?: string }
+      if (!wrapped.success) {
+        throw new Error(wrapped.message || '获取公开聊天失败')
+      }
+      return Array.isArray(wrapped.data?.messages) ? wrapped.data.messages : []
+    }
+    const direct = payload as ChatHistoryResult
+    return Array.isArray(direct?.messages) ? direct.messages : []
   },
 
   async getRoomPrivateMessages(
@@ -316,13 +331,34 @@ export const api = {
     params.set('room_id', String(options.room_id || '').trim())
     if (options.limit != null) params.set('limit', String(options.limit))
     if (options.after_ts_ms != null) params.set('after_ts_ms', String(options.after_ts_ms))
-    const result = await httpClient.get<{ items?: Array<Record<string, unknown>> }>(
-      `${API_BASE}/polymarket/commentary/feed?${params.toString()}`
+    const res = await fetch(
+      `${API_BASE}/polymarket/commentary/feed?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      }
     )
-    if (!result.success || !result.data) {
-      throw new Error(result.message || '获取解说流失败')
+    const payload = await handleJSONResponse<
+      { items?: Array<Record<string, unknown>> } | {
+        success?: boolean
+        data?: { items?: Array<Record<string, unknown>> }
+        message?: string
+      }
+    >(res)
+    if (payload && typeof payload === 'object' && 'success' in payload) {
+      const wrapped = payload as {
+        success?: boolean
+        data?: { items?: Array<Record<string, unknown>> }
+        message?: string
+      }
+      if (!wrapped.success || !wrapped.data) {
+        throw new Error(wrapped.message || '获取解说流失败')
+      }
+      return Array.isArray(wrapped.data.items) ? wrapped.data.items : []
     }
-    return Array.isArray(result.data.items) ? result.data.items : []
+    const direct = payload as { items?: Array<Record<string, unknown>> }
+    return Array.isArray(direct?.items) ? direct.items : []
   },
 
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {

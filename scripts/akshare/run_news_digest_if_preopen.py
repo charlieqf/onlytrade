@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, time
 from pathlib import Path
+from typing import Optional
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -12,7 +12,7 @@ if __package__ is None or __package__ == "":
 from scripts.akshare.run_cycle_if_market_open import SH_TZ
 
 
-def is_cn_preopen_window(now: datetime | None = None) -> bool:
+def is_cn_preopen_window(now: Optional[datetime] = None) -> bool:
     current = now or datetime.now(SH_TZ)
     if current.tzinfo is None:
         current = current.replace(tzinfo=SH_TZ)
@@ -28,13 +28,21 @@ def is_cn_preopen_window(now: datetime | None = None) -> bool:
 
 def main() -> int:
     now = datetime.now(SH_TZ)
-    if not is_cn_preopen_window(now):
+    preopen_only = (
+        str(os.environ.get("ONLYTRADE_NEWS_DIGEST_PREOPEN_ONLY") or "false")
+        .strip()
+        .lower()
+        == "true"
+    )
+
+    if preopen_only and not is_cn_preopen_window(now):
         print(
             json.dumps(
                 {
                     "status": "skip",
                     "reason": "outside_cn_preopen_window",
                     "now_shanghai": now.isoformat(timespec="seconds"),
+                    "preopen_only": True,
                 },
                 ensure_ascii=False,
             )

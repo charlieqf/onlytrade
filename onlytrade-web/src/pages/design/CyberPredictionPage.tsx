@@ -19,6 +19,11 @@ interface MarketState {
         close_time: string
         volume: number
         liquidity: number
+        source_topic?: string
+        source_source?: string
+        source_hot_score?: string
+        news_summary?: string
+        news_key_points?: string
     }
     balances: {
         [username: string]: number
@@ -44,6 +49,14 @@ interface CommentaryItem {
     source: string
     created_ts_ms: number
     market_id?: string | null
+}
+
+interface StreamLogItem {
+    id: string | number
+    sender: string
+    type: string
+    text: string
+    time: number
 }
 
 function normalizeProb(value: unknown): number | null {
@@ -114,6 +127,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     const [errorCount, setErrorCount] = useState(0)
     const [commentaryItems, setCommentaryItems] = useState<CommentaryItem[]>([])
     const [speakingCommentaryId, setSpeakingCommentaryId] = useState<string | null>(null)
+    const [viewerLogItems, setViewerLogItems] = useState<StreamLogItem[]>([])
 
     const snapshotRef = useRef<{
         marketId: string
@@ -131,6 +145,29 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     const audioPlayingRef = useRef(false)
     const activeAudioRef = useRef<HTMLAudioElement | null>(null)
     const knownCommentaryIdsRef = useRef<Set<string>>(new Set())
+    const knownViewerMessageIdsRef = useRef<Set<string>>(new Set())
+    const currentMarketIdRef = useRef('')
+
+    const clearAudioPlaybackQueue = () => {
+        if (activeAudioRef.current) {
+            activeAudioRef.current.pause()
+            activeAudioRef.current = null
+        }
+        for (const item of audioQueueRef.current) {
+            URL.revokeObjectURL(item.url)
+        }
+        audioQueueRef.current = []
+        audioPlayingRef.current = false
+        setSpeakingCommentaryId(null)
+    }
+
+    const isCommentaryAlignedWithCurrentMarket = (marketId: string | null | undefined) => {
+        const liveMarketId = String(currentMarketIdRef.current || '').trim()
+        if (!liveMarketId) return true
+        const itemMarketId = String(marketId || '').trim()
+        if (!itemMarketId) return true
+        return itemMarketId === liveMarketId
+    }
 
     const appendCommentary = (item: CommentaryItem) => {
         if (knownCommentaryIdsRef.current.has(item.id)) return
@@ -175,6 +212,30 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         playNextCommentaryAudio()
     }
 
+    const appendViewerLog = (raw: unknown) => {
+        if (!raw || typeof raw !== 'object') return
+        const row = raw as Record<string, unknown>
+        const senderType = String(row.sender_type || '').toLowerCase()
+        if (senderType !== 'user') return
+        const id = String(row.id || '').trim()
+        const text = String(row.text || '').trim()
+        if (!id || !text) return
+        if (knownViewerMessageIdsRef.current.has(id)) return
+        knownViewerMessageIdsRef.current.add(id)
+        const item: StreamLogItem = {
+            id: `chat:${id}`,
+            sender: String(row.sender_name || '观众').trim() || '观众',
+            type: 'user',
+            text,
+            time: Number(row.created_ts_ms) || Date.now(),
+        }
+        setViewerLogItems((prev) => {
+            const next = [...prev, item]
+            if (next.length > 120) next.splice(0, next.length - 120)
+            return next
+        })
+    }
+
     const requestCommentaryForEvent = async (payload: {
         eventType: string
         eventKey: string
@@ -197,8 +258,14 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                     delta_prob: payload.probDelta,
                 },
             })
-            const item = normalizeCommentaryItem(generated.commentary)
-            if (!item) return
+            const parsed = normalizeCommentaryItem(generated.commentary)
+            if (!parsed) return
+            const fallbackMarketId = String(payload.market?.id || '').trim()
+            const item: CommentaryItem = {
+                ...parsed,
+                market_id: parsed.market_id || fallbackMarketId || null,
+            }
+            if (!isCommentaryAlignedWithCurrentMarket(item.market_id)) return
             appendCommentary(item)
 
             try {
@@ -234,6 +301,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 const nowMs = Date.now()
                 const prev = snapshotRef.current
                 const marketId = String(nextState?.market?.id || '').trim()
+                const marketChanged = !!prev.marketId && !!marketId && marketId !== prev.marketId
                 const prob = normalizeProb(nextState?.market?.current_prob)
                 const logs = Array.isArray(nextState?.logs) ? nextState.logs : []
                 const lastLog = logs.length ? logs[logs.length - 1] : null
@@ -301,6 +369,11 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 }
 
                 if (active) {
+                    currentMarketIdRef.current = marketId
+                    if (marketChanged) {
+                        clearAudioPlaybackQueue()
+                        setCommentaryItems((prevItems) => prevItems.filter((item) => String(item.market_id || '').trim() === marketId))
+                    }
                     setState(nextState)
                     setErrorCount(0)
                     if (pendingEvent) {
@@ -328,20 +401,16 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
     useEffect(() => {
         return () => {
-            if (activeAudioRef.current) {
-                activeAudioRef.current.pause()
-                activeAudioRef.current = null
-            }
-            for (const item of audioQueueRef.current) {
-                URL.revokeObjectURL(item.url)
-            }
-            audioQueueRef.current = []
+            clearAudioPlaybackQueue()
         }
     }, [])
 
     useEffect(() => {
         let active = true
         let afterTsMs = Date.now() - 4000
+
+        setViewerLogItems([])
+        knownViewerMessageIdsRef.current.clear()
 
         const pullFeed = async () => {
             try {
@@ -356,6 +425,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                     const item = normalizeCommentaryItem(raw)
                     if (!item) continue
                     afterTsMs = Math.max(afterTsMs, Number(item.created_ts_ms) || 0)
+                    if (!isCommentaryAlignedWithCurrentMarket(item.market_id)) continue
                     const alreadyKnown = knownCommentaryIdsRef.current.has(item.id)
                     appendCommentary(item)
                     if (alreadyKnown) continue
@@ -388,6 +458,43 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         }
     }, [selectedTrader.trader_id])
 
+    useEffect(() => {
+        let active = true
+        let afterTsMs = Date.now() - 3000
+
+        const pullAgentMessages = async () => {
+            try {
+                const rows = await api.getRoomPublicMessages(selectedTrader.trader_id, 60)
+                if (!active || !rows.length) return
+
+                const ordered = [...rows]
+                    .filter((row) => Number((row as { created_ts_ms?: unknown }).created_ts_ms) > afterTsMs)
+                    .sort((a, b) => Number((a as { created_ts_ms?: unknown }).created_ts_ms) - Number((b as { created_ts_ms?: unknown }).created_ts_ms))
+
+                for (const row of ordered) {
+                    const senderType = String((row as { sender_type?: unknown }).sender_type || '').toLowerCase()
+                    if (senderType === 'user') {
+                        appendViewerLog(row)
+                    }
+                    const ts = Number((row as { created_ts_ms?: unknown }).created_ts_ms) || Date.now()
+                    afterTsMs = Math.max(afterTsMs, ts)
+                }
+            } catch {
+                // ignore polling errors
+            }
+        }
+
+        void pullAgentMessages()
+        const timer = setInterval(() => {
+            void pullAgentMessages()
+        }, 2500)
+
+        return () => {
+            active = false
+            clearInterval(timer)
+        }
+    }, [selectedTrader.trader_id])
+
     if (!state && errorCount > 5) {
         return (
             <div className="flex h-screen w-screen items-center justify-center bg-black text-red-500 font-mono tracking-widest text-xl">
@@ -404,14 +511,24 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         )
     }
 
-    const { market, logs, balances, ai_pnl } = state
+    const { market, logs, ai_pnl } = state
     const yesProbStr = (market.current_prob * 100).toFixed(1)
     const noProbStr = ((1 - market.current_prob) * 100).toFixed(1)
     const yesOutcomeLabel = localizeOutcomeLabel(market.yes_outcome, '支持')
     const noOutcomeLabel = localizeOutcomeLabel(market.no_outcome, '不支持')
 
     // Format log reversed so newest is at the bottom (or top depending on preference, here we render top-down)
-    const displayLogs = [...logs].reverse().slice(0, 15)
+    const baseLogs: StreamLogItem[] = Array.isArray(logs) ? logs.map((item) => ({
+        id: item.id,
+        sender: item.sender,
+        type: item.type,
+        text: item.text,
+        time: item.time,
+    })) : []
+    const mergedLogs = [...baseLogs, ...viewerLogItems]
+        .sort((a, b) => Number(b.time) - Number(a.time))
+        .slice(0, 24)
+    const displayLogs = mergedLogs
     const displayCommentary = [...commentaryItems].slice(-4).reverse()
 
     return (
@@ -534,31 +651,6 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                         </div>
                     </div>
 
-                    {/* AI Agent Status Block */}
-                    <div className="mt-8 relative group">
-                        <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg blur opacity-20"></div>
-                        <div className="relative bg-black/60 border border-white/10 rounded-lg p-3 flex gap-4 items-center backdrop-blur-md">
-                            <div className="shrink-0 pl-1">
-                                <div className="w-10 h-10 rounded-full border border-cyan-400 p-0.5 flex items-center justify-center bg-[#050B14] overflow-hidden">
-                                    <img src="/icons/ai_brain.png" alt="解说引擎核心" className="w-full h-full object-cover opacity-80" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                                    <span className="absolute text-[#00d9ff] font-mono text-[6px] font-bold">{selectedTrader.trader_id.slice(-4)}</span>
-                                </div>
-                            </div>
-                            <div className="flex-1 min-w-0 flex flex-col justify-center">
-                                <div className="flex justify-between items-center w-full">
-                                    <h3 className="text-cyan-400 font-bold text-[10px] uppercase tracking-widest flex items-center gap-1.5">
-                                        <span className="h-1.5 w-1.5 bg-cyan-400 rounded-full animate-pulse"></span>
-                                        解说引擎
-                                    </h3>
-                                    <div className="text-[10px] text-white/50 font-mono tracking-widest">能量值</div>
-                                </div>
-                                <div className="text-sm mt-0.5 font-mono text-white tracking-widest font-semibold flex justify-between items-baseline">
-                                    <span>在线</span>
-                                    <span className="text-cyan-50">{Number(balances['AI_Agent_Zero'] || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </section>
 
                 {/* BOTTOM SECTION: The Public Square Feed (Scrollable) */}

@@ -39,6 +39,62 @@ function sanitizeNickname(value) {
   return text.slice(0, 24)
 }
 
+function isPolymarketRoomId(roomId) {
+  return String(roomId || '').trim().toLowerCase() === 't_015'
+}
+
+function firstNonEmptyText(items, maxLen = 120) {
+  const rows = Array.isArray(items) ? items : []
+  for (const item of rows) {
+    const text = String(item || '').trim()
+    if (text) return text.slice(0, maxLen)
+  }
+  return ''
+}
+
+function resolvePolymarketTopicKey(roomContext, nowMs = Date.now()) {
+  const signalTitle = String(roomContext?.news_burst_signal?.title || '').trim()
+  const digestTitle = firstNonEmptyText(roomContext?.news_digest_titles, 140)
+  const fallbackTitle = firstNonEmptyText(roomContext?.news_digest_headline_briefs, 140)
+  const raw = signalTitle || digestTitle || fallbackTitle
+  const normalized = normalizeForDedupe(raw).slice(0, 96)
+  if (normalized) return `topic:${normalized}`
+  const bucket = Math.floor((Number(nowMs) || Date.now()) / 120_000)
+  return `time:${bucket}`
+}
+
+const POLYMARKET_TEXT_REPLACEMENTS = [
+  [/\b\d{6}\.(?:SZ|SH)\b/g, '该事件'],
+  [/\b(?:HSI|HSCEI|KOSPI|KOSDAQ|DJIA|SPX|NDX)\b/gi, '市场情绪'],
+  [/量能/g, '讨论热度'],
+  [/资金/g, '关注度'],
+  [/利好/g, '正向信号'],
+  [/利空/g, '负向信号'],
+  [/涨停|跌停|涨幅|跌幅/g, '热度变化'],
+  [/进场|出货|承接|拉升|追高|抄底|仓位|止损|建仓|加仓|减仓|交易|下单|买入|卖出/g, '判断'],
+]
+
+function sanitizePolymarketAgentText(value) {
+  let text = String(value || '').trim()
+  if (!text) return ''
+  for (const [pattern, replacement] of POLYMARKET_TEXT_REPLACEMENTS) {
+    text = text.replace(pattern, replacement)
+  }
+  text = text
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[，,]{2,}/g, '，')
+    .replace(/[。.!！?？]{2,}/g, '。')
+    .trim()
+  return text
+}
+
+function looksLikeQuestionText(value) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  if (/[?？]$/.test(text)) return true
+  return /(怎么看|怎么判断|为什么|咋看|可不可以|是否|要不要|行不行|有必要吗)/.test(text)
+}
+
 function normalizeForDedupe(value) {
   return String(value || '')
     .toLowerCase()
@@ -66,6 +122,15 @@ function pickStable(items, keySeed = '', fallback = '') {
 }
 
 function buildFallbackReplyText({ roomAgent, inboundMessage, roomContext, latestDecision, nowMs }) {
+  const roomId = String(inboundMessage?.room_id || roomAgent?.roomId || '').trim().toLowerCase()
+  if (isPolymarketRoomId(roomId)) {
+    const sender = String(inboundMessage?.sender_name || '').trim() || '朋友'
+    const newsTitle = pickStable(roomContext?.news_digest_titles, `${sender}|poly-news|${nowMs}`, '')
+    const background = pickStable(roomContext?.news_background_notes, `${sender}|poly-bg|${nowMs}`, '')
+    const fallbackCore = background || newsTitle || '这条事件先看公开来源是否出现新增确认'
+    return `@${sender} 我先回应你这个判断：${String(fallbackCore).slice(0, 42)}。我们只做事件解读和概率讨论，不给操作指令。`
+  }
+
   const sender = String(inboundMessage?.sender_name || '').trim() || '朋友'
   const symbol = String(
     latestDecision?.decisions?.[0]?.symbol
@@ -276,6 +341,36 @@ export function createChatService({
   const proactiveStateByRoom = new Map()
   const proactiveInFlightByRoom = new Map()
   const proactiveBurstStateByRoom = new Map()
+  const polymarketReplyBudgetByRoom = new Map()
+
+  function consumePolymarketReplyBudget(roomId, roomContext, now) {
+    const safeRoomId = String(roomId || '').trim().toLowerCase()
+    if (!isPolymarketRoomId(safeRoomId)) return true
+    const topicKey = resolvePolymarketTopicKey(roomContext, now)
+    const prev = polymarketReplyBudgetByRoom.get(safeRoomId) || {
+      topic_key: '',
+      replied_count: 0,
+      updated_ms: 0,
+    }
+    const next = String(prev.topic_key || '') === topicKey
+      ? { ...prev }
+      : { topic_key: topicKey, replied_count: 0, updated_ms: Number(now) || Date.now() }
+
+    if (Number(next.replied_count || 0) >= 1) {
+      polymarketReplyBudgetByRoom.set(safeRoomId, {
+        ...next,
+        updated_ms: Number(now) || Date.now(),
+      })
+      return false
+    }
+
+    polymarketReplyBudgetByRoom.set(safeRoomId, {
+      ...next,
+      replied_count: Number(next.replied_count || 0) + 1,
+      updated_ms: Number(now) || Date.now(),
+    })
+    return true
+  }
 
   function emitPublicAppendBestEffort(roomId, payload) {
     if (typeof onPublicAppend !== 'function') return
@@ -444,6 +539,10 @@ export function createChatService({
         return
       }
 
+      if (isPolymarketRoomId(roomId)) {
+        generatedText = sanitizePolymarketAgentText(generatedText)
+      }
+
       // Basic dedupe: avoid repeating similar proactive lines.
       let candidateKey = normalizeForDedupe(generatedText)
       const recentProactives = todayMessages
@@ -543,12 +642,33 @@ export function createChatService({
     }
 
     let agentReply = null
-    if (
-      isRoomAgentRunning(roomAgent)
-      && shouldAgentReply({ messageType: safeMessageType, random: random(), threshold: safePublicReplyRate })
-    ) {
+    let shouldReplyNow = false
+    if (isRoomAgentRunning(roomAgent)) {
+      shouldReplyNow = shouldAgentReply({
+        messageType: safeMessageType,
+        random: random(),
+        threshold: safePublicReplyRate,
+      })
+
+      if (!shouldReplyNow && safeMessageType === 'public_plain' && safeVisibility === 'public') {
+        const questionBoost = looksLikeQuestionText(safeText) ? 0.35 : 0.12
+        if (Number(random()) < questionBoost) {
+          shouldReplyNow = true
+        }
+      }
+    }
+
+    if (shouldReplyNow) {
       const historyContext = await readTodayContext(safeRoomId, safeUserSessionId, safeVisibility)
       const roomContextForReply = await resolveRoomContextSafe(safeRoomId)
+
+      if (!consumePolymarketReplyBudget(safeRoomId, roomContextForReply, now)) {
+        return {
+          message: userMessage,
+          agent_reply: null,
+        }
+      }
+
       let generatedText = await generateAgentText({
         kind: 'reply',
         roomAgent,
@@ -571,6 +691,9 @@ export function createChatService({
           latestDecision: resolveLatestDecision(safeRoomId),
           nowMs: now,
         })
+      }
+      if (isPolymarketRoomId(safeRoomId)) {
+        generatedText = sanitizePolymarketAgentText(generatedText)
       }
       if (generatedText || forceReply) {
         const nowReply = nowMs()

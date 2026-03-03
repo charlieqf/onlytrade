@@ -25,11 +25,22 @@ function safeText(value, maxLen = 200) {
   return text.slice(0, maxLen)
 }
 
+function titleFingerprint(value) {
+  return safeText(value, 260)
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\s+/g, '')
+    .replace(/[，,。.!！?？:：;；~`'"“”‘’\-_=+()\[\]{}<>/\\|]/g, '')
+    .slice(0, 120)
+}
+
 function normalizeNewsItem(item) {
   const title = safeText(item?.headline || item?.title)
   if (!title) return null
+  const summary = safeText(item?.summary || item?.content || item?.text, 260)
   return {
     title,
+    summary: summary || null,
     source: safeText(item?.source, 60) || null,
     published_at: safeText(item?.created_at || item?.updated_at || item?.timestamp, 40) || null,
     url: safeText(item?.url, 240) || null,
@@ -43,7 +54,16 @@ async function buildDigest({ symbols, limit, baseUrl }) {
       ? payload.news
       : (Array.isArray(payload) ? payload : (Array.isArray(payload?.data) ? payload.data : []))
 
-    const headlines = raw.map(normalizeNewsItem).filter(Boolean).slice(0, Math.max(1, Math.min(Number(limit) || 20, 50)))
+    const seen = new Set()
+    const rows = []
+    for (const item of raw.map(normalizeNewsItem).filter(Boolean)) {
+      const key = titleFingerprint(item?.title)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      rows.push(item)
+      if (rows.length >= Math.max(1, Math.min(Number(limit) || 20, 50))) break
+    }
+    const headlines = rows
     return { ok: true, headlines }
   } catch (err) {
     // Best-effort: if Alpaca news is unavailable for the account, write an empty digest.
@@ -70,6 +90,15 @@ async function main() {
     symbols,
     headline_count: digest.headlines.length,
     headlines: digest.headlines,
+    background_notes: digest.headlines
+      .map((row) => {
+        const title = safeText(row?.title, 46)
+        const summary = safeText(row?.summary, 88)
+        if (title && summary) return `${title}: ${summary}`
+        return title || ''
+      })
+      .filter(Boolean)
+      .slice(0, 14),
     error: digest.ok ? null : digest.error,
   }
 

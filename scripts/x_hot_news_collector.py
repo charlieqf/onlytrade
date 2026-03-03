@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import difflib
+import html
 import json
 import math
 import os
@@ -7,7 +9,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
@@ -26,13 +28,13 @@ DEFAULT_CATEGORY_QUERIES = [
     {
         "category": "ai",
         "label": "X-AI",
-        "query": "AI OpenAI Anthropic NVIDIA LLM",
+        "query": "AI OpenAI Anthropic NVIDIA LLM 人工智能 大模型",
         "keywords": ["ai", "openai", "anthropic", "nvidia", "llm", "模型", "算力"],
     },
     {
         "category": "geopolitics",
         "label": "X-地缘",
-        "query": "geopolitics US China Ukraine Russia Middle East",
+        "query": "geopolitics US China Ukraine Russia Middle East 中东 地缘 俄乌",
         "keywords": [
             "geopolitics",
             "ukraine",
@@ -48,7 +50,7 @@ DEFAULT_CATEGORY_QUERIES = [
     {
         "category": "global_macro",
         "label": "X-宏观",
-        "query": "fed inflation rates jobs treasury recession",
+        "query": "fed inflation rates jobs treasury recession 通胀 利率 美联储",
         "keywords": [
             "fed",
             "inflation",
@@ -68,6 +70,29 @@ DEFAULT_CATEGORY_QUERIES = [
         "keywords": ["a股", "港股", "美股", "指数", "盘前", "盘后", "市场", "热点"],
     },
 ]
+
+BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+
+PROXY_NEWS_QUERY_OVERRIDES = {
+    "ai": "人工智能 OR 大模型 OR OpenAI OR Anthropic OR NVIDIA",
+    "geopolitics": "中东 OR 地缘冲突 OR 俄乌 OR 美国 OR 伊朗",
+    "global_macro": "通胀 OR 利率 OR 美联储 OR 经济衰退 OR 就业",
+    "markets_cn": "A股 OR 港股 OR 美股 OR 市场热点 OR 政策",
+}
+
+REUTERS_RSS_BY_CATEGORY = {
+    "ai": "https://feeds.reuters.com/reuters/technologyNews",
+    "geopolitics": "https://feeds.reuters.com/reuters/worldNews",
+    "global_macro": "https://feeds.reuters.com/reuters/businessNews",
+    "markets_cn": "https://feeds.reuters.com/reuters/businessNews",
+}
+
+BLOOMBERG_QUERY_OVERRIDES = {
+    "ai": "site:bloomberg.com AI OpenAI Anthropic NVIDIA",
+    "geopolitics": "site:bloomberg.com geopolitics Middle East Ukraine Russia China US",
+    "global_macro": "site:bloomberg.com inflation rates fed recession jobs treasury",
+    "markets_cn": "site:bloomberg.com China stocks Hong Kong market",
+}
 
 
 def _safe_text(value: Any, max_len: int = 220) -> str:
@@ -117,6 +142,61 @@ def _http_get(
         return resp.read().decode("utf-8", errors="replace")
 
 
+def _strip_html(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    text = html.unescape(text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _looks_mostly_chinese(text: str) -> bool:
+    value = _safe_text(text, 320)
+    if not value:
+        return False
+    total = len(value)
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", value))
+    if total <= 0:
+        return False
+    return (cjk / total) >= 0.28
+
+
+def _translate_to_zh(text: str, timeout_sec: int, cache: Dict[str, str]) -> str:
+    value = _safe_text(text, 320)
+    if not value:
+        return ""
+    if _looks_mostly_chinese(value):
+        return value
+    if value in cache:
+        return cache[value]
+    try:
+        params = {
+            "client": "gtx",
+            "sl": "auto",
+            "tl": "zh-CN",
+            "dt": "t",
+            "q": value,
+        }
+        url = "https://translate.googleapis.com/translate_a/single?" + urlencode(params)
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=max(3, int(timeout_sec))) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        translated = ""
+        if isinstance(payload, list) and payload and isinstance(payload[0], list):
+            translated = "".join(
+                str(seg[0]) for seg in payload[0] if isinstance(seg, list) and seg
+            )
+        translated = _safe_text(translated, 320)
+        out = translated or value
+        cache[value] = out
+        return out
+    except Exception:
+        cache[value] = value
+        return value
+
+
 def _keyword_score(text: str, keywords: List[str]) -> int:
     lower = str(text or "").lower()
     score = 0
@@ -125,6 +205,45 @@ def _keyword_score(text: str, keywords: List[str]) -> int:
         if token and token in lower:
             score += 1
     return score
+
+
+def _topic_fingerprint(text: str) -> str:
+    value = _safe_text(text, 260).lower()
+    if not value:
+        return ""
+    value = re.sub(r"https?://\S+", " ", value)
+    value = re.sub(r"@[a-z0-9_]+", " ", value)
+    value = re.sub(r"#[^\s#]+", " ", value)
+    value = re.sub(r"\s+", "", value)
+    value = re.sub(r"[，,。.!！?？:：;；~`'\"“”‘’\-_=+()\[\]{}<>/\\|]", "", value)
+    return value[:120]
+
+
+def _contains_banned_topic(text: Any) -> bool:
+    value = _safe_text(text, 300)
+    if not value:
+        return False
+    return any(token in value for token in BANNED_TOPIC_SUBSTRINGS)
+
+
+def _is_topic_duplicate(
+    title: str,
+    seen_fingerprints: Set[str],
+    recent_fingerprints: List[str],
+    similarity_threshold: float = 0.90,
+) -> Tuple[bool, str]:
+    fp = _topic_fingerprint(title)
+    if not fp:
+        return True, ""
+    if fp in seen_fingerprints:
+        return True, fp
+    for prev in recent_fingerprints[-80:]:
+        if not prev:
+            continue
+        score = difflib.SequenceMatcher(None, fp, prev).ratio()
+        if score >= similarity_threshold:
+            return True, fp
+    return False, fp
 
 
 def _score_row(
@@ -172,6 +291,9 @@ def _collect_category_from_nitter(
                 title = title_raw or desc_raw
                 if not title:
                     continue
+                if _contains_banned_topic(title) or _contains_banned_topic(desc_raw):
+                    continue
+                summary = desc_raw if desc_raw and desc_raw != title else ""
                 pub_raw = _safe_text(item.findtext("pubDate"), 120)
                 pub_ts_ms = _parse_rss_pub_ts_ms(pub_raw)
                 if pub_ts_ms and now_ts_ms - pub_ts_ms > max_age_ms:
@@ -186,6 +308,7 @@ def _collect_category_from_nitter(
                 rows.append(
                     {
                         "title": title,
+                        "summary": summary or None,
                         "published_at": pub_raw or None,
                         "published_ts_ms": pub_ts_ms,
                         "source": "x.com/nitter-rss",
@@ -207,6 +330,276 @@ def _collect_category_from_nitter(
         except Exception:
             continue
     return [], None
+
+
+def _proxy_query_for_category(category: str, fallback_query: str) -> str:
+    override = _safe_text(PROXY_NEWS_QUERY_OVERRIDES.get(category), 220)
+    return override or _safe_text(fallback_query, 220)
+
+
+def _bloomberg_query_for_category(category: str, fallback_query: str) -> str:
+    override = _safe_text(BLOOMBERG_QUERY_OVERRIDES.get(category), 220)
+    if override:
+        return override
+    base = _safe_text(fallback_query, 180)
+    return _safe_text(f"site:bloomberg.com {base}", 220)
+
+
+def _collect_category_from_google_rss(
+    query: str,
+    category: str,
+    label: str,
+    keywords: List[str],
+    now_ts_ms: int,
+    lookback_hours: int,
+    timeout_sec: int,
+    limit: int,
+    source_name: str,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    max_age_ms = max(1, int(lookback_hours)) * 3_600_000
+    feed_params = [
+        {
+            "q": query,
+            "hl": "zh-CN",
+            "gl": "CN",
+            "ceid": "CN:zh-Hans",
+        },
+        {
+            "q": query,
+            "hl": "en-US",
+            "gl": "US",
+            "ceid": "US:en",
+        },
+    ]
+
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+    used_url = None
+    for params in feed_params:
+        try:
+            url = f"https://news.google.com/rss/search?{urlencode(params)}"
+            xml_text = _http_get(url, timeout_sec)
+            root = ET.fromstring(xml_text)
+            if not used_url:
+                used_url = url
+            rows: List[Dict[str, Any]] = []
+            for item in root.findall(".//item"):
+                raw_title = _safe_text(item.findtext("title"), 360)
+                if not raw_title:
+                    continue
+                title = raw_title
+                source_hint = ""
+                if " - " in raw_title:
+                    left, right = raw_title.rsplit(" - ", 1)
+                    title = _safe_text(left, 260) or raw_title
+                    source_hint = _safe_text(right, 80).lower()
+                title = _strip_html(title)
+                summary = _safe_text(_strip_html(item.findtext("description")), 340)
+                if not title:
+                    continue
+                if _contains_banned_topic(title) or _contains_banned_topic(summary):
+                    continue
+                pub_raw = _safe_text(item.findtext("pubDate"), 120)
+                pub_ts_ms = _parse_rss_pub_ts_ms(pub_raw)
+                if pub_ts_ms and now_ts_ms - pub_ts_ms > max_age_ms:
+                    continue
+                link = _safe_text(item.findtext("link"), 460) or None
+                source_value = source_name
+                if "reuters" in source_hint:
+                    source_value = "reuters/via-google-rss"
+                elif "bloomberg" in source_hint:
+                    source_value = "bloomberg/via-google-rss"
+                score = _score_row(
+                    title, keywords, pub_ts_ms, now_ts_ms, engagement=0.0
+                )
+                rows.append(
+                    {
+                        "title": title,
+                        "summary": summary or None,
+                        "published_at": pub_raw or None,
+                        "published_ts_ms": pub_ts_ms,
+                        "source": source_value,
+                        "url": link,
+                        "author": None,
+                        "category": category,
+                        "category_label": label,
+                        "score": score,
+                    }
+                )
+            rows.sort(
+                key=lambda r: (
+                    float(r.get("score") or 0),
+                    int(r.get("published_ts_ms") or 0),
+                ),
+                reverse=True,
+            )
+            for row in rows:
+                key = _topic_fingerprint(row.get("title") or "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(row)
+                if len(merged) >= max(1, int(limit)):
+                    break
+            if len(merged) >= max(1, int(limit)):
+                break
+        except Exception:
+            continue
+    return merged[: max(1, int(limit))], used_url
+
+
+def _collect_category_from_reuters_rss(
+    category: str,
+    label: str,
+    keywords: List[str],
+    now_ts_ms: int,
+    lookback_hours: int,
+    timeout_sec: int,
+    limit: int,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    max_age_ms = max(1, int(lookback_hours)) * 3_600_000
+    url = _safe_text(REUTERS_RSS_BY_CATEGORY.get(category), 260)
+    if not url:
+        return [], None
+    try:
+        xml_text = _http_get(url, timeout_sec)
+        root = ET.fromstring(xml_text)
+        rows: List[Dict[str, Any]] = []
+        for item in root.findall(".//item"):
+            title = _safe_text(_strip_html(item.findtext("title")), 280)
+            if not title:
+                continue
+            summary = _safe_text(_strip_html(item.findtext("description")), 340)
+            if _contains_banned_topic(title) or _contains_banned_topic(summary):
+                continue
+            pub_raw = _safe_text(item.findtext("pubDate"), 120)
+            pub_ts_ms = _parse_rss_pub_ts_ms(pub_raw)
+            if pub_ts_ms and now_ts_ms - pub_ts_ms > max_age_ms:
+                continue
+            link = _safe_text(item.findtext("link"), 460) or None
+            score = _score_row(title, keywords, pub_ts_ms, now_ts_ms, engagement=0.0)
+            rows.append(
+                {
+                    "title": title,
+                    "summary": summary or None,
+                    "published_at": pub_raw or None,
+                    "published_ts_ms": pub_ts_ms,
+                    "source": "reuters/rss",
+                    "url": link,
+                    "author": None,
+                    "category": category,
+                    "category_label": label,
+                    "score": score,
+                }
+            )
+        rows.sort(
+            key=lambda r: (
+                float(r.get("score") or 0),
+                int(r.get("published_ts_ms") or 0),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit))], url
+    except Exception:
+        return [], None
+
+
+def _collect_category_from_proxy_news(
+    query: str,
+    category: str,
+    label: str,
+    keywords: List[str],
+    now_ts_ms: int,
+    lookback_hours: int,
+    timeout_sec: int,
+    limit: int,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    proxy_query = _proxy_query_for_category(category, query)
+    bloomberg_query = _bloomberg_query_for_category(category, query)
+    reuters_query = _safe_text(f"site:reuters.com {proxy_query}", 220)
+
+    rows_google, note_google = _collect_category_from_google_rss(
+        query=proxy_query,
+        category=category,
+        label=label,
+        keywords=keywords,
+        now_ts_ms=now_ts_ms,
+        lookback_hours=lookback_hours,
+        timeout_sec=timeout_sec,
+        limit=limit,
+        source_name="proxy/google-news-rss",
+    )
+
+    rows_reuters, note_reuters = _collect_category_from_reuters_rss(
+        category=category,
+        label=label,
+        keywords=keywords,
+        now_ts_ms=now_ts_ms,
+        lookback_hours=lookback_hours,
+        timeout_sec=timeout_sec,
+        limit=limit,
+    )
+
+    rows_bloomberg, note_bloomberg = _collect_category_from_google_rss(
+        query=bloomberg_query,
+        category=category,
+        label=label,
+        keywords=keywords,
+        now_ts_ms=now_ts_ms,
+        lookback_hours=lookback_hours,
+        timeout_sec=timeout_sec,
+        limit=limit,
+        source_name="proxy/bloomberg-via-google-rss",
+    )
+
+    rows_reuters_google, note_reuters_google = _collect_category_from_google_rss(
+        query=reuters_query,
+        category=category,
+        label=label,
+        keywords=keywords,
+        now_ts_ms=now_ts_ms,
+        lookback_hours=lookback_hours,
+        timeout_sec=timeout_sec,
+        limit=limit,
+        source_name="reuters/via-google-rss",
+    )
+
+    merged_rows: List[Dict[str, Any]] = []
+    seen = set()
+    notes = [
+        x for x in [note_bloomberg, note_reuters, note_reuters_google, note_google] if x
+    ]
+
+    buckets = [
+        list(rows_bloomberg or []),
+        list(rows_reuters or []),
+        list(rows_reuters_google or []),
+        list(rows_google or []),
+    ]
+    pointers = [0, 0, 0, 0]
+
+    while len(merged_rows) < max(1, int(limit)):
+        advanced = False
+        for idx, bucket in enumerate(buckets):
+            while pointers[idx] < len(bucket):
+                row = bucket[pointers[idx]]
+                pointers[idx] += 1
+                key = _topic_fingerprint(row.get("title") or "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged_rows.append(row)
+                advanced = True
+                break
+            if len(merged_rows) >= max(1, int(limit)):
+                break
+        if not advanced:
+            break
+
+    source_note = "proxy_news_rss" if merged_rows else None
+    if merged_rows and notes:
+        source_note = f"proxy_news_rss:{notes[0]}"
+    return merged_rows[: max(1, int(limit))], source_note
 
 
 def _collect_category_from_x_api(
@@ -362,6 +755,7 @@ def collect_x_hot_events(
     nitter_bases: List[str],
     bearer_token: str,
     query_list: List[Dict[str, Any]],
+    translate_zh: bool,
 ) -> Dict[str, Any]:
     now_ts_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     per_cat_limit = max(1, min(int(limit_per_category), 20))
@@ -371,7 +765,8 @@ def collect_x_hot_events(
     categories: Dict[str, List[Dict[str, Any]]] = {}
     provider_hits: List[str] = []
     merged: List[Dict[str, Any]] = []
-    seen_titles = set()
+    seen_fingerprints: Set[str] = set()
+    recent_fingerprints: List[str] = []
 
     for cfg in query_list:
         category = _safe_text(cfg.get("category"), 32).lower()
@@ -418,6 +813,20 @@ def collect_x_hot_events(
             if rows:
                 source_note = used_url or "nitter_rss"
 
+        if not rows and mode in ("auto", "proxy_news"):
+            rows, proxy_note = _collect_category_from_proxy_news(
+                query=query,
+                category=category,
+                label=label,
+                keywords=keywords,
+                now_ts_ms=now_ts_ms,
+                lookback_hours=lookback_hours,
+                timeout_sec=timeout_sec,
+                limit=per_cat_limit,
+            )
+            if rows:
+                source_note = proxy_note or "proxy_news_rss"
+
         if source_note:
             provider_hits.append(source_note)
 
@@ -426,10 +835,19 @@ def collect_x_hot_events(
             title = _safe_text(row.get("title"), 220)
             if not title:
                 continue
-            key = title.lower()
-            if key in seen_titles:
+            if _contains_banned_topic(title) or _contains_banned_topic(
+                row.get("summary")
+            ):
                 continue
-            seen_titles.add(key)
+            is_dup, fp = _is_topic_duplicate(
+                title,
+                seen_fingerprints,
+                recent_fingerprints,
+            )
+            if is_dup:
+                continue
+            seen_fingerprints.add(fp)
+            recent_fingerprints.append(fp)
             merged.append(row)
             if len(merged) >= total_limit:
                 break
@@ -441,6 +859,31 @@ def collect_x_hot_events(
         reverse=True,
     )
     merged = merged[:total_limit]
+
+    if translate_zh:
+        translation_cache: Dict[str, str] = {}
+
+        def _translate_row(row: Dict[str, Any]) -> Dict[str, Any]:
+            if not isinstance(row, dict):
+                return row
+            out = dict(row)
+            raw_title = _safe_text(out.get("title"), 320)
+            raw_summary = _safe_text(out.get("summary"), 320)
+            if raw_title:
+                out["title"] = _translate_to_zh(
+                    raw_title, timeout_sec, translation_cache
+                )
+            if raw_summary:
+                out["summary"] = _translate_to_zh(
+                    raw_summary, timeout_sec, translation_cache
+                )
+            return out
+
+        merged = [_translate_row(row) for row in merged]
+        for key, rows in list(categories.items()):
+            if not isinstance(rows, list):
+                continue
+            categories[key] = [_translate_row(row) for row in rows]
 
     existing_payload = _read_existing_payload(output_path)
     use_cache_fallback = False
@@ -458,9 +901,24 @@ def collect_x_hot_events(
                 title = _safe_text(row.get("title"), 220)
                 if not title:
                     continue
+                if _contains_banned_topic(title) or _contains_banned_topic(
+                    row.get("summary")
+                ):
+                    continue
+                is_dup, fp = _is_topic_duplicate(
+                    title,
+                    seen_fingerprints,
+                    recent_fingerprints,
+                    similarity_threshold=0.92,
+                )
+                if is_dup:
+                    continue
+                seen_fingerprints.add(fp)
+                recent_fingerprints.append(fp)
                 normalized_cached.append(
                     {
                         "title": title,
+                        "summary": _safe_text(row.get("summary"), 260) or None,
                         "published_at": _safe_text(row.get("published_at"), 120)
                         or None,
                         "published_ts_ms": int(row.get("published_ts_ms") or 0) or None,
@@ -485,12 +943,26 @@ def collect_x_hot_events(
         label = _safe_text(cfg.get("label"), 32) or f"X-{category}"
         rows = categories.get(category) or []
         picks = [
-            _safe_text(row.get("title"), 46)
+            _safe_text(
+                row.get("summary") or row.get("title"),
+                56,
+            )
             for row in rows[:2]
-            if _safe_text(row.get("title"), 46)
+            if _safe_text(row.get("summary") or row.get("title"), 56)
         ]
         if picks:
             commentary.append(f"{label}热点：{'；'.join(picks)}")
+
+    background_notes: List[str] = []
+    for row in merged:
+        title = _safe_text(row.get("title"), 44)
+        summary = _safe_text(row.get("summary"), 88)
+        if title and summary:
+            background_notes.append(f"{title}：{summary}")
+        elif title:
+            background_notes.append(title)
+        if len(background_notes) >= 14:
+            break
 
     if use_cache_fallback and not commentary:
         cached_commentary = (
@@ -527,8 +999,17 @@ def collect_x_hot_events(
             if any("nitter" in hit for hit in provider_hits)
             else "x_api"
         )
+        if any("proxy_news_rss" in hit for hit in provider_hits):
+            source_kind = "x_api_plus_proxy"
     elif provider_hits:
-        source_kind = "nitter_rss"
+        if any("proxy_news_rss" in hit for hit in provider_hits):
+            source_kind = (
+                "nitter_plus_proxy"
+                if any("nitter" in hit for hit in provider_hits)
+                else "proxy_news_rss"
+            )
+        else:
+            source_kind = "nitter_rss"
 
     as_of_iso = (
         datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -556,6 +1037,7 @@ def collect_x_hot_events(
         "headlines": merged,
         "categories": categories,
         "commentary": commentary,
+        "background_notes": background_notes,
         "titles": titles,
         "cache_fallback": use_cache_fallback,
     }
@@ -567,7 +1049,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="data/live/onlytrade/x_hot_events.json")
     parser.add_argument(
-        "--provider", default=DEFAULT_PROVIDER, choices=["auto", "x_api", "nitter_rss"]
+        "--provider",
+        default=DEFAULT_PROVIDER,
+        choices=["auto", "x_api", "nitter_rss", "proxy_news"],
     )
     parser.add_argument("--limit-total", type=int, default=36)
     parser.add_argument("--limit-per-category", type=int, default=10)
@@ -578,6 +1062,19 @@ def main() -> int:
         "--query-json", default=os.environ.get("X_COLLECTOR_QUERY_JSON", "")
     )
     parser.add_argument("--bearer-token", default=os.environ.get("X_BEARER_TOKEN", ""))
+    parser.add_argument(
+        "--translate-zh",
+        dest="translate_zh",
+        action="store_true",
+        default=True,
+        help="Translate collected headlines and summaries to Chinese",
+    )
+    parser.add_argument(
+        "--no-translate-zh",
+        dest="translate_zh",
+        action="store_false",
+        help="Disable Chinese translation",
+    )
     args = parser.parse_args()
 
     query_list = _normalize_query_list(args.query_json)
@@ -598,6 +1095,7 @@ def main() -> int:
         nitter_bases=nitter_bases,
         bearer_token=args.bearer_token,
         query_list=query_list,
+        translate_zh=bool(args.translate_zh),
     )
     print(
         json.dumps(

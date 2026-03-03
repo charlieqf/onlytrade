@@ -656,6 +656,11 @@ run_viewer_simulator() {
     tempo_flag="--no-constant-tempo"
   fi
 
+  local room_mode_flag=""
+  if [ "$room_id" = "t_015" ]; then
+    room_mode_flag="--room-mode polymarket"
+  fi
+
   "$py_bin" "$REPO_ROOT/scripts/simulate_viewers_chat.py" \
     --api-base "$API_BASE" \
     --room-id "$room_id" \
@@ -669,6 +674,7 @@ run_viewer_simulator() {
     --content-mode "$content_mode" \
     --llm-ratio "$llm_ratio" \
     --llm-model "$llm_model" \
+    $room_mode_flag \
     --seed "$seed" \
     --log-path "$log_path"
 }

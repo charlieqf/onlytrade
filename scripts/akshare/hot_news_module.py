@@ -1,9 +1,7 @@
-from __future__ import annotations
-
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 import re
-from typing import Any
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
@@ -113,6 +111,7 @@ BANNED_TITLE_SUBSTRINGS = [
     "月度视频",
     "2024年度",
     "2025年度",
+    "截肢",
 ]
 
 CATEGORY_PRIORITY = {
@@ -131,7 +130,25 @@ def _safe_text(value: Any, max_len: int = 220) -> str:
     return text[:max_len]
 
 
-def _rss_urls_for_query(query: str) -> list[str]:
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", " ", str(text or ""))
+
+
+def _normalize_summary(title: str, raw_summary: str, max_len: int = 220) -> str:
+    summary = _safe_text(_strip_html(raw_summary), max_len)
+    if not summary:
+        return ""
+    summary = re.sub(r"\s+", " ", summary).strip()
+    lower_title = str(title or "").strip().lower()
+    lower_summary = summary.lower()
+    if lower_title and (
+        lower_summary == lower_title or lower_summary.startswith(lower_title + " - ")
+    ):
+        return ""
+    return summary
+
+
+def _rss_urls_for_query(query: str) -> List[str]:
     q = quote_plus(str(query or "").strip())
     if not q:
         return []
@@ -154,7 +171,7 @@ def _normalize_title(raw: str) -> str:
     return title
 
 
-def _parse_pub_ts_ms(pub_date: str | None) -> int | None:
+def _parse_pub_ts_ms(pub_date: Optional[str]) -> Optional[int]:
     text = _safe_text(pub_date, 80)
     if not text:
         return None
@@ -167,7 +184,7 @@ def _parse_pub_ts_ms(pub_date: str | None) -> int | None:
         return None
 
 
-def _keyword_score(title: str, keywords: list[str]) -> int:
+def _keyword_score(title: str, keywords: List[str]) -> int:
     t = str(title or "").lower()
     score = 0
     for kw in keywords:
@@ -192,10 +209,10 @@ def _parse_rss_items(
     xml_text: str,
     limit: int,
     category: str,
-    keywords: list[str],
+    keywords: List[str],
     now_ts_ms: int,
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
     if not xml_text:
         return out
 
@@ -209,6 +226,7 @@ def _parse_rss_items(
         title = _normalize_title(item.findtext("title") or "")
         if not title:
             continue
+        summary = _normalize_summary(title, item.findtext("description") or "")
         lower_title = title.lower()
         if any(token in title for token in BANNED_TITLE_SUBSTRINGS):
             continue
@@ -228,6 +246,7 @@ def _parse_rss_items(
         out.append(
             {
                 "title": title,
+                "summary": summary or None,
                 "published_at": pub_date,
                 "published_ts_ms": pub_ts_ms,
                 "source": source,
@@ -252,10 +271,10 @@ def _parse_rss_items(
 def _fetch_category_items(
     query: str,
     category: str,
-    keywords: list[str],
+    keywords: List[str],
     limit: int,
     now_ts_ms: int,
-) -> list[dict[str, Any]]:
+) -> List[Dict[str, Any]]:
     for url in _rss_urls_for_query(query):
         try:
             req = Request(url, headers={"User-Agent": "onlytrade-news-bot/1.0"})
@@ -277,13 +296,13 @@ def _fetch_category_items(
 
 def collect_hot_news_bundle(
     *, limit_per_category: int = 6, limit_total: int = 24
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     per_cat = max(1, min(int(limit_per_category or 6), 12))
     total = max(5, min(int(limit_total or 24), 80))
 
-    categories: dict[str, list[dict[str, Any]]] = {}
-    merged: list[dict[str, Any]] = []
-    seen_titles: set[str] = set()
+    categories: Dict[str, List[Dict[str, Any]]] = {}
+    merged: List[Dict[str, Any]] = []
+    seen_titles: Set[str] = set()
 
     now_ts_ms = int(datetime.utcnow().timestamp() * 1000)
 
@@ -304,7 +323,7 @@ def collect_hot_news_bundle(
             limit=per_cat,
             now_ts_ms=now_ts_ms,
         )
-        normalized: list[dict[str, Any]] = []
+        normalized: List[Dict[str, Any]] = []
         for item in rows:
             title = _safe_text(item.get("title"), 200)
             if not title or title in seen_titles:
@@ -318,7 +337,7 @@ def collect_hot_news_bundle(
         if len(merged) >= total:
             break
 
-    commentary: list[str] = []
+    commentary: List[str] = []
     for cfg in CATEGORY_QUERIES:
         category = str(cfg.get("category") or "")
         rows = categories.get(category) or []
@@ -331,7 +350,7 @@ def collect_hot_news_bundle(
             continue
         commentary.append(f"{label}热点：{'；'.join(picks)}")
 
-    titles: list[str] = []
+    titles: List[str] = []
     for line in commentary:
         titles.append(_safe_text(line, 120))
     for row in merged:

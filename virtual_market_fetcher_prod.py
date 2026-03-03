@@ -12,6 +12,8 @@ import json
 import time
 import os
 import logging
+import re
+import difflib
 from datetime import datetime
 
 try:
@@ -33,6 +35,24 @@ DASHSCOPE_BASE_URL = str(
     or "https://dashscope.aliyuncs.com/compatible-mode/v1"
 ).strip()
 MODEL_NAME = str(os.environ.get("POLYMARKET_LLM_MODEL") or "qwen3-max").strip()
+DEDUP_STATE_PATH = str(
+    os.environ.get("POLYMARKET_DEDUP_STATE_PATH")
+    or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "virtual_market_dedup_state.json"
+    )
+).strip()
+TOPIC_COOLDOWN_HOURS = max(
+    0.25, float(os.environ.get("POLYMARKET_TOPIC_COOLDOWN_HOURS") or 6)
+)
+TITLE_COOLDOWN_HOURS = max(
+    1.0, float(os.environ.get("POLYMARKET_TITLE_COOLDOWN_HOURS") or 24)
+)
+TITLE_SIMILARITY_THRESHOLD = min(
+    0.99, max(0.70, float(os.environ.get("POLYMARKET_TITLE_SIMILARITY") or 0.88))
+)
+MAX_MARKETS_PER_CYCLE = max(
+    1, int(os.environ.get("POLYMARKET_MAX_MARKETS_PER_CYCLE") or 2)
+)
 
 # System Configuration
 LOG_FILE = os.path.join(
@@ -94,6 +114,116 @@ def _chat_completion_content(messages, temperature=0.7, max_tokens=300):
     message = choices[0].get("message") if isinstance(choices[0], dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     return str(content or "")
+
+
+def _now_epoch_ms():
+    return int(time.time() * 1000)
+
+
+def _normalize_text(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[\[\]\(\)【】{}<>《》'\"“”‘’·,.;:!?！？。，、\-_/|]", "", text)
+    return text
+
+
+def _load_dedup_state(path):
+    if not path or not os.path.isfile(path):
+        return {"topic_seen": {}, "title_seen": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {"topic_seen": {}, "title_seen": {}}
+        topic_seen = data.get("topic_seen")
+        title_seen = data.get("title_seen")
+        return {
+            "topic_seen": topic_seen if isinstance(topic_seen, dict) else {},
+            "title_seen": title_seen if isinstance(title_seen, dict) else {},
+        }
+    except Exception:
+        return {"topic_seen": {}, "title_seen": {}}
+
+
+def _save_dedup_state(path, state):
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception as e:
+        logging.warning(f"Failed to save dedup state: {e}")
+
+
+def _prune_state(state, now_ms):
+    topic_cutoff = now_ms - int(TOPIC_COOLDOWN_HOURS * 3600 * 1000)
+    title_cutoff = now_ms - int(TITLE_COOLDOWN_HOURS * 3600 * 1000)
+
+    topic_seen = state.get("topic_seen") or {}
+    title_seen = state.get("title_seen") or {}
+
+    state["topic_seen"] = {
+        k: int(v)
+        for k, v in topic_seen.items()
+        if isinstance(k, str) and str(k).strip() and int(v or 0) >= topic_cutoff
+    }
+    state["title_seen"] = {
+        k: int(v)
+        for k, v in title_seen.items()
+        if isinstance(k, str) and str(k).strip() and int(v or 0) >= title_cutoff
+    }
+
+
+def _recent_market_titles(hours):
+    hours = max(1, int(hours))
+    cutoff_expr = f"-{hours} hours"
+    rows = []
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(virtual_exchange_db.DB_FILE)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT title
+            FROM MARKETS
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+            LIMIT 300
+            """,
+            (cutoff_expr,),
+        )
+        rows = [str(r[0] or "") for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        logging.warning(f"Failed to load recent market titles: {e}")
+    return rows
+
+
+def _title_is_duplicate(title, title_seen, recent_titles):
+    norm_title = _normalize_text(title)
+    if not norm_title:
+        return True, "empty_title", norm_title
+
+    if norm_title in title_seen:
+        return True, "local_state_exact", norm_title
+
+    for t in recent_titles:
+        norm_other = _normalize_text(t)
+        if not norm_other:
+            continue
+        if norm_other == norm_title:
+            return True, "db_exact", norm_title
+        score = difflib.SequenceMatcher(None, norm_title, norm_other).ratio()
+        if score >= TITLE_SIMILARITY_THRESHOLD:
+            return True, f"db_fuzzy_{score:.2f}", norm_title
+
+    return False, "ok", norm_title
 
 
 # ----------------- 数据抓取模块 (Data Fetching) -----------------
@@ -239,6 +369,14 @@ def generate_market_via_llm(topic_data):
 def process_markets():
     logging.info("=== Starting Data Ingestion Cycle ===")
 
+    virtual_exchange_db.init_db()
+    now_ms = _now_epoch_ms()
+    dedup_state = _load_dedup_state(DEDUP_STATE_PATH)
+    _prune_state(dedup_state, now_ms)
+    topic_seen = dedup_state.get("topic_seen") or {}
+    title_seen = dedup_state.get("title_seen") or {}
+    recent_titles = _recent_market_titles(int(TITLE_COOLDOWN_HOURS))
+
     # 1. Fetch Data
     weibo_topics = fetch_weibo_hot()
     time.sleep(2)  # Be polite to APIs
@@ -250,28 +388,59 @@ def process_markets():
         logging.warning("No topics fetched from any source. Cycle ending.")
         return
 
-    # Initialize DB if not exists
-    virtual_exchange_db.init_db()
-
-    # 2. Process via LLM (Just doing top 1 from each source to save API calls during testing)
-    topics_to_process = []
-    if weibo_topics:
-        topics_to_process.append(weibo_topics[0])
-    if zhihu_topics:
-        topics_to_process.append(zhihu_topics[0])
-
+    # 2. Process via LLM with dedup filters and fallback to next topics
+    topics_to_process = all_topics
     generated_markets = []
+    accepted = 0
 
     for topic in topics_to_process:
+        if accepted >= MAX_MARKETS_PER_CYCLE:
+            break
+
+        topic_title = str(topic.get("title") or "").strip()
+        topic_key = _normalize_text(topic_title)
+        if not topic_key:
+            continue
+
+        last_seen_ms = int(topic_seen.get(topic_key) or 0)
+        cooldown_ms = int(TOPIC_COOLDOWN_HOURS * 3600 * 1000)
+        if last_seen_ms > 0 and (now_ms - last_seen_ms) < cooldown_ms:
+            age_sec = int((now_ms - last_seen_ms) / 1000)
+            logging.info(
+                f"Skip duplicate source topic within cooldown ({age_sec}s): {topic_title}"
+            )
+            continue
+
         market_data = generate_market_via_llm(topic)
         if market_data:
+            title = str(market_data.get("title") or "").strip()
+            is_dup, reason, norm_title = _title_is_duplicate(
+                title,
+                title_seen,
+                recent_titles,
+            )
+            if is_dup:
+                logging.info(f"Skip duplicate market title ({reason}): {title}")
+                topic_seen[topic_key] = now_ms
+                continue
+
             generated_markets.append(market_data)
             # 3. Save to SQLite database (Phase 3 Integration)
             market_id = virtual_exchange_db.create_market(market_data)
             logging.info(
                 f"Successfully saved to Virtual Exchange DB. Market ID: {market_id}"
             )
+            if norm_title:
+                title_seen[norm_title] = now_ms
+            topic_seen[topic_key] = now_ms
+            recent_titles.insert(0, title)
+            recent_titles = recent_titles[:300]
+            accepted += 1
         time.sleep(1)  # Rate limiting for LLM API
+
+    dedup_state["topic_seen"] = topic_seen
+    dedup_state["title_seen"] = title_seen
+    _save_dedup_state(DEDUP_STATE_PATH, dedup_state)
 
     logging.info(
         f"=== Cycle Complete. Generated and saved {len(generated_markets)} new markets. ==="

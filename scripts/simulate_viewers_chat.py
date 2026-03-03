@@ -580,6 +580,27 @@ def sanitize_polymarket_viewer_text(text: str) -> str:
     return value[:120].strip()
 
 
+def compact_polymarket_event_title(text: str, max_len: int = 96) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    value = re.sub(r"\s+", " ", value)
+    limit = max(24, int(max_len or 96))
+    if len(value) <= limit:
+        return value
+    sliced = value[:limit]
+    soft_boundary = max(12, int(limit * 0.6))
+    cut_idx = -1
+    for i in range(len(sliced) - 1, soft_boundary - 1, -1):
+        if sliced[i] in "，。！？；、:：-—| ":
+            cut_idx = i
+            break
+    core = sliced[: cut_idx if cut_idx > 0 else len(sliced)].rstrip(
+        "，。！？；、:：-—| "
+    )
+    return f"{core}…" if core else ""
+
+
 def looks_stock_like_text(text: str) -> bool:
     value = str(text or "").strip()
     if not value:
@@ -602,6 +623,33 @@ def looks_stock_like_text(text: str) -> bool:
         "净回笼",
     ]
     return any(token in value for token in stock_tokens)
+
+
+def normalize_topic_key(text: str) -> str:
+    value = str(text or "").strip().lower()
+    if not value:
+        return ""
+    value = re.sub(r"^\s*[\[【][^\]】]{1,12}[\]】]\s*", "", value)
+    value = re.sub(r"\s+", "", value)
+    value = re.sub(r"[，,。.!！?？:：;；~`'\"“”‘’\-_=+()\[\]{}<>/\\]", "", value)
+    return value[:120]
+
+
+def resolve_polymarket_topic_key(room_prompt_context: Optional[Dict]) -> str:
+    rpc = room_prompt_context if isinstance(room_prompt_context, dict) else {}
+    raw_titles = rpc.get("news_titles")
+    news_titles = raw_titles if isinstance(raw_titles, list) else []
+    for item in news_titles:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        key = normalize_topic_key(text)
+        if key:
+            return key
+    market_line = str(rpc.get("market_overview") or "").strip()
+    if market_line:
+        return normalize_topic_key(market_line)
+    return ""
 
 
 def pick_topic_text(
@@ -629,7 +677,9 @@ def pick_topic_text(
                 event_title = re.sub(r"^\s*[\[【][^\]】]{1,12}[\]】]\s*", "", text)
                 break
         if event_title and random.random() < 0.45:
-            template = f"就这条“{event_title[:24]}”，你更站正方还是反方？"
+            compact_title = compact_polymarket_event_title(event_title, max_len=96)
+            if compact_title:
+                template = f"就这条“{compact_title}”，你更站正方还是反方？"
         return category, sanitize_polymarket_viewer_text(template)
 
     categories = list(TOPIC_WEIGHTS.keys())
@@ -916,6 +966,9 @@ def main() -> int:
     llm_fallback = 0
     llm_fail = 0
     recent_texts = deque(maxlen=max(4, int(args.recent_window_size)))
+    topic_window_cap = 240
+    sent_polymarket_topic_keys: Set[str] = set()
+    sent_polymarket_topic_order: deque[str] = deque(maxlen=topic_window_cap)
 
     room_prompt_context: Optional[Dict] = None
     room_ctx_error: Optional[str] = None
@@ -961,6 +1014,24 @@ def main() -> int:
         )
         effective_symbols = merge_symbol_pool(symbols, dynamic_symbols, limit=16)
 
+        topic_key = ""
+        if polymarket_mode:
+            topic_key = resolve_polymarket_topic_key(room_prompt_context)
+            if topic_key and topic_key in sent_polymarket_topic_keys:
+                next_interval = random.uniform(
+                    max(0.2, float(args.min_interval_sec)),
+                    max(float(args.min_interval_sec), float(args.max_interval_sec)),
+                )
+                if args.constant_tempo:
+                    next_send_at += next_interval
+                    if next_send_at < time.time() - max(
+                        1.0, float(args.max_interval_sec)
+                    ):
+                        next_send_at = time.time()
+                else:
+                    time.sleep(next_interval)
+                continue
+
         viewer = random.choice(viewers)
         room_time_ctx = (
             room_prompt_context.get("time_context")
@@ -992,7 +1063,8 @@ def main() -> int:
         if mode < 0.45:
             visibility = "public"
             message_type = "public_mention_agent"
-            text = f"@agent {body}"
+            mention_name = "小真" if polymarket_mode else "agent"
+            text = f"@{mention_name} {body}"
             expect_reply = True
         elif mode < 0.75:
             visibility = "private"
@@ -1016,6 +1088,13 @@ def main() -> int:
         code, resp = api.post(f"/api/chat/rooms/{args.room_id}/messages", payload)
         if code == 200 and body:
             recent_texts.append(str(body))
+            if polymarket_mode and topic_key:
+                if topic_key not in sent_polymarket_topic_keys:
+                    sent_polymarket_topic_keys.add(topic_key)
+                    if len(sent_polymarket_topic_order) >= topic_window_cap:
+                        dropped = sent_polymarket_topic_order.popleft()
+                        sent_polymarket_topic_keys.discard(dropped)
+                    sent_polymarket_topic_order.append(topic_key)
         row = {
             "ts_ms": sent_ts_ms,
             "time_context": time_ctx,
@@ -1029,6 +1108,8 @@ def main() -> int:
             "status": code,
             "ok": code == 200,
         }
+        if topic_key:
+            row["topic_key"] = topic_key
         if llm_error:
             row["llm_error"] = llm_error
         if room_ctx_error:

@@ -48,7 +48,7 @@ MAX_MARKET_POOL_SIZE = max(
     1, int(os.environ.get("POLYMARKET_MAX_MARKET_POOL_SIZE", "20"))
 )
 MARKET_ROTATION_SECONDS = max(
-    8, int(float(os.environ.get("POLYMARKET_BRIDGE_ROTATE_SEC", "28")))
+    6, int(float(os.environ.get("POLYMARKET_BRIDGE_ROTATE_SEC", "18")))
 )
 BRIDGE_ROOM_ID = str(os.environ.get("POLYMARKET_BRIDGE_ROOM_ID") or "t_015").strip()
 RUNTIME_API_BASE = (
@@ -66,16 +66,16 @@ COMMENTARY_POLL_INTERVAL_SEC = max(
     0.5, float(os.environ.get("POLYMARKET_BRIDGE_COMMENTARY_POLL_SEC") or 1.2)
 )
 MIN_ROTATE_AFTER_COMMENTARY_MS = max(
-    6000,
+    0,
     int(
         float(
-            os.environ.get("POLYMARKET_BRIDGE_MIN_ROTATE_AFTER_COMMENTARY_MS") or 26000
+            os.environ.get("POLYMARKET_BRIDGE_MIN_ROTATE_AFTER_COMMENTARY_MS") or 1200
         )
     ),
 )
-PIN_ACTIVE_COMMENTARY_MS = max(
-    5000,
-    int(float(os.environ.get("POLYMARKET_BRIDGE_PIN_ACTIVE_COMMENTARY_MS") or 45000)),
+PREFETCH_LEAD_MS = max(
+    0,
+    int(float(os.environ.get("POLYMARKET_BRIDGE_PREFETCH_LEAD_MS") or 2500)),
 )
 BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
 
@@ -395,29 +395,14 @@ def run_bridge():
                             estimated_finish_ms = (
                                 created_ts_ms + _estimate_tts_duration_ms(text)
                             )
+                            planned_rotate_ms = max(
+                                now_ms + MIN_ROTATE_AFTER_COMMENTARY_MS,
+                                estimated_finish_ms - PREFETCH_LEAD_MS,
+                            )
                             next_rotate_after_ts_ms = max(
                                 now_ms,
-                                estimated_finish_ms,
-                                now_ms + MIN_ROTATE_AFTER_COMMENTARY_MS,
+                                planned_rotate_ms,
                             )
-
-            active_commentary_pin = False
-            if FOLLOW_COMMENTARY_FINISH and isinstance(latest_commentary_row, dict):
-                pin_market_id = str(
-                    latest_commentary_row.get("market_id") or ""
-                ).strip()
-                pin_created_ms = int(latest_commentary_row.get("created_ts_ms") or 0)
-                pin_age_ms = now_ms - pin_created_ms if pin_created_ms > 0 else None
-                if (
-                    pin_market_id
-                    and pin_market_id in candidate_ids
-                    and pin_age_ms is not None
-                    and 0 <= pin_age_ms <= PIN_ACTIVE_COMMENTARY_MS
-                ):
-                    if current_market_id != pin_market_id:
-                        current_market_id = pin_market_id
-                        last_rotation_time = now_ts
-                    active_commentary_pin = True
 
             should_rotate_after_commentary = (
                 next_rotate_after_ts_ms > 0 and now_ms >= next_rotate_after_ts_ms
@@ -427,11 +412,8 @@ def run_bridge():
             if (
                 current_market_id is None
                 or current_market_id not in candidate_ids
-                or (not active_commentary_pin and should_rotate_after_commentary)
-                or (
-                    not active_commentary_pin
-                    and (now_ts - last_rotation_time > MARKET_ROTATION_SECONDS)
-                )
+                or should_rotate_after_commentary
+                or (now_ts - last_rotation_time > MARKET_ROTATION_SECONDS)
             ):
                 picked = _pick_next_market_id(candidate_markets, current_market_id)
                 if picked:

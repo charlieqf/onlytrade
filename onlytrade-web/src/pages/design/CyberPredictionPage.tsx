@@ -59,6 +59,61 @@ interface StreamLogItem {
     time: number
 }
 
+interface CommentaryRequestPayload {
+    eventType: string
+    eventKey: string
+    market: MarketState['market']
+    recentLogs: MarketState['logs']
+    triggerReason: string
+    probDelta?: number
+}
+
+interface PrepareCommentaryOptions {
+    requireSpeech?: boolean
+    speechRetryCount?: number
+}
+
+interface PreparedCommentary {
+    item: CommentaryItem
+    speechBlob: Blob | null
+}
+
+interface AudioQueueItem {
+    id: string
+    url: string
+    retries: number
+}
+
+interface PendingSwitchPacket {
+    marketId: string
+    nextState: MarketState
+    payload: CommentaryRequestPayload
+    prepared: PreparedCommentary | null
+    preparing: boolean
+    lastAttemptTsMs: number
+    fallbackPrepared: PreparedCommentary | null
+    fallbackPreparing: boolean
+    fallbackAttemptTsMs: number
+    pendingSinceTsMs: number
+    prob: number | null
+    lastLogId: number | null
+    nowMs: number
+}
+
+const SWITCH_FALLBACK_GRACE_MS = 2200
+const SWITCH_FALLBACK_FORCE_MS = 12000
+const AUDIO_TEXT_DEDUPE_MS = 45000
+
+function normalizeAudioDedupeText(value: unknown): string {
+    const text = String(value || '').trim()
+    if (!text) return ''
+    return text
+        .replace(/\s+/g, ' ')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[。！？!?]+$/g, '')
+}
+
 function normalizeProb(value: unknown): number | null {
     const n = Number(value)
     if (!Number.isFinite(n)) return null
@@ -141,9 +196,16 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         lastCommentaryTs: 0,
     })
     const inFlightRef = useRef(false)
-    const audioQueueRef = useRef<Array<{ id: string; url: string }>>([])
+    const audioQueueRef = useRef<AudioQueueItem[]>([])
     const audioPlayingRef = useRef(false)
     const activeAudioRef = useRef<HTMLAudioElement | null>(null)
+    const fetchInFlightRef = useRef(false)
+    const marketSwitchInFlightRef = useRef(false)
+    const pendingSwitchRef = useRef<PendingSwitchPacket | null>(null)
+    const triggerMarketPollRef = useRef<(() => void) | null>(null)
+    const lastAudioFinishedTsRef = useRef(0)
+    const spokenCommentaryIdsRef = useRef<Set<string>>(new Set())
+    const recentSpokenTextTsRef = useRef<Map<string, number>>(new Map())
     const knownCommentaryIdsRef = useRef<Set<string>>(new Set())
     const knownViewerMessageIdsRef = useRef<Set<string>>(new Set())
     const currentMarketIdRef = useRef('')
@@ -192,23 +254,81 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         audioPlayingRef.current = true
         setSpeakingCommentaryId(next.id)
 
-        const done = () => {
+        let settled = false
+
+        const finalizeSuccess = () => {
+            if (settled) return
+            settled = true
             audioPlayingRef.current = false
             setSpeakingCommentaryId(null)
             URL.revokeObjectURL(next.url)
             activeAudioRef.current = null
+            lastAudioFinishedTsRef.current = Date.now()
             playNextCommentaryAudio()
+            const triggerPoll = triggerMarketPollRef.current
+            if (triggerPoll) triggerPoll()
         }
 
-        audio.onended = done
-        audio.onerror = done
-        void audio.play().catch(done)
+        const finalizeError = () => {
+            if (settled) return
+            settled = true
+            audioPlayingRef.current = false
+            setSpeakingCommentaryId(null)
+            activeAudioRef.current = null
+            if (next.retries < 1) {
+                audioQueueRef.current.unshift({
+                    ...next,
+                    retries: next.retries + 1,
+                })
+                setTimeout(() => {
+                    playNextCommentaryAudio()
+                }, 250)
+                return
+            }
+            URL.revokeObjectURL(next.url)
+            lastAudioFinishedTsRef.current = Date.now()
+            playNextCommentaryAudio()
+            const triggerPoll = triggerMarketPollRef.current
+            if (triggerPoll) triggerPoll()
+        }
+
+        audio.onended = finalizeSuccess
+        audio.onerror = finalizeError
+        void audio.play().catch(() => {
+            finalizeError()
+        })
     }
 
-    const enqueueCommentaryAudio = (id: string, blob: Blob) => {
+    const enqueueCommentaryAudio = (id: string, blob: Blob, text: string = '') => {
         if (!(blob instanceof Blob) || blob.size <= 0) return
+        const safeId = String(id || '').trim()
+        if (safeId && spokenCommentaryIdsRef.current.has(safeId)) {
+            return
+        }
+
+        const nowMs = Date.now()
+        const textKey = normalizeAudioDedupeText(text)
+        if (textKey) {
+            for (const [k, ts] of recentSpokenTextTsRef.current.entries()) {
+                if (nowMs - Number(ts || 0) > AUDIO_TEXT_DEDUPE_MS * 4) {
+                    recentSpokenTextTsRef.current.delete(k)
+                }
+            }
+            const lastTs = Number(recentSpokenTextTsRef.current.get(textKey) || 0)
+            if (lastTs > 0 && nowMs - lastTs < AUDIO_TEXT_DEDUPE_MS) {
+                if (safeId) {
+                    spokenCommentaryIdsRef.current.add(safeId)
+                }
+                return
+            }
+            recentSpokenTextTsRef.current.set(textKey, nowMs)
+        }
+
+        if (safeId) {
+            spokenCommentaryIdsRef.current.add(safeId)
+        }
         const url = URL.createObjectURL(blob)
-        audioQueueRef.current.push({ id, url })
+        audioQueueRef.current.push({ id: safeId || id, url, retries: 0 })
         playNextCommentaryAudio()
     }
 
@@ -236,16 +356,29 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         })
     }
 
-    const requestCommentaryForEvent = async (payload: {
-        eventType: string
-        eventKey: string
-        market: MarketState['market']
-        recentLogs: MarketState['logs']
-        triggerReason: string
-        probDelta?: number
-    }) => {
-        if (inFlightRef.current) return
-        inFlightRef.current = true
+    const synthesizeSpeechWithRetry = async (item: CommentaryItem, attempts: number): Promise<Blob | null> => {
+        const maxAttempts = Math.max(1, Math.min(5, Number(attempts) || 1))
+        for (let idx = 0; idx < maxAttempts; idx += 1) {
+            try {
+                return await api.synthesizeRoomSpeech({
+                    room_id: selectedTrader.trader_id,
+                    text: item.text,
+                    message_id: item.id,
+                    tone: 'energetic',
+                    speaker_id: item.speaker_id,
+                })
+            } catch {
+                if (idx >= maxAttempts - 1) break
+                await new Promise((resolve) => setTimeout(resolve, 250 * (idx + 1)))
+            }
+        }
+        return null
+    }
+
+    const prepareCommentaryForEvent = async (
+        payload: CommentaryRequestPayload,
+        options: PrepareCommentaryOptions = {}
+    ): Promise<PreparedCommentary | null> => {
         try {
             const generated = await api.generatePolymarketCommentary({
                 room_id: selectedTrader.trader_id,
@@ -259,32 +392,118 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 },
             })
             const parsed = normalizeCommentaryItem(generated.commentary)
-            if (!parsed) return
+            if (!parsed) return null
             const fallbackMarketId = String(payload.market?.id || '').trim()
             const item: CommentaryItem = {
                 ...parsed,
                 market_id: parsed.market_id || fallbackMarketId || null,
             }
-            if (!isCommentaryAlignedWithCurrentMarket(item.market_id)) return
-            appendCommentary(item)
 
-            try {
-                const speechBlob = await api.synthesizeRoomSpeech({
-                    room_id: selectedTrader.trader_id,
-                    text: item.text,
-                    message_id: item.id,
-                    tone: 'energetic',
-                    speaker_id: item.speaker_id,
-                })
-                enqueueCommentaryAudio(item.id, speechBlob)
-            } catch {
-                // keep text commentary even if TTS fails
+            const speechBlob = await synthesizeSpeechWithRetry(
+                item,
+                Number(options.speechRetryCount) || 1
+            )
+            if (options.requireSpeech && !speechBlob) return null
+
+            return {
+                item,
+                speechBlob,
             }
         } catch {
             // generation failures should not break render loop
+            return null
+        }
+    }
+
+    const requestCommentaryForEvent = async (
+        payload: CommentaryRequestPayload,
+        options: { ignoreSwitchLock?: boolean } = {}
+    ) => {
+        if (inFlightRef.current) return
+        if (marketSwitchInFlightRef.current && !options.ignoreSwitchLock) return
+        inFlightRef.current = true
+        try {
+            const prepared = await prepareCommentaryForEvent(payload, {
+                speechRetryCount: 2,
+            })
+            if (!prepared) return
+            if (!isCommentaryAlignedWithCurrentMarket(prepared.item.market_id)) return
+            appendCommentary(prepared.item)
+            if (prepared.speechBlob) {
+                enqueueCommentaryAudio(prepared.item.id, prepared.speechBlob, prepared.item.text)
+            }
         } finally {
             inFlightRef.current = false
         }
+    }
+
+    const startPendingSwitchPreparation = (packet: PendingSwitchPacket) => {
+        if (packet.preparing) return
+        packet.preparing = true
+        packet.lastAttemptTsMs = Date.now()
+        void (async () => {
+            const prepared = await prepareCommentaryForEvent(packet.payload, {
+                requireSpeech: true,
+                speechRetryCount: 4,
+            })
+            const latest = pendingSwitchRef.current
+            if (!latest || latest.marketId !== packet.marketId) return
+            latest.prepared = prepared
+            latest.preparing = false
+            latest.lastAttemptTsMs = Date.now()
+            const triggerPoll = triggerMarketPollRef.current
+            if (triggerPoll) triggerPoll()
+        })()
+    }
+
+    const buildFastSwitchCommentaryItem = (payload: CommentaryRequestPayload): CommentaryItem => {
+        const marketId = String(payload.market?.id || '').trim()
+        const marketTitleRaw = String(payload.market?.title || '').trim()
+        const marketTitle = marketTitleRaw.length > 42
+            ? `${marketTitleRaw.slice(0, 42)}...`
+            : marketTitleRaw
+        const prompts = marketTitle
+            ? [
+                `下一条焦点：${marketTitle}。先给你一句快报，详细解读马上补上。`,
+                `焦点已切到：${marketTitle}。先报关键信号，完整分析紧跟。`,
+                `我们切到新话题：${marketTitle}。先听一句摘要，稍后上完整版本。`,
+            ]
+            : [
+                '下一条焦点已切换。先给你一句快报，详细解读马上补上。',
+                '新话题已到位。先报关键信号，完整分析紧跟。',
+            ]
+        const text = prompts[Math.floor(Math.random() * prompts.length)]
+        const nowMs = Date.now()
+        return {
+            id: `polyc_fast_${marketId || 'next'}_${nowMs}`,
+            event_type: 'market_switch_fast',
+            text,
+            speaker_id: 'host_a',
+            speaker_name: '小真',
+            voice_id: '',
+            source: 'switch_fallback',
+            created_ts_ms: nowMs,
+            market_id: marketId || null,
+        }
+    }
+
+    const startPendingSwitchFallbackPreparation = (packet: PendingSwitchPacket) => {
+        if (packet.fallbackPreparing || packet.fallbackPrepared?.speechBlob) return
+        packet.fallbackPreparing = true
+        packet.fallbackAttemptTsMs = Date.now()
+        const fallbackItem = buildFastSwitchCommentaryItem(packet.payload)
+        void (async () => {
+            const blob = await synthesizeSpeechWithRetry(fallbackItem, 3)
+            const latest = pendingSwitchRef.current
+            if (!latest || latest.marketId !== packet.marketId) return
+            latest.fallbackPrepared = blob
+                ? { item: fallbackItem, speechBlob: blob }
+                : null
+            latest.fallbackPreparing = false
+            latest.fallbackAttemptTsMs = Date.now()
+            const triggerPoll = triggerMarketPollRef.current
+            if (triggerPoll) triggerPoll()
+        })()
     }
 
     // Poll the static JSON file
@@ -292,6 +511,8 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
         let active = true
 
         const fetchData = async () => {
+            if (fetchInFlightRef.current) return
+            fetchInFlightRef.current = true
             try {
                 // Add timestamp to foil caching
                 const res = await fetch(`/cyber_market_live.json?t=${Date.now()}`)
@@ -361,14 +582,157 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                     }
                 }
 
-                snapshotRef.current = {
-                    marketId,
-                    prob,
-                    lastLogId,
-                    lastCommentaryTs: pendingEvent ? nowMs : prev.lastCommentaryTs,
-                }
-
                 if (active) {
+                    const isSwitchEvent = marketChanged && pendingEvent?.eventType === 'market_switch'
+                    const switchPayload = isSwitchEvent && pendingEvent
+                        ? {
+                            ...pendingEvent,
+                            market: nextState.market,
+                            recentLogs: logs,
+                        }
+                        : null
+
+                    const applySwitchPacket = (packet: PendingSwitchPacket, prepared: PreparedCommentary | null) => {
+                        const applyMarketId = String(packet.marketId || '').trim()
+                        if (!prepared || !prepared.speechBlob) return
+                        if (String(prepared.item.market_id || '').trim() !== applyMarketId) return
+                        const usedFallback = String(prepared.item.source || '').trim() === 'switch_fallback'
+                        currentMarketIdRef.current = applyMarketId
+                        clearAudioPlaybackQueue()
+                        setCommentaryItems((prevItems) => prevItems.filter((item) => String(item.market_id || '').trim() === applyMarketId))
+                        setState(packet.nextState)
+                        setErrorCount(0)
+                        appendCommentary(prepared.item)
+                        enqueueCommentaryAudio(prepared.item.id, prepared.speechBlob, prepared.item.text)
+
+                        snapshotRef.current = {
+                            marketId: applyMarketId,
+                            prob: packet.prob,
+                            lastLogId: packet.lastLogId,
+                            lastCommentaryTs: packet.nowMs,
+                        }
+                        pendingSwitchRef.current = null
+                        marketSwitchInFlightRef.current = false
+                        if (usedFallback) {
+                            setTimeout(() => {
+                                void requestCommentaryForEvent(packet.payload, { ignoreSwitchLock: true })
+                            }, 120)
+                        }
+                    }
+
+                    if (isSwitchEvent && switchPayload) {
+                        const hasActivePlayback = (
+                            audioPlayingRef.current
+                            || audioQueueRef.current.length > 0
+                            || inFlightRef.current
+                        )
+                        if (hasActivePlayback) {
+                            const existingPending = pendingSwitchRef.current
+                            if (!existingPending || existingPending.marketId !== marketId) {
+                                const packet: PendingSwitchPacket = {
+                                    marketId,
+                                    nextState,
+                                    payload: switchPayload,
+                                    prepared: null,
+                                    preparing: false,
+                                    lastAttemptTsMs: 0,
+                                    fallbackPrepared: null,
+                                    fallbackPreparing: false,
+                                    fallbackAttemptTsMs: 0,
+                                    pendingSinceTsMs: nowMs,
+                                    prob,
+                                    lastLogId,
+                                    nowMs,
+                                }
+                                pendingSwitchRef.current = packet
+                                marketSwitchInFlightRef.current = true
+                                startPendingSwitchPreparation(packet)
+                                startPendingSwitchFallbackPreparation(packet)
+                            } else {
+                                existingPending.nextState = nextState
+                                existingPending.payload = switchPayload
+                                existingPending.prob = prob
+                                existingPending.lastLogId = lastLogId
+                                existingPending.nowMs = nowMs
+                                if (
+                                    !existingPending.preparing
+                                    && nowMs - Number(existingPending.lastAttemptTsMs || 0) >= 1500
+                                ) {
+                                    startPendingSwitchPreparation(existingPending)
+                                }
+                                if (
+                                    !existingPending.fallbackPreparing
+                                    && !existingPending.fallbackPrepared?.speechBlob
+                                    && nowMs - Number(existingPending.fallbackAttemptTsMs || 0) >= 1500
+                                ) {
+                                    startPendingSwitchFallbackPreparation(existingPending)
+                                }
+                            }
+                            return
+                        }
+
+                        const existingPending = pendingSwitchRef.current
+                        if (existingPending && existingPending.marketId === marketId) {
+                            existingPending.nextState = nextState
+                            existingPending.payload = switchPayload
+                            existingPending.prob = prob
+                            existingPending.lastLogId = lastLogId
+                            existingPending.nowMs = nowMs
+                            const audioIdleMs = lastAudioFinishedTsRef.current > 0
+                                ? nowMs - lastAudioFinishedTsRef.current
+                                : 0
+                            const pendingAgeMs = nowMs - Number(existingPending.pendingSinceTsMs || nowMs)
+                            const allowFallbackNow = (
+                                audioIdleMs >= SWITCH_FALLBACK_GRACE_MS
+                                || pendingAgeMs >= SWITCH_FALLBACK_FORCE_MS
+                            )
+                            const readyPrepared = existingPending.prepared?.speechBlob
+                                ? existingPending.prepared
+                                : (allowFallbackNow && existingPending.fallbackPrepared?.speechBlob
+                                    ? existingPending.fallbackPrepared
+                                    : null)
+                            if (readyPrepared) {
+                                applySwitchPacket(existingPending, readyPrepared)
+                                return
+                            }
+                            if (
+                                !existingPending.preparing
+                                && nowMs - Number(existingPending.lastAttemptTsMs || 0) >= 1500
+                            ) {
+                                startPendingSwitchPreparation(existingPending)
+                            }
+                            if (
+                                !existingPending.fallbackPreparing
+                                && !existingPending.fallbackPrepared?.speechBlob
+                                && nowMs - Number(existingPending.fallbackAttemptTsMs || 0) >= 1500
+                            ) {
+                                startPendingSwitchFallbackPreparation(existingPending)
+                            }
+                            return
+                        }
+
+                        const packet: PendingSwitchPacket = {
+                            marketId,
+                            nextState,
+                            payload: switchPayload,
+                            prepared: null,
+                            preparing: false,
+                            lastAttemptTsMs: 0,
+                            fallbackPrepared: null,
+                            fallbackPreparing: false,
+                            fallbackAttemptTsMs: 0,
+                            pendingSinceTsMs: nowMs,
+                            prob,
+                            lastLogId,
+                            nowMs,
+                        }
+                        pendingSwitchRef.current = packet
+                        marketSwitchInFlightRef.current = true
+                        startPendingSwitchPreparation(packet)
+                        startPendingSwitchFallbackPreparation(packet)
+                        return
+                    }
+
                     currentMarketIdRef.current = marketId
                     if (marketChanged) {
                         clearAudioPlaybackQueue()
@@ -383,11 +747,26 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                             recentLogs: logs,
                         })
                     }
+                    snapshotRef.current = {
+                        marketId,
+                        prob,
+                        lastLogId,
+                        lastCommentaryTs: pendingEvent ? nowMs : prev.lastCommentaryTs,
+                    }
                 }
             } catch (err) {
                 console.warn('Failed to fetch market data:', err)
                 if (active) setErrorCount((c) => c + 1)
+            } finally {
+                fetchInFlightRef.current = false
+                if (!pendingSwitchRef.current) {
+                    marketSwitchInFlightRef.current = false
+                }
             }
+        }
+
+        triggerMarketPollRef.current = () => {
+            void fetchData()
         }
 
         fetchData() // initial fetch
@@ -395,8 +774,15 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
         return () => {
             active = false
+            triggerMarketPollRef.current = null
+            pendingSwitchRef.current = null
             clearInterval(timer)
         }
+    }, [selectedTrader.trader_id])
+
+    useEffect(() => {
+        spokenCommentaryIdsRef.current.clear()
+        recentSpokenTextTsRef.current.clear()
     }, [selectedTrader.trader_id])
 
     useEffect(() => {
@@ -437,7 +823,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                             tone: 'energetic',
                             speaker_id: item.speaker_id,
                         })
-                        enqueueCommentaryAudio(item.id, speechBlob)
+                        enqueueCommentaryAudio(item.id, speechBlob, item.text)
                     } catch {
                         // keep text-only feed if speech fails
                     }
@@ -666,10 +1052,14 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                     <div className="shrink-0 border-b border-white/5 bg-[#070d18]/70 px-3 py-2">
                         <div className="mb-1 flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-cyan-300/80">
                             <span>实时解说</span>
-                            {speakingCommentaryId ? <span className="text-emerald-300">播报中</span> : <span className="text-white/40">待机</span>}
+                            {speakingCommentaryId
+                                ? <span className="text-emerald-300">播报中</span>
+                                : (displayCommentary.length > 0
+                                    ? <span className="text-cyan-200/80">待播</span>
+                                    : <span className="text-white/50">准备中</span>)}
                         </div>
                         {displayCommentary.length === 0 ? (
-                            <div className="text-[10px] text-white/35 font-mono">暂无解说内容</div>
+                            <div className="text-[10px] text-white/50 font-mono">解说准备中...</div>
                         ) : (
                             <div className="space-y-1.5">
                                 {displayCommentary.map((item) => {

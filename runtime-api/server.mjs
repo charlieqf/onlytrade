@@ -398,6 +398,10 @@ const POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS = Math.max(
   1000,
   Number(process.env.POLYMARKET_COMMENTARY_EVENT_DEDUPE_MS || 12_000)
 )
+const POLYMARKET_COMMENTARY_TEXT_DEDUPE_MS = Math.max(
+  2000,
+  Number(process.env.POLYMARKET_COMMENTARY_TEXT_DEDUPE_MS || 90_000)
+)
 
 const AGENTS_DIR = path.resolve(
   ROOT_DIR,
@@ -5190,6 +5194,34 @@ function getPolymarketCommentaryFeed(roomId, { limit = 20, afterTsMs = null } = 
   return filtered.slice(-safeLimit)
 }
 
+function normalizePolymarketCommentaryTextForDedupe(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[。！？!?]+$/g, '')
+}
+
+function findRecentPolymarketCommentaryByText(roomId, text, nowMs = Date.now()) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const normalized = normalizePolymarketCommentaryTextForDedupe(text)
+  if (!safeRoomId || !normalized) return null
+  const rows = polymarketCommentaryFeedByRoom.get(safeRoomId) || []
+  for (let idx = rows.length - 1; idx >= 0; idx -= 1) {
+    const row = rows[idx]
+    const ageMs = nowMs - Number(row?.created_ts_ms || 0)
+    if (ageMs > POLYMARKET_COMMENTARY_TEXT_DEDUPE_MS) {
+      break
+    }
+    if (normalizePolymarketCommentaryTextForDedupe(row?.text) === normalized) {
+      return row
+    }
+  }
+  return null
+}
+
 function findRecentPolymarketCommentaryByEventKey(roomId, eventKey, nowMs = Date.now()) {
   const safeRoomId = String(roomId || '').trim().toLowerCase()
   const safeEventKey = String(eventKey || '').trim()
@@ -9087,6 +9119,21 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       created_ts_ms: nowMs,
       target_play_ts_ms: nowMs,
     }
+
+    const recentSameText = findRecentPolymarketCommentaryByText(roomId, commentary.text, nowMs)
+    if (recentSameText) {
+      if (eventKey) {
+        rememberPolymarketCommentaryEvent(roomId, eventKey, recentSameText.id, nowMs)
+      }
+      res.json(ok({
+        room_id: roomId,
+        commentary: recentSameText,
+        reused: true,
+        reason: 'text_dedupe_recent',
+      }))
+      return
+    }
+
     appendPolymarketCommentaryFeed(roomId, commentary)
     setPolymarketSpeakerLastTs(roomId, speaker.speaker_id, nowMs)
     if (eventKey) {

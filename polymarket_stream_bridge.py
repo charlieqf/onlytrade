@@ -9,6 +9,11 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from virtual_exchange_db import DB_FILE, get_open_markets
+from sensitive_topic_filter import (
+    append_sensitive_audit_samples,
+    evaluate_sensitive_text,
+    load_sensitive_topic_policy,
+)
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -77,7 +82,26 @@ PREFETCH_LEAD_MS = max(
     0,
     int(float(os.environ.get("POLYMARKET_BRIDGE_PREFETCH_LEAD_MS") or 2500)),
 )
-BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+LEGACY_BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+SENSITIVE_FILTER_ROOM_ID = (
+    str(
+        os.environ.get("POLYMARKET_BRIDGE_SENSITIVE_FILTER_ROOM_ID")
+        or BRIDGE_ROOM_ID
+        or "t_015"
+    )
+    .strip()
+    .lower()
+)
+SENSITIVE_POLICY = load_sensitive_topic_policy()
+SENSITIVE_FILTER_STATS = {
+    "room_id": SENSITIVE_FILTER_ROOM_ID,
+    "mode": "hard_block",
+    "total_seen": 0,
+    "filtered_count": 0,
+    "kept_count": 0,
+    "filtered_categories": {},
+}
+SENSITIVE_FILTER_AUDIT_SAMPLES = []
 
 
 def resolve_output_files():
@@ -98,6 +122,66 @@ def _parse_sqlite_created_at(raw_value):
         return None
 
 
+def _contains_banned_topic(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    SENSITIVE_FILTER_STATS["total_seen"] = (
+        int(SENSITIVE_FILTER_STATS.get("total_seen") or 0) + 1
+    )
+    if any(token in text for token in LEGACY_BANNED_TOPIC_SUBSTRINGS):
+        SENSITIVE_FILTER_STATS["filtered_count"] = (
+            int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0) + 1
+        )
+        categories = SENSITIVE_FILTER_STATS.get("filtered_categories")
+        if not isinstance(categories, dict):
+            categories = {}
+            SENSITIVE_FILTER_STATS["filtered_categories"] = categories
+        categories["legacy_banned"] = int(categories.get("legacy_banned") or 0) + 1
+        if len(SENSITIVE_FILTER_AUDIT_SAMPLES) < 24:
+            SENSITIVE_FILTER_AUDIT_SAMPLES.append(
+                {
+                    "text": text[:220],
+                    "categories": ["legacy_banned"],
+                    "matches": [{"category": "legacy_banned", "token": "legacy"}],
+                }
+            )
+        return True
+
+    check = evaluate_sensitive_text(
+        text,
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        policy=SENSITIVE_POLICY,
+    )
+    if bool(check.get("blocked")):
+        SENSITIVE_FILTER_STATS["filtered_count"] = (
+            int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0) + 1
+        )
+        categories = SENSITIVE_FILTER_STATS.get("filtered_categories")
+        if not isinstance(categories, dict):
+            categories = {}
+            SENSITIVE_FILTER_STATS["filtered_categories"] = categories
+        for category in check.get("categories") or []:
+            key = str(category or "").strip().lower()
+            if not key:
+                continue
+            categories[key] = int(categories.get(key) or 0) + 1
+        if len(SENSITIVE_FILTER_AUDIT_SAMPLES) < 24:
+            SENSITIVE_FILTER_AUDIT_SAMPLES.append(
+                {
+                    "text": text[:220],
+                    "categories": list(check.get("categories") or []),
+                    "matches": list(check.get("matches") or []),
+                }
+            )
+        return True
+
+    SENSITIVE_FILTER_STATS["kept_count"] = (
+        int(SENSITIVE_FILTER_STATS.get("kept_count") or 0) + 1
+    )
+    return False
+
+
 def select_candidate_markets(open_markets):
     if not open_markets:
         return []
@@ -111,7 +195,7 @@ def select_candidate_markets(open_markets):
         title = str(market.get("title") or "").strip()
         source_topic = str(market.get("source_topic") or "").strip()
         merged_topic_text = f"{title} {source_topic}".strip()
-        if any(token in merged_topic_text for token in BANNED_TOPIC_SUBSTRINGS):
+        if _contains_banned_topic(merged_topic_text):
             continue
         old_year = False
         for token in re.findall(r"(20\d{2})年", title):
@@ -131,9 +215,7 @@ def select_candidate_markets(open_markets):
         if len(candidates) >= MAX_MARKET_POOL_SIZE:
             break
 
-    if candidates:
-        return candidates
-    return open_markets[:MAX_MARKET_POOL_SIZE]
+    return candidates
 
 
 def _estimate_tts_duration_ms(text):
@@ -338,6 +420,50 @@ def build_state(conn, cursor, market_id):
     }
 
 
+def build_safe_idle_state(reason="safe_filter_no_candidates"):
+    now_ms = int(time.time() * 1000)
+    return {
+        "market": {
+            "id": "safe_idle",
+            "title": "当前暂无可用安全话题，正在筛选中",
+            "yes_outcome": "等待中",
+            "no_outcome": "观察中",
+            "initial_prob": 0.5,
+            "current_prob": 0.5,
+            "close_time": "--",
+            "volume": 0,
+            "liquidity": 0,
+            "source_topic": "",
+            "source_source": reason,
+            "source_hot_score": "",
+            "news_summary": "系统已启用硬过滤，正在等待新的安全事件进入轮播。",
+            "news_key_points": "[]",
+        },
+        "balances": {},
+        "logs": [
+            {
+                "id": 0,
+                "sender": "System",
+                "type": "info",
+                "text": "安全过滤生效：当前无可播话题，稍后自动刷新。",
+                "time": now_ms,
+            }
+        ],
+        "ai_pnl": 0,
+        "last_update": now_ms,
+    }
+
+
+def _write_bridge_state(output_files, state):
+    if not state:
+        return
+    for file_path in output_files:
+        tmp_path = f"{file_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, file_path)
+
+
 def run_bridge():
     """Continuously exports the DB state to the React frontend JSON file."""
     output_files = resolve_output_files()
@@ -352,6 +478,7 @@ def run_bridge():
     last_seen_commentary_id = ""
     last_commentary_poll_ts = 0.0
     latest_commentary_row = None
+    last_sensitive_log_ts = 0.0
 
     while True:
         try:
@@ -361,11 +488,21 @@ def run_bridge():
 
             open_markets = get_open_markets()
             if not open_markets:
+                conn.close()
                 time.sleep(2)
                 continue
 
             candidate_markets = select_candidate_markets(open_markets)
             if not candidate_markets:
+                idle_state = build_safe_idle_state()
+                _write_bridge_state(output_files, idle_state)
+                append_sensitive_audit_samples(
+                    SENSITIVE_FILTER_AUDIT_SAMPLES,
+                    source="polymarket_stream_bridge",
+                    room_id=SENSITIVE_FILTER_ROOM_ID,
+                    max_rows=240,
+                )
+                conn.close()
                 time.sleep(2)
                 continue
             candidate_ids = {m["id"] for m in candidate_markets if m.get("id")}
@@ -426,11 +563,32 @@ def run_bridge():
             conn.close()
 
             if state:
-                for file_path in output_files:
-                    tmp_path = f"{file_path}.tmp"
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        json.dump(state, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_path, file_path)
+                _write_bridge_state(output_files, state)
+
+            if (now_ts - last_sensitive_log_ts) >= 30:
+                last_sensitive_log_ts = now_ts
+                filtered_categories = dict(
+                    sorted(
+                        (
+                            SENSITIVE_FILTER_STATS.get("filtered_categories") or {}
+                        ).items(),
+                        key=lambda item: int(item[1]),
+                        reverse=True,
+                    )
+                )
+                logging.info(
+                    "SensitiveFilter stats: seen=%s filtered=%s kept=%s categories=%s",
+                    int(SENSITIVE_FILTER_STATS.get("total_seen") or 0),
+                    int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0),
+                    int(SENSITIVE_FILTER_STATS.get("kept_count") or 0),
+                    json.dumps(filtered_categories, ensure_ascii=False),
+                )
+                append_sensitive_audit_samples(
+                    SENSITIVE_FILTER_AUDIT_SAMPLES,
+                    source="polymarket_stream_bridge",
+                    room_id=SENSITIVE_FILTER_ROOM_ID,
+                    max_rows=240,
+                )
 
         except Exception as e:
             logging.error(f"Bridge error: {e}")

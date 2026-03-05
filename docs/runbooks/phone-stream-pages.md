@@ -53,7 +53,7 @@ Path-based bridge notes:
 
 These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStreamShared.tsx`.
 
-## Six-room ops quick map
+## Room ops quick map
 
 - `t_003` -> `/stream/command-deck-new` (realtime; no static story assets)
 - `t_012` -> `/stream/multi-broadcast?show=qiangqiang_citrini_20260227`
@@ -61,6 +61,18 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
 - `t_013` -> `/stream/story-broadcast?story=mandela_effect`
 - `t_014` -> `/stream/story-broadcast?story=libai`
 - `t_015` -> `/stream/polymarket`
+- `t_016` -> `/stream/night-comfort?theme=hobit`
+
+- Night Comfort (theme-loop + narration)
+  - Route: `/stream/night-comfort?trader=<trader_id>&theme=<hobit|knight1|knight2|knight3|knight4>`
+  - 8000 bridge route: `/onlytrade/stream/night-comfort?trader=<trader_id>&theme=<...>`
+  - File: `onlytrade-web/src/pages/design/T016NightComfortPage.tsx`
+  - Notes:
+    - Full-screen looping video + BGM only (no trading UI)
+    - URL `theme` overrides backend theme profile
+    - Backend profile endpoints:
+      - `GET /api/stream/theme/profile?room_id=<trader_id>`
+      - `POST /api/stream/theme/profile` (token protected)
 
 For full operator playbooks and failure recovery, see:
 

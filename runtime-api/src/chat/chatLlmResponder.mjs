@@ -68,7 +68,9 @@ function buildSystemPrompt({ roomAgent, kind }) {
       : 'If room_context contains market_overview_brief, news_digest_titles, news_background_notes, news_commentary, news_categories, or symbol_history_summary, explicitly reference one concise market/news/history point.')
     : ''
   const topicRule = kind === 'proactive'
-    ? 'Prioritize topic rotation around tech, macro economy, and geopolitics when those signals exist.'
+    ? (isPolymarket
+      ? 'Prioritize topic rotation around tech, macro economy, policy/business updates; avoid conflict/casualty or medical-trauma incidents.'
+      : 'Prioritize topic rotation around tech, macro economy, and geopolitics when those signals exist.')
     : ''
   const positionRule = (!isPolymarket && (kind === 'proactive' || kind === 'narration'))
     ? 'If room_context.symbol_brief.position_shares_on_symbol is 0, do not claim you are currently holding that symbol; describe it as no-position/watchlist instead.'
@@ -84,7 +86,7 @@ function buildSystemPrompt({ roomAgent, kind }) {
       ? 'For narration, explain decision logic with signal evidence and risk control in clear Chinese.'
       : '')
   const lengthRule = kind === 'proactive'
-    ? 'Respond in Chinese with 2-4 natural sentences, target 120-220 Chinese characters (hard cap 260).' 
+    ? 'Respond in Chinese with 2-4 natural sentences, target 120-220 Chinese characters (hard cap 260, target <= 100 Chinese characters per sentence).'
     : (kind === 'narration'
       ? 'Respond in Chinese with 2-3 sentences, target 90-180 Chinese characters (hard cap 220).'
       : 'Respond in concise Chinese, 1-2 short sentences, no markdown, no bullet list, no JSON. Keep output compact: target <= 100 Chinese characters and never exceed 120.')

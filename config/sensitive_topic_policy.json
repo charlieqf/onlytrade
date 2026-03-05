@@ -1,0 +1,103 @@
+{
+  "schema_version": "sensitive.topic.policy.v1",
+  "default_mode": "off",
+  "rooms": {
+    "t_015": {
+      "mode": "hard_block"
+    }
+  },
+  "allowlist": [],
+  "categories": [
+    {
+      "id": "war_conflict",
+      "label": "War Conflict",
+      "keywords": [
+        "战争",
+        "战争风险",
+        "战争升级",
+        "战事",
+        "战火",
+        "武装冲突",
+        "冲突",
+        "地缘冲突",
+        "中东冲突",
+        "伊朗冲突",
+        "交火",
+        "冲突升级",
+        "军事行动",
+        "战区",
+        "前线",
+        "空袭",
+        "导弹袭击",
+        "炮击",
+        "无人机袭击",
+        "地面战",
+        "军方通报",
+        "以军",
+        "哈马斯",
+        "俄乌战事",
+        "war",
+        "conflict",
+        "armed conflict",
+        "airstrike",
+        "missile strike",
+        "shelling",
+        "battlefield",
+        "troops"
+      ]
+    },
+    {
+      "id": "graphic_injury",
+      "label": "Graphic Injury",
+      "keywords": [
+        "血腥",
+        "尸体",
+        "遗体画面",
+        "肢解",
+        "爆头",
+        "断肢",
+        "惨状",
+        "graphic injury",
+        "gore",
+        "dismember",
+        "dead body"
+      ]
+    },
+    {
+      "id": "medical_trauma",
+      "label": "Medical Trauma",
+      "keywords": [
+        "截肢",
+        "重伤",
+        "危重",
+        "抢救无效",
+        "急救现场",
+        "手术画面",
+        "icu",
+        "amputation",
+        "critical condition",
+        "resuscitation"
+      ]
+    },
+    {
+      "id": "disaster_casualty",
+      "label": "Disaster Casualty",
+      "keywords": [
+        "伤亡",
+        "遇难",
+        "死亡人数",
+        "坠机",
+        "爆炸事故",
+        "踩踏事故",
+        "火灾伤亡",
+        "地震伤亡",
+        "洪灾伤亡",
+        "casualties",
+        "fatalities",
+        "plane crash",
+        "death toll",
+        "injured"
+      ]
+    }
+  ]
+}

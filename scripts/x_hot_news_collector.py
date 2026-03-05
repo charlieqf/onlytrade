@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -13,6 +14,15 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
+
+if __package__ is None or __package__ == "":
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from sensitive_topic_filter import (
+    append_sensitive_audit_samples,
+    evaluate_sensitive_text,
+    load_sensitive_topic_policy,
+)
 
 
 DEFAULT_TIMEOUT_SEC = 12
@@ -71,7 +81,11 @@ DEFAULT_CATEGORY_QUERIES = [
     },
 ]
 
-BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+LEGACY_BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+SENSITIVE_FILTER_ROOM_ID = (
+    str(os.environ.get("X_HOT_SENSITIVE_FILTER_ROOM_ID") or "t_015").strip().lower()
+)
+SENSITIVE_POLICY = load_sensitive_topic_policy()
 
 PROXY_NEWS_QUERY_OVERRIDES = {
     "ai": "人工智能 OR 大模型 OR OpenAI OR Anthropic OR NVIDIA",
@@ -223,7 +237,76 @@ def _contains_banned_topic(text: Any) -> bool:
     value = _safe_text(text, 300)
     if not value:
         return False
-    return any(token in value for token in BANNED_TOPIC_SUBSTRINGS)
+    if any(token in value for token in LEGACY_BANNED_TOPIC_SUBSTRINGS):
+        return True
+    check = evaluate_sensitive_text(
+        value,
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        policy=SENSITIVE_POLICY,
+    )
+    return bool(check.get("blocked"))
+
+
+def _evaluate_sensitive_ban(text: Any) -> Dict[str, Any]:
+    value = _safe_text(text, 360)
+    if not value:
+        return {"blocked": False, "categories": [], "matches": []}
+    if any(token in value for token in LEGACY_BANNED_TOPIC_SUBSTRINGS):
+        return {
+            "blocked": True,
+            "categories": ["legacy_banned"],
+            "matches": [{"category": "legacy_banned", "token": "legacy"}],
+        }
+    check = evaluate_sensitive_text(
+        value,
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        policy=SENSITIVE_POLICY,
+    )
+    return {
+        "blocked": bool(check.get("blocked")),
+        "categories": list(check.get("categories") or []),
+        "matches": list(check.get("matches") or []),
+    }
+
+
+def _screen_sensitive_row(
+    row: Dict[str, Any],
+    stats: Dict[str, Any],
+    samples: List[Dict[str, Any]],
+    *,
+    source: str,
+) -> bool:
+    title = _safe_text(row.get("title"), 240)
+    summary = _safe_text(row.get("summary"), 240)
+    merged = " ".join(part for part in [title, summary] if part)
+    if not merged:
+        return True
+    stats["total_seen"] = int(stats.get("total_seen") or 0) + 1
+    check = _evaluate_sensitive_ban(merged)
+    if bool(check.get("blocked")):
+        stats["filtered_count"] = int(stats.get("filtered_count") or 0) + 1
+        categories = stats.get("filtered_categories")
+        if not isinstance(categories, dict):
+            categories = {}
+            stats["filtered_categories"] = categories
+        for category in check.get("categories") or []:
+            key = str(category or "").strip().lower()
+            if not key:
+                continue
+            categories[key] = int(categories.get(key) or 0) + 1
+        if len(samples) < 24:
+            samples.append(
+                {
+                    "title": title,
+                    "summary": summary,
+                    "categories": list(check.get("categories") or []),
+                    "matches": list(check.get("matches") or []),
+                    "source": source,
+                }
+            )
+        return True
+    stats["kept_count"] = int(stats.get("kept_count") or 0) + 1
+    return False
 
 
 def _is_topic_duplicate(
@@ -767,6 +850,15 @@ def collect_x_hot_events(
     merged: List[Dict[str, Any]] = []
     seen_fingerprints: Set[str] = set()
     recent_fingerprints: List[str] = []
+    filter_stats: Dict[str, Any] = {
+        "room_id": SENSITIVE_FILTER_ROOM_ID,
+        "mode": "hard_block",
+        "total_seen": 0,
+        "filtered_count": 0,
+        "kept_count": 0,
+        "filtered_categories": {},
+    }
+    filter_samples: List[Dict[str, Any]] = []
 
     for cfg in query_list:
         category = _safe_text(cfg.get("category"), 32).lower()
@@ -830,14 +922,21 @@ def collect_x_hot_events(
         if source_note:
             provider_hits.append(source_note)
 
-        categories[category] = rows
+        safe_rows: List[Dict[str, Any]] = []
         for row in rows:
+            if _screen_sensitive_row(
+                row,
+                filter_stats,
+                filter_samples,
+                source=f"category:{category}",
+            ):
+                continue
+            safe_rows.append(row)
+
+        categories[category] = safe_rows
+        for row in safe_rows:
             title = _safe_text(row.get("title"), 220)
             if not title:
-                continue
-            if _contains_banned_topic(title) or _contains_banned_topic(
-                row.get("summary")
-            ):
                 continue
             is_dup, fp = _is_topic_duplicate(
                 title,
@@ -901,8 +1000,11 @@ def collect_x_hot_events(
                 title = _safe_text(row.get("title"), 220)
                 if not title:
                     continue
-                if _contains_banned_topic(title) or _contains_banned_topic(
-                    row.get("summary")
+                if _screen_sensitive_row(
+                    row,
+                    filter_stats,
+                    filter_samples,
+                    source="cache_fallback",
                 ):
                     continue
                 is_dup, fp = _is_topic_duplicate(
@@ -953,6 +1055,8 @@ def collect_x_hot_events(
         if picks:
             commentary.append(f"{label}热点：{'；'.join(picks)}")
 
+    commentary = [line for line in commentary if not _contains_banned_topic(line)]
+
     background_notes: List[str] = []
     for row in merged:
         title = _safe_text(row.get("title"), 44)
@@ -991,6 +1095,7 @@ def collect_x_hot_events(
         titles.append(f"[{label}] {title}")
         if len(titles) >= 24:
             break
+    titles = [line for line in titles if not _contains_banned_topic(line)]
 
     source_kind = "empty"
     if any("x_api" in hit for hit in provider_hits):
@@ -1040,7 +1145,23 @@ def collect_x_hot_events(
         "background_notes": background_notes,
         "titles": titles,
         "cache_fallback": use_cache_fallback,
+        "filter_stats": {
+            **filter_stats,
+            "filtered_categories": dict(
+                sorted(
+                    (filter_stats.get("filtered_categories") or {}).items(),
+                    key=lambda item: int(item[1]),
+                    reverse=True,
+                )
+            ),
+        },
     }
+    append_sensitive_audit_samples(
+        filter_samples,
+        source="x_hot_news_collector",
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        max_rows=240,
+    )
     _atomic_write_json(output_path, payload)
     return payload
 
@@ -1104,6 +1225,9 @@ def main() -> int:
                 "output_path": args.output,
                 "headline_count": int(payload.get("headline_count") or 0),
                 "source_kind": payload.get("source_kind") or "empty",
+                "filtered_count": int(
+                    (payload.get("filter_stats") or {}).get("filtered_count") or 0
+                ),
             },
             ensure_ascii=False,
         )

@@ -168,6 +168,11 @@ function localizeOutcomeLabel(label: string, fallback: string) {
     return text
 }
 
+function isSafeIdleMarketId(value: unknown) {
+    const id = String(value || '').trim().toLowerCase()
+    return id.startsWith('safe_idle')
+}
+
 export default function CyberPredictionPage(props: FormalStreamDesignPageProps) {
     useFullscreenLock()
     const pageLanguage = 'zh'
@@ -459,9 +464,9 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     const buildFastSwitchCommentaryItem = (payload: CommentaryRequestPayload): CommentaryItem => {
         const marketId = String(payload.market?.id || '').trim()
         const marketTitleRaw = String(payload.market?.title || '').trim()
-        const marketTitle = marketTitleRaw.length > 42
-            ? `${marketTitleRaw.slice(0, 42)}...`
-            : marketTitleRaw
+        const marketTitle = marketTitleRaw.length <= 28
+            ? marketTitleRaw
+            : ''
         const prompts = marketTitle
             ? [
                 `下一条焦点：${marketTitle}。先给你一句快报，详细解读马上补上。`,
@@ -471,6 +476,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
             : [
                 '下一条焦点已切换。先给你一句快报，详细解读马上补上。',
                 '新话题已到位。先报关键信号，完整分析紧跟。',
+                '我们切到新话题。先听一句摘要，稍后上完整版本。',
             ]
         const text = prompts[Math.floor(Math.random() * prompts.length)]
         const nowMs = Date.now()
@@ -522,6 +528,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                 const nowMs = Date.now()
                 const prev = snapshotRef.current
                 const marketId = String(nextState?.market?.id || '').trim()
+                const safeIdleMarket = isSafeIdleMarketId(marketId)
                 const marketChanged = !!prev.marketId && !!marketId && marketId !== prev.marketId
                 const prob = normalizeProb(nextState?.market?.current_prob)
                 const logs = Array.isArray(nextState?.logs) ? nextState.logs : []
@@ -580,6 +587,9 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                             triggerReason: 'agent_trade_log_changed',
                         }
                     }
+                }
+                if (safeIdleMarket) {
+                    pendingEvent = null
                 }
 
                 if (active) {
@@ -898,6 +908,7 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
     }
 
     const { market, logs, ai_pnl } = state
+    const safeIdleState = isSafeIdleMarketId(market.id)
     const yesProbStr = (market.current_prob * 100).toFixed(1)
     const noProbStr = ((1 - market.current_prob) * 100).toFixed(1)
     const yesOutcomeLabel = localizeOutcomeLabel(market.yes_outcome, '支持')
@@ -997,6 +1008,11 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                                 {market.title}
                             </motion.h2>
                         </AnimatePresence>
+                        {safeIdleState && (
+                            <div className="mt-3 rounded border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[10px] text-amber-200/90 font-mono tracking-wide">
+                                安全过滤中：当前暂无可播事件，系统会自动切换到下一条安全话题。
+                            </div>
+                        )}
                     </div>
 
                     {/* The Binary Odds Arena */}
@@ -1052,14 +1068,18 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
                     <div className="shrink-0 border-b border-white/5 bg-[#070d18]/70 px-3 py-2">
                         <div className="mb-1 flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-cyan-300/80">
                             <span>实时解说</span>
-                            {speakingCommentaryId
+                            {safeIdleState
+                                ? <span className="text-amber-200/90">安全筛选中</span>
+                                : speakingCommentaryId
                                 ? <span className="text-emerald-300">播报中</span>
                                 : (displayCommentary.length > 0
                                     ? <span className="text-cyan-200/80">待播</span>
                                     : <span className="text-white/50">准备中</span>)}
                         </div>
                         {displayCommentary.length === 0 ? (
-                            <div className="text-[10px] text-white/50 font-mono">解说准备中...</div>
+                            <div className="text-[10px] text-white/50 font-mono">
+                                {safeIdleState ? '安全过滤中，等待下一条可播事件...' : '解说准备中...'}
+                            </div>
                         ) : (
                             <div className="space-y-1.5">
                                 {displayCommentary.map((item) => {
@@ -1085,7 +1105,9 @@ export default function CyberPredictionPage(props: FormalStreamDesignPageProps) 
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-[11px]">
                         {displayLogs.length === 0 && (
-                            <div className="text-white/30 text-center py-10 tracking-widest text-xs">等待新信号...</div>
+                            <div className="text-white/30 text-center py-10 tracking-widest text-xs">
+                                {safeIdleState ? '安全过滤中...' : '等待新信号...'}
+                            </div>
                         )}
                         {displayLogs.map(log => {
                             const isAgent = log.type === 'agent'

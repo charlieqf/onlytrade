@@ -6,6 +6,7 @@ import Expert3StudioTimelinePage from './pages/design/Expert3StudioTimelinePage'
 import StoryOralBroadcastPage from './pages/design/StoryOralBroadcastPage'
 import MultiPersonBroadcastPage from './pages/design/MultiPersonBroadcastPage'
 import CyberPredictionPage from './pages/design/CyberPredictionPage'
+import T016NightComfortPage from './pages/design/T016NightComfortPage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -54,6 +55,7 @@ type Page =
   | 'story'
   | 'multiBroadcast'
   | 'polymarket'
+  | 'nightComfort'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
@@ -109,6 +111,8 @@ function App() {
       return 'multiBroadcast'
     if (path === '/stream/polymarket')
       return 'polymarket'
+    if (path === '/stream/night-comfort')
+      return 'nightComfort'
     return 'lobby'
   }
 
@@ -138,6 +142,7 @@ function App() {
       story: '/stream/story-broadcast',
       multiBroadcast: '/stream/multi-broadcast',
       polymarket: '/stream/polymarket',
+      nightComfort: '/stream/night-comfort',
     }
     const path = pathMap[page]
     if (path) {
@@ -243,6 +248,11 @@ function App() {
         }
       } else if (path === '/stream/polymarket') {
         setCurrentPage('polymarket')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/stream/night-comfort') {
+        setCurrentPage('nightComfort')
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
@@ -523,6 +533,8 @@ function App() {
       setCurrentPage('multiBroadcast')
     } else if (route === '/stream/polymarket') {
       setCurrentPage('polymarket')
+    } else if (route === '/stream/night-comfort') {
+      setCurrentPage('nightComfort')
     }
   }, [route])
 
@@ -694,6 +706,26 @@ function App() {
         {language === 'zh'
           ? '未选择交易员。请在 URL 中添加 ?trader=...'
           : 'No trader selected. Add ?trader=... in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'nightComfort') {
+    return selectedTrader ? (
+      <T016NightComfortPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=t_016'
+          : 'No trader selected. Add ?trader=t_016 in URL.'}
       </div>
     )
   }

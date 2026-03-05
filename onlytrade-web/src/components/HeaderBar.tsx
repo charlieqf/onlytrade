@@ -21,6 +21,7 @@ type Page =
   | 'expert3'
   | 'story'
   | 'multiBroadcast'
+  | 'nightComfort'
 
 interface HeaderBarProps {
   onLoginClick?: () => void

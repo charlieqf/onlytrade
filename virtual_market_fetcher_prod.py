@@ -16,6 +16,12 @@ import re
 import difflib
 from datetime import datetime
 
+from sensitive_topic_filter import (
+    append_sensitive_audit_samples,
+    evaluate_sensitive_text,
+    load_sensitive_topic_policy,
+)
+
 try:
     from openai import OpenAI  # type: ignore
 except Exception:
@@ -79,7 +85,22 @@ X_HOT_PATH = str(
         "x_hot_events.json",
     )
 ).strip()
-BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+LEGACY_BANNED_TOPIC_SUBSTRINGS = ["截肢", "三八红旗手"]
+SENSITIVE_FILTER_ROOM_ID = (
+    str(os.environ.get("POLYMARKET_SENSITIVE_FILTER_ROOM_ID") or "t_015")
+    .strip()
+    .lower()
+)
+SENSITIVE_POLICY = load_sensitive_topic_policy()
+SENSITIVE_FILTER_STATS = {
+    "room_id": SENSITIVE_FILTER_ROOM_ID,
+    "mode": "hard_block",
+    "total_seen": 0,
+    "filtered_count": 0,
+    "kept_count": 0,
+    "filtered_categories": {},
+}
+SENSITIVE_FILTER_AUDIT_SAMPLES = []
 
 # System Configuration
 LOG_FILE = os.path.join(
@@ -160,7 +181,60 @@ def _contains_banned_topic(value):
     text = str(value or "").strip()
     if not text:
         return False
-    return any(token in text for token in BANNED_TOPIC_SUBSTRINGS)
+    SENSITIVE_FILTER_STATS["total_seen"] = (
+        int(SENSITIVE_FILTER_STATS.get("total_seen") or 0) + 1
+    )
+    if any(token in text for token in LEGACY_BANNED_TOPIC_SUBSTRINGS):
+        SENSITIVE_FILTER_STATS["filtered_count"] = (
+            int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0) + 1
+        )
+        categories = SENSITIVE_FILTER_STATS.get("filtered_categories")
+        if not isinstance(categories, dict):
+            categories = {}
+            SENSITIVE_FILTER_STATS["filtered_categories"] = categories
+        categories["legacy_banned"] = int(categories.get("legacy_banned") or 0) + 1
+        if len(SENSITIVE_FILTER_AUDIT_SAMPLES) < 24:
+            SENSITIVE_FILTER_AUDIT_SAMPLES.append(
+                {
+                    "text": text[:220],
+                    "categories": ["legacy_banned"],
+                    "matches": [{"category": "legacy_banned", "token": "legacy"}],
+                }
+            )
+        return True
+
+    check = evaluate_sensitive_text(
+        text,
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        policy=SENSITIVE_POLICY,
+    )
+    if bool(check.get("blocked")):
+        SENSITIVE_FILTER_STATS["filtered_count"] = (
+            int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0) + 1
+        )
+        categories = SENSITIVE_FILTER_STATS.get("filtered_categories")
+        if not isinstance(categories, dict):
+            categories = {}
+            SENSITIVE_FILTER_STATS["filtered_categories"] = categories
+        for category in check.get("categories") or []:
+            key = str(category or "").strip().lower()
+            if not key:
+                continue
+            categories[key] = int(categories.get(key) or 0) + 1
+        if len(SENSITIVE_FILTER_AUDIT_SAMPLES) < 24:
+            SENSITIVE_FILTER_AUDIT_SAMPLES.append(
+                {
+                    "text": text[:220],
+                    "categories": list(check.get("categories") or []),
+                    "matches": list(check.get("matches") or []),
+                }
+            )
+        return True
+
+    SENSITIVE_FILTER_STATS["kept_count"] = (
+        int(SENSITIVE_FILTER_STATS.get("kept_count") or 0) + 1
+    )
+    return False
 
 
 def _is_stock_like_topic(value):
@@ -688,6 +762,27 @@ def process_markets():
     dedup_state["topic_seen"] = topic_seen
     dedup_state["title_seen"] = title_seen
     _save_dedup_state(DEDUP_STATE_PATH, dedup_state)
+
+    append_sensitive_audit_samples(
+        SENSITIVE_FILTER_AUDIT_SAMPLES,
+        source="virtual_market_fetcher",
+        room_id=SENSITIVE_FILTER_ROOM_ID,
+        max_rows=240,
+    )
+    filtered_categories = dict(
+        sorted(
+            (SENSITIVE_FILTER_STATS.get("filtered_categories") or {}).items(),
+            key=lambda item: int(item[1]),
+            reverse=True,
+        )
+    )
+    logging.info(
+        "SensitiveFilter stats: seen=%s filtered=%s kept=%s categories=%s",
+        int(SENSITIVE_FILTER_STATS.get("total_seen") or 0),
+        int(SENSITIVE_FILTER_STATS.get("filtered_count") or 0),
+        int(SENSITIVE_FILTER_STATS.get("kept_count") or 0),
+        json.dumps(filtered_categories, ensure_ascii=False),
+    )
 
     logging.info(
         f"=== Cycle Complete. Generated and saved {len(generated_markets)} new markets. ==="

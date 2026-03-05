@@ -1,0 +1,50 @@
+[
+    {
+        "role": "host_warm_female",
+        "pitch": "+0Hz",
+        "rate": "-10%",
+        "text": "夜深了。当你听到这个声音的时候，今天的喧嚣，应该已经落幕了吧。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "-5Hz",
+        "rate": "-15%",
+        "text": "在这个安静的时刻，没有人要求你必须坚强，也没有人催促你赶快长大。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "+0Hz",
+        "rate": "-10%",
+        "text": "你可以卸下所有的防备，做回最真实的自己。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "-5Hz",
+        "rate": "-5%",
+        "text": "或许今天有些疲惫，又或许，心里藏着一些无人诉说的委屈。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "+0Hz",
+        "rate": "-10%",
+        "text": "都没关系的。请允许自己有一段停下来的时光。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "-10Hz",
+        "rate": "-15%",
+        "text": "闭上眼睛，深呼吸。把那些不如意，连同冬日的寒风，一起挡在窗外。这里的灯光很暖，声音很轻。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "+0Hz",
+        "rate": "-10%",
+        "text": "无论明天会怎样，至少在这个夜晚，你是被世界温柔拥抱着的。"
+    },
+    {
+        "role": "host_warm_female",
+        "pitch": "-5Hz",
+        "rate": "-20%",
+        "text": "晚安，做个好梦。明天，又是全新的一天。"
+    }
+]

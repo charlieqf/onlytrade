@@ -265,12 +265,33 @@ export const api = {
     return result.data
   },
 
+  async getStreamThemeProfile(roomId: string): Promise<{
+    room_id: string
+    theme: string
+    allowed_themes: string[]
+    default_theme: string
+  }> {
+    const safeRoomId = String(roomId || '').trim()
+    if (!safeRoomId) throw new Error('room_id_required')
+    const result = await httpClient.get<{
+      room_id: string
+      theme: string
+      allowed_themes: string[]
+      default_theme: string
+    }>(`${API_BASE}/stream/theme/profile?room_id=${encodeURIComponent(safeRoomId)}`)
+    if (!result.success || !result.data) {
+      throw new Error(result.message || '获取主题配置失败')
+    }
+    return result.data
+  },
+
   async synthesizeRoomSpeech(payload: {
     room_id: string
     text: string
     tone?: string
     message_id?: string
     speaker_id?: string
+    speed?: number
   }): Promise<Blob> {
     const res = await fetch(`${API_BASE}/chat/tts`, {
       method: 'POST',

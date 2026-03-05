@@ -91,6 +91,9 @@ Commands:
   tts-clear <room_id>              Clear persisted room TTS override
   tts-test <room_id> [--text "..."]
                                    Probe room TTS and report provider/latency/bytes
+  stream-theme-profile [room_id]   Show stream theme profile (default t_016)
+  stream-theme-set <room_id> <theme>
+                                   Persist room stream theme (hobit|knight1|knight2|knight3|knight4)
   poly-commentary-profile [room_id]
                                    Show polymarket commentary profile (default t_015)
   poly-commentary-speaker-set <room_id> <speaker_id> --voice <voice_id>
@@ -970,6 +973,19 @@ tts_clear_profile() {
   curl_delete "/api/chat/tts/profile?room_id=$room_id"
 }
 
+stream_theme_profile() {
+  local room_id="${1:-t_016}"
+  curl_get "/api/stream/theme/profile?room_id=$room_id"
+}
+
+stream_theme_set() {
+  local room_id="$1"
+  local theme="$2"
+  local payload
+  payload="{\"room_id\":$(json_escape_py "$room_id"),\"theme\":$(json_escape_py "$theme") }"
+  curl_post "/api/stream/theme/profile" "$payload"
+}
+
 poly_commentary_profile() {
   local room_id="${1:-t_015}"
   curl_get "/api/polymarket/commentary/profile?room_id=$room_id"
@@ -1564,6 +1580,27 @@ main() {
         esac
       done
       tts_test "$room_id" "$text"
+      ;;
+    stream-theme-profile)
+      local room_id="${1:-t_016}"
+      stream_theme_profile "$room_id" | json_pretty
+      ;;
+    stream-theme-set)
+      local room_id="${1:-}"
+      local theme="${2:-}"
+      if [ -z "$room_id" ] || [ -z "$theme" ]; then
+        echo "[ops] ERROR: stream-theme-set requires <room_id> <theme>" >&2
+        exit 1
+      fi
+      case "$theme" in
+        hobit|knight1|knight2|knight3|knight4)
+          ;;
+        *)
+          echo "[ops] ERROR: theme must be hobit|knight1|knight2|knight3|knight4" >&2
+          exit 1
+          ;;
+      esac
+      stream_theme_set "$room_id" "$theme" | json_pretty
       ;;
     poly-commentary-profile)
       local room_id="${1:-t_015}"

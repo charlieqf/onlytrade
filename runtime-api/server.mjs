@@ -379,6 +379,16 @@ const POLYMARKET_COMMENTARY_PROFILE_PATH = path.resolve(
   __dirname,
   process.env.POLYMARKET_COMMENTARY_PROFILE_PATH || path.join('data', 'chat', 'polymarket_commentary_profiles.json')
 )
+const STREAM_THEME_PROFILE_PATH = path.resolve(
+  __dirname,
+  process.env.STREAM_THEME_PROFILE_PATH || path.join('data', 'chat', 'stream_theme_profiles.json')
+)
+const STREAM_THEME_ALLOWED_THEMES = ['hobit', 'knight1', 'knight2', 'knight3', 'knight4']
+const STREAM_THEME_DEFAULT = 'hobit'
+const SENSITIVE_TOPIC_POLICY_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.SENSITIVE_TOPIC_POLICY_PATH || path.join('config', 'sensitive_topic_policy.json')
+)
 const POLYMARKET_COMMENTARY_LLM_MODEL = String(
   process.env.POLYMARKET_COMMENTARY_LLM_MODEL || 'qwen3-max'
 ).trim() || 'qwen3-max'
@@ -2862,6 +2872,7 @@ let betsLedgerState = {
   credits_by_session: {},
 }
 let ttsProfilesState = createDefaultTtsProfilesState()
+let streamThemeProfilesState = createDefaultStreamThemeProfilesState()
 let polymarketCommentaryProfilesState = createDefaultPolymarketCommentaryProfilesState()
 const polymarketCommentaryFeedByRoom = new Map()
 const polymarketCommentarySpeakerCursorByRoom = new Map()
@@ -3273,6 +3284,197 @@ function normalizeHeadlineTitleForDedupe(title) {
     .replace(/^\s*[\[【][^\]】]{1,12}[\]】]\s*/g, '')
     .replace(/\s+/g, ' ')
     .toLowerCase()
+}
+
+const LEGACY_SENSITIVE_TOKENS = ['截肢', '三八红旗手']
+const DEFAULT_SENSITIVE_TOPIC_POLICY = {
+  schema_version: 'sensitive.topic.policy.v1',
+  default_mode: 'off',
+  rooms: {
+    t_015: {
+      mode: 'hard_block',
+    },
+  },
+  allowlist: [],
+  categories: [],
+}
+const POLYMARKET_SAFE_FALLBACK_TITLES = [
+  '[宏观] 关注未来24小时的政策与宏观数据窗口。',
+  '[科技] 关注AI与芯片产业链的公开进展。',
+  '[商业] 关注头部平台财报与经营指标变化。',
+]
+const POLYMARKET_SAFE_FALLBACK_BACKGROUND_NOTES = [
+  '当前轮播已跳过高敏感话题，优先保留宏观、科技、商业类公开信息。',
+  '请关注官方披露、公司公告与主流媒体的可验证更新。',
+]
+const POLYMARKET_SAFE_FALLBACK_COMMENTARY = [
+  '当前以宏观、科技、商业事件为主，等待下一条可验证进展。',
+]
+const POLYMARKET_SAFE_FALLBACK_CATEGORIES = [
+  { category: 'global_macro', label: '宏观', count: 1 },
+  { category: 'tech', label: '科技', count: 1 },
+  { category: 'business', label: '商业', count: 1 },
+]
+const sensitiveFilterStatsByRoom = new Map()
+
+function loadSensitiveTopicPolicyFromDisk() {
+  const fallback = {
+    ...DEFAULT_SENSITIVE_TOPIC_POLICY,
+    rooms: { ...(DEFAULT_SENSITIVE_TOPIC_POLICY.rooms || {}) },
+    categories: Array.isArray(DEFAULT_SENSITIVE_TOPIC_POLICY.categories) ? [...DEFAULT_SENSITIVE_TOPIC_POLICY.categories] : [],
+    allowlist: Array.isArray(DEFAULT_SENSITIVE_TOPIC_POLICY.allowlist) ? [...DEFAULT_SENSITIVE_TOPIC_POLICY.allowlist] : [],
+  }
+  try {
+    const raw = readFileSync(SENSITIVE_TOPIC_POLICY_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return fallback
+    return {
+      ...fallback,
+      ...parsed,
+      rooms: parsed.rooms && typeof parsed.rooms === 'object' ? parsed.rooms : fallback.rooms,
+      categories: Array.isArray(parsed.categories) ? parsed.categories : fallback.categories,
+      allowlist: Array.isArray(parsed.allowlist) ? parsed.allowlist : fallback.allowlist,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+const sensitiveTopicPolicy = loadSensitiveTopicPolicyFromDisk()
+
+function resolveSensitiveTopicModeForRoom(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const defaultMode = String(sensitiveTopicPolicy?.default_mode || 'off').trim().toLowerCase()
+  const fallbackMode = defaultMode === 'hard_block' ? 'hard_block' : 'off'
+  if (!safeRoomId) return fallbackMode
+  const rooms = sensitiveTopicPolicy?.rooms && typeof sensitiveTopicPolicy.rooms === 'object'
+    ? sensitiveTopicPolicy.rooms
+    : {}
+  const roomCfg = rooms[safeRoomId]
+  if (!roomCfg || typeof roomCfg !== 'object') return fallbackMode
+  const mode = String(roomCfg.mode || fallbackMode).trim().toLowerCase()
+  return mode === 'hard_block' ? 'hard_block' : 'off'
+}
+
+function createDefaultSensitiveFilterStats(roomId) {
+  return {
+    room_id: String(roomId || '').trim().toLowerCase() || 'unknown',
+    total_seen: 0,
+    filtered_count: 0,
+    kept_count: 0,
+    filtered_categories: {},
+  }
+}
+
+function recordSensitiveFilterDecision(roomId, blocked, categories = []) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase() || 'unknown'
+  const previous = sensitiveFilterStatsByRoom.get(safeRoomId) || createDefaultSensitiveFilterStats(safeRoomId)
+  previous.total_seen += 1
+  if (blocked) {
+    previous.filtered_count += 1
+    for (const category of Array.isArray(categories) ? categories : []) {
+      const key = String(category || '').trim().toLowerCase()
+      if (!key) continue
+      previous.filtered_categories[key] = Number(previous.filtered_categories[key] || 0) + 1
+    }
+  } else {
+    previous.kept_count += 1
+  }
+  sensitiveFilterStatsByRoom.set(safeRoomId, previous)
+}
+
+function readSensitiveFilterStats(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase() || 'unknown'
+  const stats = sensitiveFilterStatsByRoom.get(safeRoomId) || createDefaultSensitiveFilterStats(safeRoomId)
+  return {
+    room_id: stats.room_id,
+    total_seen: Number(stats.total_seen || 0),
+    filtered_count: Number(stats.filtered_count || 0),
+    kept_count: Number(stats.kept_count || 0),
+    filtered_categories: {
+      ...(stats.filtered_categories || {}),
+    },
+  }
+}
+
+function evaluateSensitiveTopicText(value, { roomId = '' } = {}) {
+  const mode = resolveSensitiveTopicModeForRoom(roomId)
+  const text = String(value || '').trim()
+  if (!text || mode !== 'hard_block') {
+    return { mode, blocked: false, categories: [], matches: [] }
+  }
+  const normalized = text.toLowerCase()
+  const allowlist = Array.isArray(sensitiveTopicPolicy?.allowlist) ? sensitiveTopicPolicy.allowlist : []
+  for (const raw of allowlist) {
+    const token = String(raw || '').trim().toLowerCase()
+    if (token && normalized.includes(token)) {
+      return { mode, blocked: false, categories: [], matches: [] }
+    }
+  }
+
+  const matches = []
+  const categories = new Set()
+  const categoryRows = Array.isArray(sensitiveTopicPolicy?.categories) ? sensitiveTopicPolicy.categories : []
+  for (const row of categoryRows) {
+    if (!row || typeof row !== 'object') continue
+    const categoryId = String(row.id || '').trim().toLowerCase()
+    if (!categoryId) continue
+    const keywords = Array.isArray(row.keywords) ? row.keywords : []
+    for (const raw of keywords) {
+      const keyword = String(raw || '').trim().toLowerCase()
+      if (!keyword) continue
+      if (normalized.includes(keyword)) {
+        matches.push({ category: categoryId, token: keyword })
+        categories.add(categoryId)
+        break
+      }
+    }
+  }
+
+  for (const legacyToken of LEGACY_SENSITIVE_TOKENS) {
+    if (normalized.includes(String(legacyToken || '').toLowerCase())) {
+      matches.push({ category: 'legacy_banned', token: String(legacyToken || '').toLowerCase() })
+      categories.add('legacy_banned')
+      break
+    }
+  }
+
+  const blocked = matches.length > 0
+  return {
+    mode,
+    blocked,
+    categories: Array.from(categories),
+    matches,
+  }
+}
+
+function filterSensitiveTextRows(rows, { roomId = '', maxLen = 120 } = {}) {
+  const out = []
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    const text = String(raw || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, Math.max(8, Number(maxLen) || 120))
+    if (!text) continue
+    const check = evaluateSensitiveTopicText(text, { roomId })
+    recordSensitiveFilterDecision(roomId, Boolean(check.blocked), check.categories || [])
+    if (check.blocked) continue
+    out.push(text)
+  }
+  return out
+}
+
+function filterSensitiveHeadlineRows(rows, { roomId = '' } = {}) {
+  const out = []
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    if (!raw || typeof raw !== 'object') continue
+    const title = String(raw.title || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 220)
+    if (!title) continue
+    const summary = String(raw.summary || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 220)
+    const merged = [title, summary].filter(Boolean).join(' ')
+    const check = evaluateSensitiveTopicText(merged, { roomId })
+    recordSensitiveFilterDecision(roomId, Boolean(check.blocked), check.categories || [])
+    if (check.blocked) continue
+    out.push(raw)
+  }
+  return out
 }
 
 function isStockLikeHeadlineRow(row) {
@@ -3972,31 +4174,44 @@ async function buildRoomChatContext(roomId, {
   const xBackgroundNotes = Array.isArray(xHotDigest?.background_notes) ? xHotDigest.background_notes : []
   const xCategories = Array.isArray(xHotDigest?.categories) ? xHotDigest.categories : []
 
+  const roomIsPolymarket = safeRoomId === 't_015'
   const mergedHeadlines = useXHotNews
     ? mergeDigestHeadlines(xHeadlines, digestHeadlines, { limit: 72 })
     : digestHeadlines
-  const roomIsPolymarket = safeRoomId === 't_015'
-  const effectiveHeadlines = roomIsPolymarket
+  const selectedHeadlines = roomIsPolymarket
     ? selectPolymarketHeadlinePool(mergedHeadlines, { limit: 20 })
     : mergedHeadlines
+  const effectiveHeadlines = roomIsPolymarket
+    ? filterSensitiveHeadlineRows(selectedHeadlines, { roomId: safeRoomId })
+    : selectedHeadlines
   const mergedTitles = useXHotNews
     ? mergeUniqueTextRows(xTitles, digestTitles, { limit: 24 })
     : digestTitles
-  const effectiveTitles = roomIsPolymarket
-    ? effectiveHeadlines
-      .map((row) => String(row?.title || '').trim())
-      .filter(Boolean)
-      .slice(0, 20)
+  const polymarketTitles = effectiveHeadlines
+    .map((row) => String(row?.title || '').trim())
+    .filter(Boolean)
+    .slice(0, 20)
+  let effectiveTitles = roomIsPolymarket
+    ? filterSensitiveTextRows(polymarketTitles, { roomId: safeRoomId, maxLen: 120 })
     : mergedTitles
-  const mergedCommentary = useXHotNews
+  const mergedCommentaryRaw = useXHotNews
     ? mergeUniqueTextRows(xCommentary, digestCommentary, { limit: 10 })
     : digestCommentary
-  const mergedBackgroundNotes = useXHotNews
+  const mergedBackgroundNotesRaw = useXHotNews
     ? mergeUniqueTextRows(xBackgroundNotes, digestBackgroundNotes, { limit: 18 })
     : mergeUniqueTextRows(digestBackgroundNotes, [], { limit: 18 })
-  const mergedCategories = useXHotNews
+  const mergedCategoriesRaw = useXHotNews
     ? mergeNewsCategoryRows(xCategories, digestCategories, { limit: 6 })
     : digestCategories
+  const mergedCommentary = roomIsPolymarket
+    ? filterSensitiveTextRows(mergedCommentaryRaw, { roomId: safeRoomId, maxLen: 120 }).slice(0, 8)
+    : mergedCommentaryRaw
+  const mergedBackgroundNotes = roomIsPolymarket
+    ? filterSensitiveTextRows(mergedBackgroundNotesRaw, { roomId: safeRoomId, maxLen: 160 }).slice(0, 18)
+    : mergedBackgroundNotesRaw
+  const mergedCategories = roomIsPolymarket
+    ? extractNewsCategorySummary(null, effectiveHeadlines)
+    : mergedCategoriesRaw
   const mergedBurstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
     ? (
       selectNewsBurstSignal({
@@ -4005,8 +4220,8 @@ async function buildRoomChatContext(roomId, {
         freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
         minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
       })
-      || xHotDigest?.burst_signal
-      || effectiveDigest?.burst_signal
+      || (roomIsPolymarket ? null : xHotDigest?.burst_signal)
+      || (roomIsPolymarket ? null : effectiveDigest?.burst_signal)
       || null
     )
     : null
@@ -4023,6 +4238,26 @@ async function buildRoomChatContext(roomId, {
     derivedBackgroundNotes,
     { limit: roomIsPolymarket ? 20 : 16 },
   )
+  if (roomIsPolymarket) {
+    effectiveTitles = effectiveTitles.length ? effectiveTitles : POLYMARKET_SAFE_FALLBACK_TITLES.slice(0, 6)
+  }
+  const finalHeadlineBriefs = roomIsPolymarket
+    ? filterSensitiveTextRows(mergedHeadlineBriefs, { roomId: safeRoomId, maxLen: 128 })
+    : mergedHeadlineBriefs
+  const finalCommentary = roomIsPolymarket
+    ? (mergedCommentary.length ? mergedCommentary : POLYMARKET_SAFE_FALLBACK_COMMENTARY.slice(0, 4))
+    : mergedCommentary
+  const finalCategories = roomIsPolymarket
+    ? (mergedCategories.length ? mergedCategories : POLYMARKET_SAFE_FALLBACK_CATEGORIES.slice(0, 4))
+    : mergedCategories
+  const finalBackgroundNotesSafe = roomIsPolymarket
+    ? filterSensitiveTextRows(finalBackgroundNotes, { roomId: safeRoomId, maxLen: 160 })
+    : finalBackgroundNotes
+  const finalBackgroundNotesOutput = roomIsPolymarket
+    ? (finalBackgroundNotesSafe.length
+      ? finalBackgroundNotesSafe
+      : POLYMARKET_SAFE_FALLBACK_BACKGROUND_NOTES.slice(0, 4))
+    : finalBackgroundNotesSafe
 
   let recentViewerMessages = []
   try {
@@ -4041,11 +4276,11 @@ async function buildRoomChatContext(roomId, {
     time_context: shanghaiClockParts(sessionNowMs),
     market_overview_brief: effectiveOverview?.brief || '',
     news_digest_titles: effectiveTitles,
-    news_digest_headline_briefs: mergedHeadlineBriefs,
-    news_background_notes: finalBackgroundNotes,
+    news_digest_headline_briefs: finalHeadlineBriefs,
+    news_background_notes: finalBackgroundNotesOutput,
     recent_viewer_messages: recentViewerMessages,
-    news_commentary: mergedCommentary,
-    news_categories: mergedCategories,
+    news_commentary: finalCommentary,
+    news_categories: finalCategories,
     news_as_of: String(xHotDigest?.as_of || effectiveDigest?.as_of || '').trim() || null,
     casual_topics: filterTimeAwareCasualTopics(
       Array.isArray(effectiveDigest?.casual_topics)
@@ -4061,6 +4296,7 @@ async function buildRoomChatContext(roomId, {
     symbol_history_lines: Array.isArray(symbolHistorySummary?.lines)
       ? symbolHistorySummary.lines.slice(0, 4)
       : [],
+    sensitive_filter_stats: roomIsPolymarket ? readSensitiveFilterStats(safeRoomId) : null,
   }
 }
 
@@ -4383,6 +4619,7 @@ function resolveSelfHostedTtsVoiceForTraderId(traderId) {
   const dynamicKey = ttsSelfHostedVoiceEnvKeyByTraderId(safeTraderId)
   const dynamicVoice = dynamicKey ? String(process.env[dynamicKey] || '').trim() : ''
   if (dynamicVoice) return dynamicVoice
+  if (safeTraderId === 't_016') return 'longyuan_v3'
   return CHAT_TTS_SELFHOSTED_VOICE_DEFAULT
 }
 
@@ -4521,22 +4758,32 @@ function resolveEffectiveTtsProfileForRoom({ roomId, tone = '', seed = '' } = {}
   const defaultProvider = effectiveTtsDefaultProvider()
   const defaultFallback = defaultProvider === 'selfhosted' ? 'openai' : 'none'
   const override = safeRoomId ? normalizeTtsRoomOverride(ttsProfilesState.rooms?.[safeRoomId]) : null
+  const roomDefaultOverride = safeRoomId === 't_016'
+    ? {
+      provider: 'selfhosted',
+      voice: 'longyuan_v3',
+      speed: null,
+      fallback_provider: 'none',
+      updated_ts_ms: Date.now(),
+    }
+    : null
+  const effectiveOverride = override || roomDefaultOverride
 
-  const provider = normalizeTtsProvider(override?.provider, defaultProvider)
-  const hasOverrideSpeed = override
-    && override.speed !== null
-    && override.speed !== undefined
-    && String(override.speed).trim() !== ''
+  const provider = normalizeTtsProvider(effectiveOverride?.provider, defaultProvider)
+  const hasOverrideSpeed = effectiveOverride
+    && effectiveOverride.speed !== null
+    && effectiveOverride.speed !== undefined
+    && String(effectiveOverride.speed).trim() !== ''
   const speed = hasOverrideSpeed
-    ? clampTtsSpeed(override.speed, openAiProfile.speed)
+    ? clampTtsSpeed(effectiveOverride.speed, openAiProfile.speed)
     : openAiProfile.speed
-  const voice = String(override?.voice || '').trim() || resolveDefaultVoiceByProvider({
+  const voice = String(effectiveOverride?.voice || '').trim() || resolveDefaultVoiceByProvider({
     provider,
     roomId: safeRoomId,
     tone,
     seed: seed || safeRoomId,
   })
-  const fallbackProvider = normalizeTtsFallbackProvider(override?.fallback_provider, defaultFallback)
+  const fallbackProvider = normalizeTtsFallbackProvider(effectiveOverride?.fallback_provider, defaultFallback)
 
   return {
     room_id: safeRoomId,
@@ -4593,6 +4840,96 @@ async function loadTtsProfilesState() {
   } catch {
     ttsProfilesState = createDefaultTtsProfilesState()
   }
+}
+
+function normalizeStreamThemeKey(value) {
+  const theme = String(value || '').trim().toLowerCase()
+  if (!theme) return ''
+  return STREAM_THEME_ALLOWED_THEMES.includes(theme) ? theme : ''
+}
+
+function createDefaultStreamThemeRoomProfile(roomId = 't_016') {
+  const safeRoomId = String(roomId || '').trim().toLowerCase() || 't_016'
+  return {
+    room_id: safeRoomId,
+    theme: STREAM_THEME_DEFAULT,
+    updated_ts_ms: Date.now(),
+  }
+}
+
+function normalizeStreamThemeRoomProfile(roomId, value) {
+  const safeRoomId = String(roomId || value?.room_id || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  const theme = normalizeStreamThemeKey(value?.theme || STREAM_THEME_DEFAULT) || STREAM_THEME_DEFAULT
+  return {
+    room_id: safeRoomId,
+    theme,
+    updated_ts_ms: Number.isFinite(Number(value?.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+function createDefaultStreamThemeProfilesState() {
+  const defaultRoom = createDefaultStreamThemeRoomProfile('t_016')
+  return {
+    schema_version: 'stream.theme.profile.v1',
+    rooms: {
+      [defaultRoom.room_id]: defaultRoom,
+    },
+    updated_ts_ms: Date.now(),
+  }
+}
+
+function normalizeStreamThemeProfilesState(value) {
+  const fallback = createDefaultStreamThemeProfilesState()
+  if (!value || typeof value !== 'object') return fallback
+  const rooms = {}
+  if (value.rooms && typeof value.rooms === 'object') {
+    for (const [roomIdRaw, row] of Object.entries(value.rooms)) {
+      const roomId = String(roomIdRaw || '').trim().toLowerCase()
+      if (!roomId) continue
+      const normalized = normalizeStreamThemeRoomProfile(roomId, row)
+      if (!normalized) continue
+      rooms[roomId] = normalized
+    }
+  }
+  if (!Object.keys(rooms).length) {
+    const defaultRoom = createDefaultStreamThemeRoomProfile('t_016')
+    rooms[defaultRoom.room_id] = defaultRoom
+  }
+  return {
+    schema_version: 'stream.theme.profile.v1',
+    rooms,
+    updated_ts_ms: Number.isFinite(Number(value.updated_ts_ms)) ? Number(value.updated_ts_ms) : Date.now(),
+  }
+}
+
+async function persistStreamThemeProfilesState() {
+  const dir = path.dirname(STREAM_THEME_PROFILE_PATH)
+  await mkdir(dir, { recursive: true })
+  const tmpPath = `${STREAM_THEME_PROFILE_PATH}.tmp`
+  await writeFile(tmpPath, JSON.stringify(streamThemeProfilesState, null, 2), 'utf8')
+  await rename(tmpPath, STREAM_THEME_PROFILE_PATH)
+}
+
+async function loadStreamThemeProfilesState() {
+  try {
+    const raw = await readFile(STREAM_THEME_PROFILE_PATH, 'utf8')
+    streamThemeProfilesState = normalizeStreamThemeProfilesState(JSON.parse(raw))
+  } catch {
+    streamThemeProfilesState = createDefaultStreamThemeProfilesState()
+  }
+}
+
+function resolveStreamThemeRoomProfile(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return createDefaultStreamThemeRoomProfile('t_016')
+  const explicit = normalizeStreamThemeRoomProfile(
+    safeRoomId,
+    streamThemeProfilesState?.rooms?.[safeRoomId]
+  )
+  if (explicit) return explicit
+  if (safeRoomId === 't_016') return createDefaultStreamThemeRoomProfile('t_016')
+  return createDefaultStreamThemeRoomProfile(safeRoomId)
 }
 
 function createDefaultPolymarketRoomProfile(roomId = 't_015') {
@@ -5001,7 +5338,10 @@ async function generatePolymarketCommentaryText({
   const safeRoomId = String(roomId || '').trim().toLowerCase()
   const speakerName = safePlainText(speaker?.display_name || '主持人', 24)
   const stylePrompt = safePlainText(speaker?.style_prompt_cn || '', 320)
-  const marketTitle = safePlainText(market?.title || '', 140)
+  const marketTitleRaw = safePlainText(market?.title || '', 140)
+  const marketTitle = evaluateSensitiveTopicText(marketTitleRaw, { roomId: safeRoomId }).blocked
+    ? '当前热点事件'
+    : marketTitleRaw
   const yesOutcomeRaw = safePlainText(market?.yes_outcome || '支持', 28)
   const noOutcomeRaw = safePlainText(market?.no_outcome || '反对', 28)
   const yesOutcome = /^(yes|y|true|up)$/i.test(yesOutcomeRaw) ? '支持' : yesOutcomeRaw
@@ -5035,22 +5375,31 @@ async function generatePolymarketCommentaryText({
       .filter(Boolean)
       .slice(0, 6)
     : []
+  const safeEvidenceLines = filterSensitiveTextRows(evidenceLines, { roomId: safeRoomId, maxLen: 120 }).slice(0, 5)
+  const safeContextCommentary = filterSensitiveTextRows(contextCommentary, { roomId: safeRoomId, maxLen: 120 }).slice(0, 4)
+  const safeContextBackgroundNotes = filterSensitiveTextRows(contextBackgroundNotes, { roomId: safeRoomId, maxLen: 140 }).slice(0, 6)
   const contextAsOf = safePlainText(roomContext?.news_as_of || '', 40)
-  const marketNewsSummary = safePlainText(
+  const marketNewsSummaryRaw = safePlainText(
     market?.news_summary || market?.event_summary || '',
     220,
   )
-  const marketSourceTopic = safePlainText(
+  const marketNewsSummary = evaluateSensitiveTopicText(marketNewsSummaryRaw, { roomId: safeRoomId }).blocked
+    ? ''
+    : marketNewsSummaryRaw
+  const marketSourceTopicRaw = safePlainText(
     market?.source_topic || trigger?.topic || '',
     100,
   )
+  const marketSourceTopic = evaluateSensitiveTopicText(marketSourceTopicRaw, { roomId: safeRoomId }).blocked
+    ? ''
+    : marketSourceTopicRaw
   const marketSourceName = safePlainText(market?.source_source || '', 24)
   const marketSourceHeat = safePlainText(market?.source_hot_score || '', 24)
   const marketKeyPoints = parseLooseStringArray(
     market?.news_key_points,
     { limit: 4, maxLen: 72 },
   )
-  const eventTitle = safePlainText(
+  const eventTitleRaw = safePlainText(
     trigger?.title
       || trigger?.event_title
       || marketSourceTopic
@@ -5059,10 +5408,13 @@ async function generatePolymarketCommentaryText({
       || '',
     96,
   )
+  const eventTitle = evaluateSensitiveTopicText(eventTitleRaw, { roomId: safeRoomId }).blocked
+    ? '当前宏观与科技事件'
+    : eventTitleRaw
 
   if (!OPENAI_API_KEY) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
-    const fallbackContextSummary = marketNewsSummary || contextBackgroundNotes[0] || ''
+    const fallbackContextSummary = marketNewsSummary || safeContextBackgroundNotes[0] || ''
     const summaryLine = fallbackContextSummary
       ? `事件脉络是：${fallbackContextSummary.replace(/[。！？!?]+$/g, '')}。`
       : '先看公开进展是否出现权威确认。'
@@ -5099,15 +5451,15 @@ async function generatePolymarketCommentaryText({
     `market_title: ${marketTitle || 'n/a'}`,
     `event_summary: ${marketNewsSummary || 'n/a'}`,
     `event_key_points: ${marketKeyPoints.length ? marketKeyPoints.join(' || ') : 'none'}`,
-    `news_background_notes: ${contextBackgroundNotes.length ? contextBackgroundNotes.join(' || ') : 'none'}`,
+    `news_background_notes: ${safeContextBackgroundNotes.length ? safeContextBackgroundNotes.join(' || ') : 'none'}`,
     `yes_outcome: ${yesOutcome}`,
     `no_outcome: ${noOutcome}`,
     `yes_prob: ${Number.isFinite(currentProb) ? (currentProb * 100).toFixed(2) + '%' : 'n/a'}`,
     `prob_delta: ${Number.isFinite(deltaProb) ? (deltaProb * 100).toFixed(2) + '%' : 'n/a'}`,
     `volume: ${Number.isFinite(volume) ? Math.round(volume).toLocaleString('en-US') : 'n/a'}`,
     `news_as_of: ${contextAsOf || 'n/a'}`,
-    `related_news: ${evidenceLines.length ? evidenceLines.join(' || ') : 'none'}`,
-    `related_commentary: ${contextCommentary.length ? contextCommentary.join(' || ') : 'none'}`,
+    `related_news: ${safeEvidenceLines.length ? safeEvidenceLines.join(' || ') : 'none'}`,
+    `related_commentary: ${safeContextCommentary.length ? safeContextCommentary.join(' || ') : 'none'}`,
     `recent_logs: ${logs.length ? logs.join(' | ') : 'none'}`,
   ].join('\n')
 
@@ -5152,7 +5504,7 @@ async function generatePolymarketCommentaryText({
   } catch (error) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
     const pct = Number.isFinite(currentProb) ? `${(currentProb * 100).toFixed(1)}%` : 'n/a'
-    const fallbackContextSummary = marketNewsSummary || contextBackgroundNotes[0] || ''
+    const fallbackContextSummary = marketNewsSummary || safeContextBackgroundNotes[0] || ''
     const summaryLine = fallbackContextSummary
       ? `事件脉络是：${fallbackContextSummary.replace(/[。！？!?]+$/g, '')}。`
       : '先看后续公开进展是否出现新增证据。'
@@ -7603,6 +7955,76 @@ app.delete('/api/chat/tts/profile', async (req, res) => {
   }
 })
 
+app.get('/api/stream/theme/profile', (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || 't_016').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+    const profile = resolveStreamThemeRoomProfile(roomId)
+    res.json(ok({
+      room_id: roomId,
+      theme: profile.theme,
+      profile,
+      allowed_themes: STREAM_THEME_ALLOWED_THEMES,
+      default_theme: STREAM_THEME_DEFAULT,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'stream_theme_profile_read_failed' })
+  }
+})
+
+app.post('/api/stream/theme/profile', async (req, res) => {
+  if (!requireControlAuthorization(req, res, {
+    action: 'stream.theme.profile.set',
+    target: String(req.body?.room_id || '').trim() || null,
+  })) return
+
+  try {
+    const roomId = String(req.body?.room_id || '').trim().toLowerCase()
+    const theme = normalizeStreamThemeKey(req.body?.theme)
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    if (!theme) {
+      res.status(400).json({ success: false, error: 'invalid_theme' })
+      return
+    }
+    const trader = getRegisteredTraderStrict(roomId)
+    if (!trader) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+
+    streamThemeProfilesState.rooms[roomId] = {
+      room_id: roomId,
+      theme,
+      updated_ts_ms: Date.now(),
+    }
+    streamThemeProfilesState.updated_ts_ms = Date.now()
+    await persistStreamThemeProfilesState()
+
+    const profile = resolveStreamThemeRoomProfile(roomId)
+    res.json(ok({
+      room_id: roomId,
+      theme: profile.theme,
+      profile,
+      allowed_themes: STREAM_THEME_ALLOWED_THEMES,
+      default_theme: STREAM_THEME_DEFAULT,
+      persisted: true,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'stream_theme_profile_write_failed' })
+  }
+})
+
 app.post('/api/chat/tts', async (req, res) => {
   try {
     if (!CHAT_TTS_ENABLED) {
@@ -7635,6 +8057,15 @@ app.post('/api/chat/tts', async (req, res) => {
     const tone = normalizeTtsTone(req.body?.tone)
     const seed = String(req.body?.message_id || '').trim() || text
     const speakerId = String(req.body?.speaker_id || '').trim().toLowerCase()
+    let speedOverride = null
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'speed')) {
+      const parsedSpeed = Number(req.body.speed)
+      if (!Number.isFinite(parsedSpeed)) {
+        res.status(400).json({ success: false, error: 'invalid_speed' })
+        return
+      }
+      speedOverride = clampTtsSpeed(parsedSpeed, CHAT_TTS_SPEED)
+    }
     const baseTtsProfile = resolveEffectiveTtsProfileForRoom({ roomId, tone, seed })
     const speakerTtsOverride = buildPolymarketSpeakerTtsProfileOverride({
       roomId,
@@ -7642,12 +8073,18 @@ app.post('/api/chat/tts', async (req, res) => {
       baseProfile: baseTtsProfile,
     })
     const ttsProfile = speakerTtsOverride || baseTtsProfile
+    const effectiveTtsProfile = speedOverride == null
+      ? ttsProfile
+      : {
+        ...ttsProfile,
+        speed: speedOverride,
+      }
     const synthesis = await synthesizeTtsWithProviderRouting({
       roomId,
       text,
       tone,
       seed,
-      profile: ttsProfile,
+      profile: effectiveTtsProfile,
     })
 
     res.set('Content-Type', synthesis.contentType)
@@ -7658,7 +8095,7 @@ app.post('/api/chat/tts', async (req, res) => {
     res.set('x-tts-model', synthesis.model)
     res.set('x-tts-voice', synthesis.voice)
     res.set('x-tts-speed', String(synthesis.speed))
-    res.set('x-tts-tone', ttsProfile.tone)
+    res.set('x-tts-tone', effectiveTtsProfile.tone)
     if (speakerTtsOverride?.speaker_id) {
       res.set('x-tts-speaker-id', speakerTtsOverride.speaker_id)
     }
@@ -9042,7 +9479,7 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
     const trigger = req.body?.trigger && typeof req.body.trigger === 'object' ? req.body.trigger : {}
     const market = req.body?.market && typeof req.body.market === 'object' ? req.body.market : {}
     const recentLogs = Array.isArray(req.body?.recent_logs) ? req.body.recent_logs : []
-    const roomContext = await buildRoomChatContext(roomId)
+    let roomContext = null
 
     if (!roomId) {
       res.status(400).json({ success: false, error: 'room_id_required' })
@@ -9057,6 +9494,28 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
     const profile = resolvePolymarketCommentaryRoomProfile(roomId)
     if (!profile.enabled) {
       res.status(503).json({ success: false, error: 'polymarket_commentary_disabled' })
+      return
+    }
+
+    const sensitiveInputText = [
+      market?.title,
+      market?.source_topic,
+      market?.news_summary,
+      market?.event_summary,
+      trigger?.title,
+      trigger?.topic,
+      trigger?.reason,
+    ].map((item) => String(item || '').trim()).filter(Boolean).join(' ')
+    const sensitiveInputCheck = evaluateSensitiveTopicText(sensitiveInputText, { roomId })
+    if (sensitiveInputCheck.blocked) {
+      recordSensitiveFilterDecision(roomId, true, sensitiveInputCheck.categories || [])
+      res.json(ok({
+        room_id: roomId,
+        commentary: null,
+        skipped: true,
+        reason: 'sensitive_topic_blocked',
+        categories: sensitiveInputCheck.categories || [],
+      }))
       return
     }
 
@@ -9092,6 +9551,8 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       res.status(503).json({ success: false, error: 'no_commentary_speaker_available' })
       return
     }
+
+    roomContext = await buildRoomChatContext(roomId)
 
     const generated = await generatePolymarketCommentaryText({
       roomId,
@@ -9179,6 +9640,7 @@ app.use('/api', (_req, res) => {
 
 await loadKillSwitchState()
 await loadTtsProfilesState()
+await loadStreamThemeProfilesState()
 await loadPolymarketCommentaryProfilesState()
 await loadReplayBatch()
 await loadDailyHistoryBatch()

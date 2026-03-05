@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VM_HOST="${ONLYTRADE_VM_HOST:-root@104.238.213.119}"
-VM_KEY="${ONLYTRADE_VM_KEY:-$HOME/.ssh/kamatera}"
+VM_HOST="${ONLYTRADE_VM_HOST:-root@113.125.202.169}"
+VM_PORT="${ONLYTRADE_VM_PORT:-21522}"
+VM_KEY="${ONLYTRADE_VM_KEY:-$HOME/.ssh/cn169_ed25519}"
 VM_REPO="${ONLYTRADE_VM_REPO:-}"
 VM_API_BASE="${ONLYTRADE_VM_API_BASE:-http://127.0.0.1:18080}"
 
@@ -27,14 +28,17 @@ Examples:
   bash scripts/onlytrade-ssh-ops.sh tts-set t_003 --provider selfhosted --voice xuanyijiangjie --fallback openai
   bash scripts/onlytrade-ssh-ops.sh tts-test t_003 --text "语音连通测试"
   bash scripts/onlytrade-ssh-ops.sh tts-clear t_003
+  bash scripts/onlytrade-ssh-ops.sh stream-theme-profile t_016
+  bash scripts/onlytrade-ssh-ops.sh stream-theme-set t_016 hobit
   bash scripts/onlytrade-ssh-ops.sh viewer-sim t_003 --viewers 24 --busy high --tempo steady --duration-min 15
   OPENAI_API_KEY=... bash scripts/onlytrade-ssh-ops.sh viewer-sim t_003 --viewers 18 --busy normal --content mixed --llm-ratio 0.4
   bash scripts/onlytrade-ssh-ops.sh agent-reset t_001 --positions-only --confirm
   bash scripts/onlytrade-ssh-ops.sh factory-reset --cursor 0 --confirm
 
 Optional env vars:
-  ONLYTRADE_VM_HOST   VM SSH target (default: root@104.238.213.119)
-  ONLYTRADE_VM_KEY    SSH private key path (default: ~/.ssh/kamatera)
+  ONLYTRADE_VM_HOST   VM SSH target (default: root@113.125.202.169)
+  ONLYTRADE_VM_PORT   VM SSH port (default: 21522)
+  ONLYTRADE_VM_KEY    SSH private key path (default: ~/.ssh/cn169_ed25519)
   ONLYTRADE_VM_REPO   Repo path on VM (auto-detected if omitted)
   ONLYTRADE_VM_API_BASE Backend API base on VM (default: http://127.0.0.1:18080)
 
@@ -63,7 +67,7 @@ args_joined="${quoted_args[*]}"
 repo_quoted="$(printf '%q' "$VM_REPO")"
 api_base_quoted="$(printf '%q' "$VM_API_BASE")"
 
-ssh -i "$VM_KEY" "$VM_HOST" "ONLYTRADE_VM_REPO=$repo_quoted ONLYTRADE_API_BASE=$api_base_quoted bash -s -- $args_joined" <<'REMOTE_SCRIPT'
+ssh -p "$VM_PORT" -i "$VM_KEY" "$VM_HOST" "ONLYTRADE_VM_REPO=$repo_quoted ONLYTRADE_API_BASE=$api_base_quoted bash -s -- $args_joined" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 detect_repo() {

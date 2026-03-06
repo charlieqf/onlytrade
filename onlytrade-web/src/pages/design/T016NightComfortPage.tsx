@@ -19,6 +19,7 @@ type ComfortSegment = {
 const AGENT_ID = 't_016'
 const DEFAULT_THEME: ThemeKey = 'hobit'
 const NARRATION_FILE = 'late_night_comfort.json'
+const HOST_VIDEO_FILE = 'host.mp4'
 const BGM_VOLUME = 0.25
 const BGM_DUCKED_VOLUME = 0.1
 
@@ -142,6 +143,10 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
   const mediaBase = `${pathBase}/theme-loop/${AGENT_ID}`
   const videoSrc = withAssetVersion(`${mediaBase}/${themeAsset.video}`, assetVersion)
   const bgmSrc = withAssetVersion(`${mediaBase}/${themeAsset.audio}`, assetVersion)
+  const hostSrc = withAssetVersion(
+    `${pathBase}/api/agents/${AGENT_ID}/assets/${HOST_VIDEO_FILE}`,
+    assetVersion
+  )
 
   useEffect(() => {
     const handleRouteChange = () => {
@@ -346,6 +351,19 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
       />
 
       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/30" />
+
+      <div className="absolute right-3 top-3 z-30 w-[32vw] min-w-[120px] max-w-[300px] overflow-hidden rounded border border-white/35 bg-black/35 shadow-[0_8px_24px_rgba(0,0,0,0.45)]">
+        <video
+          key={hostSrc}
+          src={hostSrc}
+          className="aspect-video h-auto w-full object-cover"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+        />
+      </div>
 
       <div className="absolute left-3 top-3 z-30 rounded border border-white/20 bg-black/45 px-2 py-1 text-[11px] font-medium tracking-wide text-white/85">
         {`theme: ${effectiveTheme}`}

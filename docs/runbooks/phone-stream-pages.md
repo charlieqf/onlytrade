@@ -62,6 +62,7 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
 - `t_014` -> `/stream/story-broadcast?story=libai`
 - `t_015` -> `/stream/polymarket`
 - `t_016` -> `/stream/night-comfort?theme=hobit`
+- `t_017` -> `/stream/oral-english`
 
 - Night Comfort (theme-loop + narration)
   - Route: `/stream/night-comfort?trader=<trader_id>&theme=<hobit|knight1|knight2|knight3|knight4>`
@@ -73,6 +74,36 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
     - Backend profile endpoints:
       - `GET /api/stream/theme/profile?room_id=<trader_id>`
       - `POST /api/stream/theme/profile` (token protected)
+
+- Oral English (image-first classroom)
+  - Route: `/stream/oral-english?trader=<trader_id>`
+  - 8000 bridge route: `/onlytrade/stream/oral-english?trader=<trader_id>`
+  - File: `onlytrade-web/src/pages/design/T017OralEnglishPage.tsx`
+  - Notes:
+    - Full-screen image, top topic title overlay, bottom large one-line vocabulary list.
+    - Teaching material is TTS-only and not rendered on screen.
+    - Feed endpoint: `GET /api/english-classroom/live?room_id=t_017`
+    - Image endpoint: `GET /api/english-classroom/images/:file`
+    - Audio endpoint: `GET /api/english-classroom/audio/:file`
+    - Frontend prefers pushed `audio_api_url` MP3 and only falls back to live TTS if static audio fails.
+    - Collector model: local Windows PC generates and pushes image-backed topics to VM.
+    - Current collector pre-generates MP3 for the first 5 topics.
+    - Current collector removes fallback-image rows from the final feed, so `headline_count` may be less than 20.
+    - Windows automation:
+      - runner: `scripts/windows/run-t017-local-push.ps1`
+      - scheduler: `scripts/windows/setup-t017-local-push-task.ps1`
+      - task name: `OnlyTrade-T017-LocalPush-5m`
+      - log file: `logs/t017_local_push.log`
+
+## Deployment baseline (t_015/t_016/t_017)
+
+- Target VM: `113.125.202.169:21522`
+- SSH key: `C:\Users\rdpuser\.ssh\cn169_ed25519`
+- VM repo: `/opt/onlytrade`
+- Frontend dist: `/opt/onlytrade/onlytrade-web/dist`
+- Runtime API: `/opt/onlytrade/runtime-api/server.mjs` (`127.0.0.1:18080`)
+- Active Nginx root config: `/usr/local/nginx/conf/nginx.conf`
+- Included app config: `/usr/local/nginx/conf/onlytrade.conf`
 
 For full operator playbooks and failure recovery, see:
 

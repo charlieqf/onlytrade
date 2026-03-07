@@ -1,6 +1,10 @@
-# Six-Room Stream Ops Skills
+# Stream Ops Skills (Polymarket + Night-Comfort + Oral-English)
 
-This runbook is the operator skill card for the 6 production stream rooms on Aliyun/zhibo.
+This runbook is the operator skill card for production stream rooms on zhibo, with focus on:
+
+- `t_015` polymarket
+- `t_016` night-comfort
+- `t_017` oral-english
 
 Companion local skill file:
 
@@ -14,14 +18,29 @@ Companion local skill file:
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/story-broadcast?trader=t_013&story=mandela_effect`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/story-broadcast?trader=t_014&story=libai`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/polymarket?trader=t_015`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/night-comfort?trader=t_016&theme=hobit`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017`
 
 ## 2) Server access baseline
 
-- Host: `113.125.202.169`
+- Target VM host: `113.125.202.169`
 - SSH port: `21522`
+- SSH user: `root`
 - Default key on this workstation: `C:\Users\rdpuser\.ssh\cn169_ed25519`
-- Runtime API: `http://127.0.0.1:18080`
-- Public web: `http://zhibo.quickdealservice.com:18000`
+- Repo deployment root on VM: `/opt/onlytrade`
+- Runtime API listen: `http://127.0.0.1:18080`
+- Public web entry: `http://zhibo.quickdealservice.com:18000`
+- Frontend deployment directory: `/opt/onlytrade/onlytrade-web/dist`
+- Runtime API code path: `/opt/onlytrade/runtime-api/server.mjs`
+- Active Nginx root config: `/usr/local/nginx/conf/nginx.conf`
+- Included app config: `/usr/local/nginx/conf/onlytrade.conf`
+
+Nginx route baseline (`onlytrade.conf`):
+
+- `root /opt/onlytrade/onlytrade-web/dist;`
+- `/onlytrade/api/*` -> proxy to `http://127.0.0.1:18080/api/*`
+- `/api/*` -> proxy to `http://127.0.0.1:18080/api/*`
+- `/onlytrade/*` SPA route via `try_files`
 
 SSH template:
 
@@ -65,6 +84,8 @@ bash scripts/onlytrade-ssh-ops.sh status
 | `t_013` (`story=mandela_effect`) | story-broadcast | story assets + `agents/t_013` registered | room API 404 when not registered |
 | `t_014` (`story=libai`) | story-broadcast | story assets + `agents/t_014` registered | `narration_load_failed` or wrong fallback story |
 | `t_015` (`polymarket`) | polymarket stream | `cyber_market_live.json` + `avatar.mp4` + `agents/t_015` + polymarket bridge/engine services | HTML fallback instead of JSON/video, or feed not updating |
+| `t_016` (`night-comfort`) | calm loop + narration | `dist/theme-loop/t_016/*` + `agents/t_016/assets/late_night_comfort.json` + room TTS profile | black background, missing BGM, autoplay blocked |
+| `t_017` (`oral-english`) | image-first classroom | local Windows collector push -> `data/live/onlytrade/english_classroom_live.json` + `data/live/onlytrade/english_images/t_017/` | repeated fallback image, empty feed, silent autoplay |
 
 ## 4) Policy baseline
 
@@ -103,7 +124,57 @@ curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickde
 curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/avatar.mp4"
 ```
 
-### 5.4 `t_003` voice checks
+### 5.4 `t_016` night-comfort checks
+
+```bash
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/night-comfort?trader=t_016&theme=hobit"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/theme-loop/t_016/hobit.mp4"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/theme-loop/t_016/hobit.mp3"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts/profile?room_id=t_016"
+```
+
+Expected TTS baseline for `t_016`: `selfhosted + longyuan_v3`.
+
+### 5.5 `t_017` oral-english checks
+
+```bash
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/live?room_id=t_017"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/images/<image>.jpg"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/audio/<audio>.mp3"
+```
+
+`t_017` collection model:
+
+- Local Windows PC collects Google News + images + materials.
+- Local PC pre-generates MP3 for the first 5 topics, then pushes JSON + images + MP3 to VM.
+- Current collector keeps only topics with real downloaded images; it does not keep fallback-image rows in the final feed.
+- VM does not run independent `t_017` collector cron.
+
+`t_017` stable data locations:
+
+- Local JSON: `data/live/onlytrade/english_classroom_live.json`
+- Local images: `data/live/onlytrade/english_images/t_017/`
+- Local audio: `data/live/onlytrade/english_audio/t_017/`
+- VM JSON: `/opt/onlytrade/data/live/onlytrade/english_classroom_live.json`
+- VM images: `/opt/onlytrade/data/live/onlytrade/english_images/t_017/`
+- VM audio: `/opt/onlytrade/data/live/onlytrade/english_audio/t_017/`
+
+Windows automation baseline for `t_017`:
+
+- One-shot runner:
+  - `powershell -File scripts/windows/run-t017-local-push.ps1`
+- Task installer:
+  - `powershell -File scripts/windows/setup-t017-local-push-task.ps1 -IntervalMinutes 5 -RunNow`
+- Current task name:
+  - `OnlyTrade-T017-LocalPush-5m`
+- Local log:
+  - `logs/t017_local_push.log`
+- The task uses Git Bash from:
+  - `C:\Program Files\Git\bin\bash.exe`
+- Current task is `Interactive only`; if the Windows user logs out, the loop stops.
+
+### 5.6 `t_003` voice checks
 
 ```bash
 bash scripts/onlytrade-ssh-ops.sh tts-status t_003
@@ -199,6 +270,44 @@ ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169 "systemctl status onlytrade
 ```
 
 4. Hard refresh browser (cache bust).
+
+### F) `t_016` has avatar+TTS but black background or no BGM
+
+Fix checklist:
+
+1. Ensure media files exist in VM dist:
+   - `/opt/onlytrade/onlytrade-web/dist/theme-loop/t_016/hobit.mp4`
+   - `/opt/onlytrade/onlytrade-web/dist/theme-loop/t_016/hobit.mp3`
+2. Verify page loads the expected bundle from `index.html` under `dist`.
+3. Browser autoplay policy may require first interaction; tap once to unlock audio.
+
+### G) `t_017` shows repeated fallback image or stale topics
+
+Fix checklist:
+
+1. Run local collector and push once:
+
+```bash
+bash scripts/english/local_collect_and_push_t017.sh
+```
+
+2. Confirm local loop is running every 5 minutes (recommended).
+3. Confirm VM feed file updated:
+   - `/opt/onlytrade/data/live/onlytrade/english_classroom_live.json`
+4. Confirm image files present under:
+   - `/opt/onlytrade/data/live/onlytrade/english_images/t_017/`
+5. Confirm MP3 files present under:
+   - `/opt/onlytrade/data/live/onlytrade/english_audio/t_017/`
+6. Confirm live API no longer exposes fallback rows:
+   - `headline_count` can be less than 20
+   - `image_file` should not start with `fallback_`
+7. Confirm frontend bundle and MIME are correct after deploy:
+   - `curl -I http://zhibo.quickdealservice.com:18000/assets/<bundle>.js`
+   - expect `Content-Type: application/javascript`
+8. If module script loads as `text/html`, check static dir permissions:
+   - `/opt/onlytrade/onlytrade-web/dist/assets`
+   - `/opt/onlytrade/onlytrade-web/dist/icons`
+   - then `chmod -R a+rX` and reload nginx.
 
 ### E) `t_015` logs show `missing key` but key is configured
 

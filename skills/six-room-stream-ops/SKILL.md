@@ -1,9 +1,9 @@
 ---
 name: six-room-stream-ops
-description: Use when operating, troubleshooting, or verifying the 6 zhibo stream rooms on Aliyun (t_003, t_012 multi/story, t_013, t_014, t_015).
+description: Use when operating, troubleshooting, or verifying zhibo stream rooms on Aliyun, especially polymarket (t_015), night-comfort (t_016), and oral-english (t_017).
 ---
 
-# Six-Room Stream Ops
+# Stream Room Ops
 
 Operator skill for these public rooms:
 
@@ -13,6 +13,8 @@ Operator skill for these public rooms:
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/story-broadcast?trader=t_013&story=mandela_effect`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/story-broadcast?trader=t_014&story=libai`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/polymarket?trader=t_015`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/night-comfort?trader=t_016&theme=hobit`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017`
 
 ## Aliyun baseline
 
@@ -20,6 +22,23 @@ Operator skill for these public rooms:
 - Default key (this workstation): `C:\Users\rdpuser\.ssh\cn169_ed25519`
 - Runtime API: `http://127.0.0.1:18080`
 - Web root: `http://zhibo.quickdealservice.com:18000`
+
+## Deployment baseline (must-match)
+
+- Target VM: `113.125.202.169:21522` (user `root`)
+- SSH key: `C:\Users\rdpuser\.ssh\cn169_ed25519`
+- VM repo root: `/opt/onlytrade`
+- Frontend dist path: `/opt/onlytrade/onlytrade-web/dist`
+- Runtime API file: `/opt/onlytrade/runtime-api/server.mjs`
+- Active Nginx root config: `/usr/local/nginx/conf/nginx.conf`
+- Included app config: `/usr/local/nginx/conf/onlytrade.conf`
+
+Nginx baseline in `onlytrade.conf`:
+
+- `root /opt/onlytrade/onlytrade-web/dist;`
+- `/onlytrade/api/*` -> `http://127.0.0.1:18080/api/*`
+- `/api/*` -> `http://127.0.0.1:18080/api/*`
+- `/onlytrade/*` SPA via `try_files`
 
 `t_003` hot-switch helper (recommended):
 
@@ -50,6 +69,8 @@ curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_012/str
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_013/stream-packet?decision_limit=3"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_014/stream-packet?decision_limit=3"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_015/stream-packet?decision_limit=3"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts/profile?room_id=t_016"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/live?room_id=t_017"
 ```
 
 ## Critical room-specific checks
@@ -79,6 +100,55 @@ curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickde
 ```bash
 ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169 "systemctl status onlytrade-polymarket-bridge --no-pager"
 ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169 "systemctl status onlytrade-polymarket-engine --no-pager"
+```
+
+- `t_016` night-comfort checks:
+
+```bash
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/night-comfort?trader=t_016&theme=hobit"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/theme-loop/t_016/hobit.mp4"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/theme-loop/t_016/hobit.mp3"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts/profile?room_id=t_016"
+```
+
+Expected baseline: `provider=selfhosted`, `voice=longyuan_v3`.
+
+- `t_017` oral-english local collector + VM playback checks:
+
+```bash
+# run on local Windows PC (collector + generator + push)
+bash scripts/english/local_collect_and_push_t017.sh
+
+# verify public room + feed on VM
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/live?room_id=t_017"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/audio/<audio>.mp3"
+```
+
+Current `t_017` baseline:
+
+- Local PC pre-generates MP3 for the first 5 topics and pushes them to VM.
+- Final feed only keeps rows with real downloaded images; fallback-image rows are dropped.
+- Frontend prefers `audio_api_url` MP3 and only falls back to live TTS if static audio fails.
+
+Windows local loop (current preferred method, every 5 min):
+
+```powershell
+powershell -File scripts/windows/setup-t017-local-push-task.ps1 -IntervalMinutes 5 -RunNow
+```
+
+Task details:
+
+- Task name: `OnlyTrade-T017-LocalPush-5m`
+- Runner: `scripts/windows/run-t017-local-push.ps1`
+- Log file: `logs/t017_local_push.log`
+- Git Bash path: `C:\Program Files\Git\bin\bash.exe`
+- Current mode is `Interactive only`
+
+Legacy shell loop (still valid if needed):
+
+```bash
+nohup bash -lc "while true; do bash scripts/english/local_collect_and_push_t017.sh >> logs/t017_local_push.log 2>&1; sleep 300; done" > logs/t017_local_push.supervisor.log 2>&1 &
 ```
 
 - Qwen auth probe (before deep debugging):

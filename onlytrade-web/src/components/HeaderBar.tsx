@@ -22,6 +22,7 @@ type Page =
   | 'story'
   | 'multiBroadcast'
   | 'nightComfort'
+  | 'oralEnglish'
 
 interface HeaderBarProps {
   onLoginClick?: () => void

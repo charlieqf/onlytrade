@@ -313,6 +313,29 @@ const X_HOT_NEWS_ROOMS = (() => {
       .filter(Boolean)
   )
 })()
+const ENGLISH_CLASSROOM_PATH = path.resolve(
+  ROOT_DIR,
+  process.env.ENGLISH_CLASSROOM_PATH || path.join('data', 'live', 'onlytrade', 'english_classroom_live.json')
+)
+const ENGLISH_CLASSROOM_REFRESH_MS = Math.max(10_000, Number(process.env.ENGLISH_CLASSROOM_REFRESH_MS || 60_000))
+const ENGLISH_CLASSROOM_STALE_MS = Math.max(60_000, Number(process.env.ENGLISH_CLASSROOM_STALE_MS || 12 * 60 * 60 * 1000))
+const ENGLISH_CLASSROOM_IMAGE_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.ENGLISH_CLASSROOM_IMAGE_DIR || path.join('data', 'live', 'onlytrade', 'english_images', 't_017')
+)
+const ENGLISH_CLASSROOM_AUDIO_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.ENGLISH_CLASSROOM_AUDIO_DIR || path.join('data', 'live', 'onlytrade', 'english_audio', 't_017')
+)
+const ENGLISH_CLASSROOM_ROOMS = (() => {
+  const raw = String(process.env.ENGLISH_CLASSROOM_ROOMS || 't_017')
+  return new Set(
+    raw
+      .split(',')
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean)
+  )
+})()
 
 const MARKET_BREADTH_PATH_CN = path.resolve(
   ROOT_DIR,
@@ -399,6 +422,14 @@ const POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS = Math.max(
 const POLYMARKET_COMMENTARY_MAX_TEXT_CHARS = Math.max(
   24,
   Math.min(360, Math.floor(Number(process.env.POLYMARKET_COMMENTARY_MAX_TEXT_CHARS || 220)))
+)
+const ENGLISH_CLASSROOM_TITLE_MAX_CHARS = Math.max(
+  40,
+  Math.min(220, Math.floor(Number(process.env.ENGLISH_CLASSROOM_TITLE_MAX_CHARS || 120)))
+)
+const ENGLISH_CLASSROOM_TEACHING_MAX_CHARS = Math.max(
+  300,
+  Math.min(2600, Math.floor(Number(process.env.ENGLISH_CLASSROOM_TEACHING_MAX_CHARS || 1400)))
 )
 const POLYMARKET_COMMENTARY_FEED_LIMIT = Math.max(
   20,
@@ -2038,6 +2069,7 @@ function buildLiveDataFreshnessSummary() {
     buildFreshnessCheck('news_digest_cn_a', newsDigestProviderCn.getStatus()),
     buildFreshnessCheck('news_digest_us', newsDigestProviderUs.getStatus()),
     buildFreshnessCheck('x_hot_news', xHotNewsProvider.getStatus()),
+    buildFreshnessCheck('english_classroom', englishClassroomProvider.getStatus()),
     buildFreshnessCheck('market_breadth_cn_a', marketBreadthProviderCn.getStatus()),
     buildFreshnessCheck('market_breadth_us', marketBreadthProviderUs.getStatus()),
   ]
@@ -2920,6 +2952,11 @@ const xHotNewsProvider = createLiveJsonFileProvider({
   refreshMs: X_HOT_NEWS_REFRESH_MS,
   staleAfterMs: X_HOT_NEWS_STALE_MS,
 })
+const englishClassroomProvider = createLiveJsonFileProvider({
+  filePath: ENGLISH_CLASSROOM_PATH,
+  refreshMs: ENGLISH_CLASSROOM_REFRESH_MS,
+  staleAfterMs: ENGLISH_CLASSROOM_STALE_MS,
+})
 const marketBreadthProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_BREADTH_PATH_CN,
   refreshMs: MARKET_BREADTH_REFRESH_MS,
@@ -3294,6 +3331,9 @@ const DEFAULT_SENSITIVE_TOPIC_POLICY = {
     t_015: {
       mode: 'hard_block',
     },
+    t_017: {
+      mode: 'hard_block',
+    },
   },
   allowlist: [],
   categories: [],
@@ -3314,6 +3354,23 @@ const POLYMARKET_SAFE_FALLBACK_CATEGORIES = [
   { category: 'global_macro', label: '宏观', count: 1 },
   { category: 'tech', label: '科技', count: 1 },
   { category: 'business', label: '商业', count: 1 },
+]
+const ENGLISH_CLASSROOM_FALLBACK_TITLES = [
+  '继续用一条国际动态做口语连练，保持自然表达节奏。',
+  '先给结论，再补一个原因，最后加你的判断。',
+  '短句先开口，再升级一个更地道的表达。',
+]
+const ENGLISH_CLASSROOM_FALLBACK_BACKGROUND_NOTES = [
+  '课堂重点是连续开口，不做每条新闻的重启式开场。',
+  '先用简单句，再加一个高级短语提高表达层次。',
+]
+const ENGLISH_CLASSROOM_FALLBACK_COMMENTARY = [
+  '保持连贯节奏，先用一句英文给出重点，再补充理由。',
+]
+const ENGLISH_CLASSROOM_FALLBACK_CATEGORIES = [
+  { category: 'world', label: 'World', count: 1 },
+  { category: 'technology', label: 'Technology', count: 1 },
+  { category: 'business', label: 'Business', count: 1 },
 ]
 const sensitiveFilterStatsByRoom = new Map()
 
@@ -3988,6 +4045,43 @@ async function getXHotNewsSnapshot() {
   }
 }
 
+async function getEnglishClassroomSnapshot() {
+  const payload = await englishClassroomProvider.getPayload({ forceRefresh: false })
+  const status = englishClassroomProvider.getStatus()
+  const titles = extractNewsTitles(payload)
+  const headlines = normalizeDigestHeadlines(
+    payload && typeof payload === 'object'
+      ? (Array.isArray(payload.headlines)
+        ? payload.headlines
+        : (Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.news) ? payload.news : [])))
+      : []
+  )
+  const commentary = extractNewsCommentary(payload)
+  const categories = extractNewsCategorySummary(payload, headlines)
+  const dayKey = payload && typeof payload === 'object'
+    ? String(payload.day_key || '').trim()
+    : ''
+  const burstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
+    ? selectNewsBurstSignal({
+      headlines,
+      nowMs: Date.now(),
+      freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
+      minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
+    })
+    : null
+
+  return {
+    source_kind: payload ? 'english_classroom_file' : 'empty',
+    day_key: dayKey || null,
+    headlines,
+    titles,
+    commentary,
+    categories,
+    burst_signal: burstSignal,
+    status,
+  }
+}
+
 async function getMarketBreadthSnapshot(marketId) {
   const market = marketId === 'US' ? 'US' : 'CN-A'
 
@@ -4075,6 +4169,81 @@ function headlineRowToBackgroundNote(row) {
   return (title || summary || '').slice(0, 160)
 }
 
+function toEnglishClassroomImageApiUrl(fileName) {
+  const safe = String(fileName || '').trim()
+  if (!safe) return ''
+  return `/api/english-classroom/images/${encodeURIComponent(safe)}`
+}
+
+function toEnglishClassroomAudioApiUrl(fileName) {
+  const safe = String(fileName || '').trim()
+  if (!safe) return ''
+  return `/api/english-classroom/audio/${encodeURIComponent(safe)}`
+}
+
+function normalizeEnglishClassroomHeadlineRow(row) {
+  if (!row || typeof row !== 'object') return null
+  const id = safePlainText(row.id || '', 64)
+  const title = safePlainText(row.title || '', 220)
+  if (!id || !title) return null
+  const summary = safePlainText(row.summary || '', 360)
+  const source = safePlainText(row.source || row.source_name || '', 72)
+  const category = safePlainText(row.category || '', 24).toLowerCase()
+  const categoryLabel = safePlainText(row.category_label || row.label || category || 'General', 24)
+  const url = safePlainText(row.url || row.article_url || '', 1000)
+  const publishedAt = safePlainText(row.published_at || '', 80)
+  const imageFile = safePlainText(row.image_file || '', 120)
+  const audioFile = safePlainText(row.audio_file || '', 160)
+  const screenTitle = sanitizeEnglishScreenTitle(row.screen_title || row.title || '')
+  const teachingMaterial = sanitizeEnglishCoachScript(
+    row.teaching_material || row.script || row.lesson_script || '',
+    { maxWords: 320, maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS },
+  )
+  const screenVocabulary = normalizeEnglishScreenVocabulary(
+    row.screen_vocabulary || row.key_phrases || row.vocabulary || [],
+  )
+  return {
+    id,
+    title,
+    summary,
+    source,
+    category,
+    category_label: categoryLabel,
+    url,
+    published_at: publishedAt,
+    image_file: imageFile,
+    image_api_url: imageFile ? toEnglishClassroomImageApiUrl(imageFile) : '',
+    audio_file: audioFile,
+    audio_api_url: audioFile ? toEnglishClassroomAudioApiUrl(audioFile) : '',
+    image_fit: safePlainText(row.image_fit || '9:16', 12),
+    screen_title: screenTitle || null,
+    teaching_material: teachingMaterial || null,
+    screen_vocabulary: screenVocabulary,
+  }
+}
+
+function normalizeEnglishClassroomPayload(payload) {
+  const row = payload && typeof payload === 'object' ? payload : {}
+  const headlinesRaw = Array.isArray(row.headlines) ? row.headlines : []
+  const headlines = headlinesRaw
+    .map((item) => normalizeEnglishClassroomHeadlineRow(item))
+    .filter(Boolean)
+  return {
+    schema_version: safePlainText(row.schema_version || 'english.classroom.feed.v1', 64),
+    room_id: safePlainText(row.room_id || 't_017', 24).toLowerCase(),
+    provider: safePlainText(row.provider || 'google_news_rss', 64),
+    mode: safePlainText(row.mode || 'live', 24),
+    as_of: safePlainText(row.as_of || '', 40) || null,
+    headline_count: headlines.length,
+    headlines,
+    titles: headlines.map((item) => item.title).slice(0, 24),
+    background_notes: Array.isArray(row.background_notes)
+      ? row.background_notes.map((item) => safePlainText(item, 160)).filter(Boolean).slice(0, 16)
+      : [],
+    categories: extractNewsCategorySummary({ categories: row.categories || null }, headlines),
+  }
+}
+
 function viewerMessageToBrief(row) {
   if (!row || typeof row !== 'object') return ''
   if (String(row.sender_type || '').trim().toLowerCase() !== 'user') return ''
@@ -4092,7 +4261,8 @@ async function buildRoomChatContext(roomId, {
   nowMs = Date.now(),
 } = {}) {
   const safeRoomId = String(roomId || '').trim()
-  const useXHotNews = X_HOT_NEWS_ROOMS.has(safeRoomId.toLowerCase())
+  const roomIsOralEnglish = ENGLISH_CLASSROOM_ROOMS.has(safeRoomId.toLowerCase())
+  const useXHotNews = !roomIsOralEnglish && X_HOT_NEWS_ROOMS.has(safeRoomId.toLowerCase())
   const trader = getTraderById(safeRoomId)
   const marketSpec = getMarketSpecForExchange(trader.exchange_id)
   const market = marketSpec.market
@@ -4140,6 +4310,9 @@ async function buildRoomChatContext(roomId, {
   const xHotDigest = useXHotNews
     ? await getXHotNewsSnapshot()
     : null
+  const englishClassroomDigest = roomIsOralEnglish
+    ? await getEnglishClassroomSnapshot()
+    : null
 
   const symbolBrief = head
     ? (() => {
@@ -4163,11 +4336,14 @@ async function buildRoomChatContext(roomId, {
     nowMs: sessionNowMs,
   })
 
-  const digestHeadlines = Array.isArray(effectiveDigest?.headlines) ? effectiveDigest.headlines : []
-  const digestTitles = Array.isArray(effectiveDigest?.titles) ? effectiveDigest.titles : []
-  const digestCommentary = Array.isArray(effectiveDigest?.commentary) ? effectiveDigest.commentary : []
-  const digestBackgroundNotes = Array.isArray(effectiveDigest?.background_notes) ? effectiveDigest.background_notes : []
-  const digestCategories = Array.isArray(effectiveDigest?.categories) ? effectiveDigest.categories : []
+  const contextDigest = roomIsOralEnglish && englishClassroomDigest
+    ? englishClassroomDigest
+    : effectiveDigest
+  const digestHeadlines = Array.isArray(contextDigest?.headlines) ? contextDigest.headlines : []
+  const digestTitles = Array.isArray(contextDigest?.titles) ? contextDigest.titles : []
+  const digestCommentary = Array.isArray(contextDigest?.commentary) ? contextDigest.commentary : []
+  const digestBackgroundNotes = Array.isArray(contextDigest?.background_notes) ? contextDigest.background_notes : []
+  const digestCategories = Array.isArray(contextDigest?.categories) ? contextDigest.categories : []
   const xHeadlines = Array.isArray(xHotDigest?.headlines) ? xHotDigest.headlines : []
   const xTitles = Array.isArray(xHotDigest?.titles) ? xHotDigest.titles : []
   const xCommentary = Array.isArray(xHotDigest?.commentary) ? xHotDigest.commentary : []
@@ -4175,13 +4351,14 @@ async function buildRoomChatContext(roomId, {
   const xCategories = Array.isArray(xHotDigest?.categories) ? xHotDigest.categories : []
 
   const roomIsPolymarket = safeRoomId === 't_015'
+  const roomNeedsSensitiveFilter = roomIsPolymarket || roomIsOralEnglish
   const mergedHeadlines = useXHotNews
     ? mergeDigestHeadlines(xHeadlines, digestHeadlines, { limit: 72 })
     : digestHeadlines
   const selectedHeadlines = roomIsPolymarket
     ? selectPolymarketHeadlinePool(mergedHeadlines, { limit: 20 })
     : mergedHeadlines
-  const effectiveHeadlines = roomIsPolymarket
+  const effectiveHeadlines = roomNeedsSensitiveFilter
     ? filterSensitiveHeadlineRows(selectedHeadlines, { roomId: safeRoomId })
     : selectedHeadlines
   const mergedTitles = useXHotNews
@@ -4191,7 +4368,7 @@ async function buildRoomChatContext(roomId, {
     .map((row) => String(row?.title || '').trim())
     .filter(Boolean)
     .slice(0, 20)
-  let effectiveTitles = roomIsPolymarket
+  let effectiveTitles = roomNeedsSensitiveFilter
     ? filterSensitiveTextRows(polymarketTitles, { roomId: safeRoomId, maxLen: 120 })
     : mergedTitles
   const mergedCommentaryRaw = useXHotNews
@@ -4203,13 +4380,13 @@ async function buildRoomChatContext(roomId, {
   const mergedCategoriesRaw = useXHotNews
     ? mergeNewsCategoryRows(xCategories, digestCategories, { limit: 6 })
     : digestCategories
-  const mergedCommentary = roomIsPolymarket
+  const mergedCommentary = roomNeedsSensitiveFilter
     ? filterSensitiveTextRows(mergedCommentaryRaw, { roomId: safeRoomId, maxLen: 120 }).slice(0, 8)
     : mergedCommentaryRaw
-  const mergedBackgroundNotes = roomIsPolymarket
+  const mergedBackgroundNotes = roomNeedsSensitiveFilter
     ? filterSensitiveTextRows(mergedBackgroundNotesRaw, { roomId: safeRoomId, maxLen: 160 }).slice(0, 18)
     : mergedBackgroundNotesRaw
-  const mergedCategories = roomIsPolymarket
+  const mergedCategories = roomNeedsSensitiveFilter
     ? extractNewsCategorySummary(null, effectiveHeadlines)
     : mergedCategoriesRaw
   const mergedBurstSignal = CHAT_PROACTIVE_NEWS_BURST_ENABLED
@@ -4220,43 +4397,56 @@ async function buildRoomChatContext(roomId, {
         freshWindowMs: CHAT_PROACTIVE_NEWS_BURST_FRESH_MS,
         minPriority: CHAT_PROACTIVE_NEWS_BURST_MIN_PRIORITY,
       })
-      || (roomIsPolymarket ? null : xHotDigest?.burst_signal)
-      || (roomIsPolymarket ? null : effectiveDigest?.burst_signal)
+      || (roomNeedsSensitiveFilter ? null : xHotDigest?.burst_signal)
+      || (roomNeedsSensitiveFilter ? null : contextDigest?.burst_signal)
       || null
     )
     : null
   const mergedHeadlineBriefs = effectiveHeadlines
     .map((row) => headlineRowToBrief(row))
     .filter(Boolean)
-    .slice(0, roomIsPolymarket ? 20 : 10)
+    .slice(0, roomIsPolymarket ? 20 : (roomIsOralEnglish ? 12 : 10))
   const derivedBackgroundNotes = effectiveHeadlines
     .map((row) => headlineRowToBackgroundNote(row))
     .filter(Boolean)
-    .slice(0, roomIsPolymarket ? 20 : 14)
+    .slice(0, roomIsPolymarket ? 20 : (roomIsOralEnglish ? 14 : 14))
   const finalBackgroundNotes = mergeUniqueTextRows(
     mergedBackgroundNotes,
     derivedBackgroundNotes,
-    { limit: roomIsPolymarket ? 20 : 16 },
+    { limit: roomIsPolymarket ? 20 : (roomIsOralEnglish ? 16 : 16) },
   )
-  if (roomIsPolymarket) {
-    effectiveTitles = effectiveTitles.length ? effectiveTitles : POLYMARKET_SAFE_FALLBACK_TITLES.slice(0, 6)
+  if (roomIsPolymarket || roomIsOralEnglish) {
+    const fallbackTitles = roomIsOralEnglish
+      ? ENGLISH_CLASSROOM_FALLBACK_TITLES
+      : POLYMARKET_SAFE_FALLBACK_TITLES
+    effectiveTitles = effectiveTitles.length ? effectiveTitles : fallbackTitles.slice(0, 6)
   }
-  const finalHeadlineBriefs = roomIsPolymarket
+  const finalHeadlineBriefs = roomNeedsSensitiveFilter
     ? filterSensitiveTextRows(mergedHeadlineBriefs, { roomId: safeRoomId, maxLen: 128 })
     : mergedHeadlineBriefs
-  const finalCommentary = roomIsPolymarket
-    ? (mergedCommentary.length ? mergedCommentary : POLYMARKET_SAFE_FALLBACK_COMMENTARY.slice(0, 4))
+  const finalCommentary = roomNeedsSensitiveFilter
+    ? (mergedCommentary.length
+      ? mergedCommentary
+      : (roomIsOralEnglish
+        ? ENGLISH_CLASSROOM_FALLBACK_COMMENTARY.slice(0, 4)
+        : POLYMARKET_SAFE_FALLBACK_COMMENTARY.slice(0, 4)))
     : mergedCommentary
-  const finalCategories = roomIsPolymarket
-    ? (mergedCategories.length ? mergedCategories : POLYMARKET_SAFE_FALLBACK_CATEGORIES.slice(0, 4))
+  const finalCategories = roomNeedsSensitiveFilter
+    ? (mergedCategories.length
+      ? mergedCategories
+      : (roomIsOralEnglish
+        ? ENGLISH_CLASSROOM_FALLBACK_CATEGORIES.slice(0, 4)
+        : POLYMARKET_SAFE_FALLBACK_CATEGORIES.slice(0, 4)))
     : mergedCategories
-  const finalBackgroundNotesSafe = roomIsPolymarket
+  const finalBackgroundNotesSafe = roomNeedsSensitiveFilter
     ? filterSensitiveTextRows(finalBackgroundNotes, { roomId: safeRoomId, maxLen: 160 })
     : finalBackgroundNotes
-  const finalBackgroundNotesOutput = roomIsPolymarket
+  const finalBackgroundNotesOutput = roomNeedsSensitiveFilter
     ? (finalBackgroundNotesSafe.length
       ? finalBackgroundNotesSafe
-      : POLYMARKET_SAFE_FALLBACK_BACKGROUND_NOTES.slice(0, 4))
+      : (roomIsOralEnglish
+        ? ENGLISH_CLASSROOM_FALLBACK_BACKGROUND_NOTES.slice(0, 4)
+        : POLYMARKET_SAFE_FALLBACK_BACKGROUND_NOTES.slice(0, 4)))
     : finalBackgroundNotesSafe
 
   let recentViewerMessages = []
@@ -4281,7 +4471,12 @@ async function buildRoomChatContext(roomId, {
     recent_viewer_messages: recentViewerMessages,
     news_commentary: finalCommentary,
     news_categories: finalCategories,
-    news_as_of: String(xHotDigest?.as_of || effectiveDigest?.as_of || '').trim() || null,
+    news_as_of: String(
+      xHotDigest?.as_of
+      || englishClassroomDigest?.as_of
+      || contextDigest?.as_of
+      || ''
+    ).trim() || null,
     casual_topics: filterTimeAwareCasualTopics(
       Array.isArray(effectiveDigest?.casual_topics)
         ? effectiveDigest.casual_topics
@@ -4296,7 +4491,7 @@ async function buildRoomChatContext(roomId, {
     symbol_history_lines: Array.isArray(symbolHistorySummary?.lines)
       ? symbolHistorySummary.lines.slice(0, 4)
       : [],
-    sensitive_filter_stats: roomIsPolymarket ? readSensitiveFilterStats(safeRoomId) : null,
+    sensitive_filter_stats: roomNeedsSensitiveFilter ? readSensitiveFilterStats(safeRoomId) : null,
   }
 }
 
@@ -4528,6 +4723,82 @@ function ensurePredictionTopicMention(text, topicTitle, { maxChars = CHAT_TTS_MA
     stitched = `${cleaned}${/[。！？!?]$/.test(cleaned) ? '' : '。'}${mention}`
   }
   return sanitizePredictionCommentaryText(stitched, { maxChars })
+}
+
+function sanitizeEnglishCoachText(value, { maxWords = 280, maxChars = ENGLISH_CLASSROOM_TEACHING_MAX_CHARS } = {}) {
+  const text = safePlainText(value, maxChars)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[•·]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!text) return ''
+  const words = text.match(/[A-Za-z][A-Za-z'\-]*/g) || []
+  if (words.length <= maxWords) {
+    return text
+  }
+  let keepCount = 0
+  let cutPos = text.length
+  const matcher = /[A-Za-z][A-Za-z'\-]*/g
+  let m = null
+  while ((m = matcher.exec(text)) !== null) {
+    keepCount += 1
+    if (keepCount >= maxWords) {
+      cutPos = matcher.lastIndex
+      break
+    }
+  }
+  const trimmed = text.slice(0, Math.max(1, cutPos)).replace(/[\s,;:]+$/g, '').trim()
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+function smoothEnglishClassroomOpening(value) {
+  let text = safePlainText(value, 1400)
+  if (!text) return ''
+  const openingPatterns = [
+    /^(同学们|大家|各位同学)[，,:：\s]*/,
+    /^(hello|hi|hey)\b[^.!?。！？]{0,120}[.!?。！？]?\s*/i,
+    /^welcome\b[^.!?。！？]{0,140}[.!?。！？]?\s*/i,
+    /^good\s+(morning|afternoon|evening)\b[^.!?。！？]{0,120}[.!?。！？]?\s*/i,
+    /^(今天|今日|现在|接下来)(我们)?(来|先|继续)?(看|聊|讲|练)(这条|这个)?(新闻|话题|主题)[，:：\s]*/,
+    /^(今天|今日)(口语)?(主题|练习)(是|为)[，:：\s]*/,
+    /^(today|in\s+today'?s|now)\b[^.!?。！？]{0,120}(topic|headline|news)?[:：\s-]*/i,
+  ]
+  for (const pattern of openingPatterns) {
+    text = text.replace(pattern, '')
+  }
+  for (let i = 0; i < 2; i += 1) {
+    const leadMatch = text.match(/^([^.!?。！？]{1,140}[.!?。！？])\s*/)
+    if (!leadMatch) break
+    const lead = String(leadMatch[1] || '').trim()
+    if (!lead) break
+    const genericLead = /^(hello|hi|hey|welcome|good\s+(morning|afternoon|evening)|today|in\s+today'?s|alright|okay|so)\b/i
+    if (!genericLead.test(lead)) break
+    text = text.slice(leadMatch[0].length).trim()
+  }
+  text = text.replace(/^[:：,，\-\s]+/, '').trim()
+  if (!text) return ''
+  return text
+}
+
+function sanitizeEnglishCoachScript(value, options = {}) {
+  const cleaned = sanitizeEnglishCoachText(value, options)
+  return smoothEnglishClassroomOpening(cleaned)
+}
+
+function sanitizeEnglishScreenTitle(value) {
+  const text = safePlainText(value, ENGLISH_CLASSROOM_TITLE_MAX_CHARS)
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!text) return ''
+  return text
+}
+
+function normalizeEnglishScreenVocabulary(value) {
+  const rows = parseLooseStringArray(value, { limit: 8, maxLen: 120 })
+    .map((item) => safePlainText(item, 120))
+    .filter(Boolean)
+  return rows
 }
 
 function ttsContentType(format) {
@@ -4934,6 +5205,27 @@ function resolveStreamThemeRoomProfile(roomId) {
 
 function createDefaultPolymarketRoomProfile(roomId = 't_015') {
   const safeRoomId = String(roomId || '').trim().toLowerCase() || 't_015'
+  if (safeRoomId === 't_017') {
+    return {
+      room_id: safeRoomId,
+      enabled: true,
+      max_feed_items: POLYMARKET_COMMENTARY_FEED_LIMIT,
+      min_interval_ms: 4000,
+      speakers: [
+        {
+          speaker_id: 'coach_a',
+          display_name: '阿杰老师',
+          voice_id: 'loongbrian_v2',
+          provider: 'selfhosted',
+          speed: 1.0,
+          cooldown_ms: 4500,
+          style_prompt_cn: '你是年轻幽默的男英语老师，用中文控节奏，穿插英文词句做口语连练，课堂衔接自然。',
+          enabled: true,
+        },
+      ],
+      updated_ts_ms: Date.now(),
+    }
+  }
   return {
     room_id: safeRoomId,
     enabled: true,
@@ -5098,6 +5390,35 @@ function resolvePolymarketCommentaryRoomProfile(roomId) {
     polymarketCommentaryProfilesState?.rooms?.[safeRoomId]
   )
   const base = explicit || createDefaultPolymarketRoomProfile(safeRoomId)
+
+  if (safeRoomId === 't_017') {
+    const defaultCoach = normalizePolymarketCommentarySpeaker({
+      speaker_id: 'coach_a',
+      display_name: '阿杰老师',
+      voice_id: 'loongbrian_v2',
+      provider: 'selfhosted',
+      speed: 1.0,
+      cooldown_ms: 4500,
+      style_prompt_cn: '你是年轻幽默的男英语老师，用中文控节奏，穿插英文词句做口语连练，课堂衔接自然。',
+      enabled: true,
+    })
+    const fromBase = Array.isArray(base?.speakers)
+      ? base.speakers.find((item) => item?.speaker_id === 'coach_a')
+      : null
+    const coach = normalizePolymarketCommentarySpeaker({
+      ...(fromBase || {}),
+      speaker_id: 'coach_a',
+      display_name: '阿杰老师',
+      provider: 'selfhosted',
+      enabled: true,
+    }, defaultCoach) || defaultCoach
+
+    return {
+      ...base,
+      room_id: safeRoomId,
+      speakers: coach ? [coach] : [],
+    }
+  }
 
   // t_015 is configured as single-host room (小真 + longanhuan).
   if (safeRoomId === 't_015') {
@@ -5286,13 +5607,13 @@ function parseJsonObjectLoose(input) {
 
 function normalizeSingleHostRoomMessages(roomId, messages) {
   const safeRoomId = String(roomId || '').trim().toLowerCase()
-  if (safeRoomId !== 't_015') return Array.isArray(messages) ? messages : []
+  if (safeRoomId !== 't_015' && safeRoomId !== 't_017') return Array.isArray(messages) ? messages : []
   return (Array.isArray(messages) ? messages : []).map((item) => {
     if (!item || typeof item !== 'object') return item
     if (String(item.sender_type || '').toLowerCase() !== 'agent') return item
     return {
       ...item,
-      sender_name: '小真',
+      sender_name: safeRoomId === 't_017' ? 'Coach Jay' : '小真',
     }
   })
 }
@@ -5411,6 +5732,151 @@ async function generatePolymarketCommentaryText({
   const eventTitle = evaluateSensitiveTopicText(eventTitleRaw, { roomId: safeRoomId }).blocked
     ? '当前宏观与科技事件'
     : eventTitleRaw
+
+  if (safeRoomId === 't_017') {
+    const lessonHeadline = safePlainText(
+      marketTitle || marketSourceTopic || roomContext?.news_digest_titles?.[0] || 'Latest global headline',
+      140,
+    )
+    const lessonSummary = safePlainText(
+      marketNewsSummary || safeContextBackgroundNotes[0] || safeEvidenceLines[0] || '',
+      260,
+    )
+    const lessonSource = safePlainText(marketSourceName || trigger?.source || '', 48)
+    const lessonKeyPoints = parseLooseStringArray(
+      market?.news_key_points,
+      { limit: 5, maxLen: 90 },
+    )
+    const previousHeadline = safePlainText(
+      (Array.isArray(roomContext?.news_digest_titles)
+        ? roomContext.news_digest_titles.find((item) => safePlainText(item, 140) && safePlainText(item, 140) !== lessonHeadline)
+        : '') || '',
+      140,
+    )
+
+    if (!OPENAI_API_KEY) {
+      const fallbackTitle = sanitizeEnglishScreenTitle(
+        lessonHeadline || 'A new global tech update is drawing attention.',
+      )
+      const fallbackScript = sanitizeEnglishCoachScript(
+        `${lessonHeadline ? `${lessonHeadline}。` : ''}`
+        + `${lessonSummary ? `${lessonSummary}。` : ''}`
+        + '核心表达可以这样说："The main update is..." '
+        + '接着补一句 "It matters because..."，把信息和原因连起来。',
+        { maxWords: 280, maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS },
+      )
+      return {
+        text: fallbackScript,
+        source: 'fallback_missing_key',
+        key_phrases: [
+          'Codename: 代号',
+          'Lead in performance: 性能领先',
+          'Price tag: 价格',
+          'Global tariffs: 全球关税',
+          'Supply issues: 供应问题',
+        ],
+        screen_title: fallbackTitle,
+      }
+    }
+
+    const endpoint = `${String(OPENAI_BASE_URL).replace(/\/$/, '')}/chat/completions`
+    const systemPrompt = [
+      '你是24x7英语口语直播课老师。',
+      '你要产出三部分：屏幕标题、TTS教学讲稿、屏幕词汇。',
+      '输出严格JSON: {"screen_title":"...","teaching_material":"...","screen_vocabulary":["..."]}',
+      '要求：',
+      '- screen_title: 1句英文，简洁有信息量，适合屏幕标题。',
+      '- teaching_material: 口播教学稿，中文为主并穿插英文例句，长度约5-8句，允许自然过渡。',
+      '- teaching_material风格参考课堂直播：可解释词组、可加入一段英文摘要朗读材料。',
+      '- 禁止固定寒暄开头：不要出现“Hello everyone, welcome back... / Today we have...”或“大家好，今天...”。',
+      '- 话题切换要像同一直播流的自然续句，不要每条新闻都重启开场。',
+      '- screen_vocabulary: 4-6条，格式必须是 "English term: 中文释义"。',
+      '- 不要输出markdown，不要输出JSON以外文本。',
+    ].join('\n')
+    const userPrompt = [
+      `room_id: ${safeRoomId}`,
+      `headline: ${lessonHeadline || 'n/a'}`,
+      `summary: ${lessonSummary || 'n/a'}`,
+      `source: ${lessonSource || 'n/a'}`,
+      `previous_headline: ${previousHeadline || 'n/a'}`,
+      `related_news: ${safeEvidenceLines.length ? safeEvidenceLines.join(' || ') : 'none'}`,
+      `related_commentary: ${safeContextCommentary.length ? safeContextCommentary.join(' || ') : 'none'}`,
+      `key_points: ${lessonKeyPoints.length ? lessonKeyPoints.join(' || ') : 'none'}`,
+      'style_hint: smooth transition between topics, energetic classroom tone, practical spoken English training.',
+    ].join('\n')
+
+    const controller = new AbortController()
+    const timeoutHandle = setTimeout(() => controller.abort(), POLYMARKET_COMMENTARY_LLM_TIMEOUT_MS)
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: POLYMARKET_COMMENTARY_LLM_MODEL,
+          temperature: 0.55,
+          max_tokens: 520,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        const body = await response.text().catch(() => '')
+        throw new Error(`llm_http_${response.status}:${String(body || '').slice(0, 140)}`)
+      }
+      const parsed = await response.json().catch(() => null)
+      const text = safePlainText(parsed?.choices?.[0]?.message?.content || '', 4000)
+      const maybeJson = parseJsonObjectLoose(text)
+      const script = sanitizeEnglishCoachScript(
+        maybeJson?.teaching_material || maybeJson?.script || maybeJson?.text || text,
+        { maxWords: 320, maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS },
+      )
+      if (!script) throw new Error('llm_empty_script')
+      const screenTitle = sanitizeEnglishScreenTitle(
+        maybeJson?.screen_title || maybeJson?.title || lessonHeadline,
+      )
+      const keyPhrases = normalizeEnglishScreenVocabulary(
+        maybeJson?.screen_vocabulary || maybeJson?.key_phrases || maybeJson?.vocabulary || [],
+      )
+
+      return {
+        text: script,
+        source: 'llm',
+        key_phrases: keyPhrases,
+        screen_title: screenTitle || null,
+      }
+    } catch (error) {
+      const fallbackTitle = sanitizeEnglishScreenTitle(
+        lessonHeadline || 'A new global update just came in.',
+      )
+      const fallbackScript = sanitizeEnglishCoachScript(
+        `${lessonHeadline ? `${lessonHeadline}。` : ''}`
+        + `${lessonSummary ? `${lessonSummary}。` : ''}`
+        + '我们把信息压成一段可复述的英文摘要，再拆成关键词来练表达。'
+        + '可以先用 "The main update is..." 开头，再补 "It matters because..."。',
+        { maxWords: 280, maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS },
+      )
+      return {
+        text: fallbackScript,
+        source: `fallback:${String(error?.message || 'llm_error').slice(0, 120)}`,
+        key_phrases: [
+          'Codename: 代号',
+          'Lead in performance: 性能领先',
+          'Price tag: 价格',
+          'Global tariffs: 全球关税',
+          'Supply issues: 供应问题',
+        ],
+        screen_title: fallbackTitle,
+      }
+    } finally {
+      clearTimeout(timeoutHandle)
+    }
+  }
 
   if (!OPENAI_API_KEY) {
     const side = Number.isFinite(currentProb) ? (currentProb >= 0.5 ? yesOutcome : noOutcome) : yesOutcome
@@ -5646,7 +6112,8 @@ async function synthesizeOpenAITts({ text, voice, speed = CHAT_TTS_SPEED }) {
   }
 }
 
-function buildSelfHostedTtsPayload({ text, voice, speed }) {
+function buildSelfHostedTtsPayload({ roomId = '', text, voice, speed }) {
+  const lang = 'zh'
   const safeText = (() => {
     const base = String(text || '').trim()
     if (base.length >= 10) return base
@@ -5656,8 +6123,8 @@ function buildSelfHostedTtsPayload({ text, voice, speed }) {
 
   return {
     text: safeText,
-    text_lang: 'zh',
-    prompt_lang: 'zh',
+    text_lang: lang,
+    prompt_lang: lang,
     top_k: 30,
     top_p: 1,
     temperature: 1,
@@ -5679,7 +6146,7 @@ function buildSelfHostedTtsPayload({ text, voice, speed }) {
   }
 }
 
-async function synthesizeSelfHostedTts({ text, voice, speed = CHAT_TTS_SPEED }) {
+async function synthesizeSelfHostedTts({ roomId = '', text, voice, speed = CHAT_TTS_SPEED }) {
   if (!CHAT_TTS_SELFHOSTED_URL) {
     throw new Error('selfhosted_tts_unavailable')
   }
@@ -5693,7 +6160,7 @@ async function synthesizeSelfHostedTts({ text, voice, speed = CHAT_TTS_SPEED }) 
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(buildSelfHostedTtsPayload({ text, voice, speed })),
+      body: JSON.stringify(buildSelfHostedTtsPayload({ roomId, text, voice, speed })),
       signal: controller.signal,
     })
   } catch (error) {
@@ -5761,7 +6228,7 @@ async function synthesizeTtsWithProviderRouting({ roomId, text, tone = '', seed 
 
     try {
       const synthesis = provider === 'selfhosted'
-        ? await synthesizeSelfHostedTts({ text, voice, speed })
+        ? await synthesizeSelfHostedTts({ roomId, text, voice, speed })
         : await synthesizeOpenAITts({ text, voice, speed })
 
       return {
@@ -8737,6 +9204,7 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
       us: newsDigestProviderUs.getStatus(),
     },
     x_hot_news_file: xHotNewsProvider.getStatus(),
+    english_classroom_file: englishClassroomProvider.getStatus(),
     market_breadth_files: {
       cn_a: marketBreadthProviderCn.getStatus(),
       us: marketBreadthProviderUs.getStatus(),
@@ -9564,6 +10032,39 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       roomContext,
     })
 
+    const generatedTextRaw = String(generated?.text || '').trim()
+    const finalCommentaryText = roomId === 't_017'
+      ? sanitizeEnglishCoachScript(generatedTextRaw, {
+        maxWords: 320,
+        maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS,
+      })
+      : sanitizePredictionCommentaryText(generatedTextRaw, {
+        maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS,
+      })
+    const safeCommentaryText = finalCommentaryText || (roomId === 't_017'
+      ? sanitizeEnglishCoachScript(generatedTextRaw || '先抓重点，再把原因和影响说完整。', {
+        maxWords: 320,
+        maxChars: ENGLISH_CLASSROOM_TEACHING_MAX_CHARS,
+      })
+      : sanitizePredictionCommentaryText(generatedTextRaw || '当前事件继续观察，等待下一条可验证进展。', {
+        maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS,
+      }))
+    const generatedKeyPhrases = roomId === 't_017'
+      ? normalizeEnglishScreenVocabulary(generated?.key_phrases || [])
+      : parseLooseStringArray(generated?.key_phrases || [], {
+        limit: 5,
+        maxLen: 60,
+      })
+    const generatedScreenTitle = roomId === 't_017'
+      ? sanitizeEnglishScreenTitle(generated?.screen_title || '')
+      : ''
+    const generatedSpeakingQuestion = roomId === 't_017'
+      ? ''
+      : safePlainText(
+        generated?.speaking_question || '',
+        180,
+      )
+
     const commentary = {
       id: `polyc_${nowMs}_${Math.random().toString(36).slice(2, 8)}`,
       room_id: roomId,
@@ -9571,7 +10072,7 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       event_key: eventKey || null,
       market_id: String(market?.id || '').trim() || null,
       market_title: safePlainText(market?.title || '', 160) || null,
-      text: sanitizePredictionCommentaryText(generated?.text, { maxChars: POLYMARKET_COMMENTARY_MAX_TEXT_CHARS }),
+      text: safeCommentaryText,
       speaker_id: speaker.speaker_id,
       speaker_name: speaker.display_name,
       voice_id: speaker.voice_id,
@@ -9579,6 +10080,9 @@ app.post('/api/polymarket/commentary/generate', async (req, res) => {
       source: String(generated?.source || 'fallback'),
       created_ts_ms: nowMs,
       target_play_ts_ms: nowMs,
+      key_phrases: generatedKeyPhrases,
+      speaking_question: generatedSpeakingQuestion || null,
+      screen_title: generatedScreenTitle || null,
     }
 
     const recentSameText = findRecentPolymarketCommentaryByText(roomId, commentary.text, nowMs)
@@ -9630,6 +10134,72 @@ app.get('/api/polymarket/commentary/feed', (req, res) => {
     }))
   } catch (error) {
     res.status(500).json({ success: false, error: error?.message || 'polymarket_commentary_feed_failed' })
+  }
+})
+
+app.get('/api/english-classroom/live', async (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || 't_017').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const payload = await englishClassroomProvider.getPayload({ forceRefresh: false })
+    const status = englishClassroomProvider.getStatus()
+    const normalized = normalizeEnglishClassroomPayload(payload)
+    res.json(ok({
+      room_id: roomId,
+      live: normalized,
+      status,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'english_classroom_live_failed' })
+  }
+})
+
+app.get('/api/english-classroom/images/:file', (req, res) => {
+  try {
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw) {
+      res.status(400).json({ success: false, error: 'invalid_image_file' })
+      return
+    }
+    const target = path.resolve(ENGLISH_CLASSROOM_IMAGE_DIR, safe)
+    if (!target.startsWith(ENGLISH_CLASSROOM_IMAGE_DIR)) {
+      res.status(400).json({ success: false, error: 'invalid_image_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'image_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'english_classroom_image_failed' })
+  }
+})
+
+app.get('/api/english-classroom/audio/:file', (req, res) => {
+  try {
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw) {
+      res.status(400).json({ success: false, error: 'invalid_audio_file' })
+      return
+    }
+    const target = path.resolve(ENGLISH_CLASSROOM_AUDIO_DIR, safe)
+    if (!target.startsWith(ENGLISH_CLASSROOM_AUDIO_DIR)) {
+      res.status(400).json({ success: false, error: 'invalid_audio_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'audio_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'english_classroom_audio_failed' })
   }
 })
 

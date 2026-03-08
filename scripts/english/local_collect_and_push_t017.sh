@@ -12,6 +12,7 @@ VM_KEY="${T017_VM_KEY:-$HOME/.ssh/cn169_ed25519}"
 LOCAL_JSON="${T017_LOCAL_JSON:-$REPO_ROOT/data/live/onlytrade/english_classroom_live.json}"
 LOCAL_IMAGE_DIR="${T017_LOCAL_IMAGE_DIR:-$REPO_ROOT/data/live/onlytrade/english_images/t_017}"
 LOCAL_AUDIO_DIR="${T017_LOCAL_AUDIO_DIR:-$REPO_ROOT/data/live/onlytrade/english_audio/t_017}"
+DEPLOY_FRONTEND_ONCE_FLAG="${T017_DEPLOY_FRONTEND_ONCE_FLAG:-$REPO_ROOT/data/live/onlytrade/.t017_deploy_frontend_once}"
 
 REMOTE_ROOT="${T017_REMOTE_ROOT:-/opt/onlytrade}"
 REMOTE_JSON="${T017_REMOTE_JSON:-$REMOTE_ROOT/data/live/onlytrade/english_classroom_live.json}"
@@ -32,7 +33,7 @@ cd "$REPO_ROOT"
   --audio-timeout-sec "${T017_AUDIO_TIMEOUT_SEC:-60}" \
   --audio-max-items "${T017_AUDIO_MAX_ITEMS:-5}"
 
-mapfile -t ASSET_FILES < <(REPO_ROOT="$REPO_ROOT" "$PYTHON_BIN" - <<'PY'
+mapfile -t ASSET_ITEMS < <(REPO_ROOT="$REPO_ROOT" "$PYTHON_BIN" - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -60,15 +61,21 @@ for row in payload.get("headlines") or []:
         p = (base_dir / name).resolve()
         if p.exists() and p.is_file():
             seen.add(key)
-            print(str(p))
+            kind = "audio" if field == "audio_file" else "image"
+            print(f"{kind}\t{p}")
 PY
 )
 
-CLEAN_ASSET_FILES=()
-for file_path in "${ASSET_FILES[@]}"; do
-  clean_path="${file_path//$'\r'/}"
-  if [ -n "$clean_path" ] && [ -f "$clean_path" ]; then
-    CLEAN_ASSET_FILES+=("$clean_path")
+CLEAN_ASSET_ITEMS=()
+for item in "${ASSET_ITEMS[@]}"; do
+  clean_item="${item//$'\r'/}"
+  if [ -z "$clean_item" ]; then
+    continue
+  fi
+  kind="${clean_item%%$'\t'*}"
+  file_path="${clean_item#*$'\t'}"
+  if [ -n "$kind" ] && [ -n "$file_path" ] && [ -f "$file_path" ]; then
+    CLEAN_ASSET_ITEMS+=("${kind}"$'\t'"${file_path}")
   fi
 done
 
@@ -77,16 +84,26 @@ ssh -p "$VM_PORT" -i "$VM_KEY" "$VM_USER@$VM_HOST" \
 
 scp -P "$VM_PORT" -i "$VM_KEY" "$LOCAL_JSON" "$VM_USER@$VM_HOST:$REMOTE_JSON"
 
-if [ "${#CLEAN_ASSET_FILES[@]}" -gt 0 ]; then
-  for asset_path in "${CLEAN_ASSET_FILES[@]}"; do
+if [ "${#CLEAN_ASSET_ITEMS[@]}" -gt 0 ]; then
+  for asset_item in "${CLEAN_ASSET_ITEMS[@]}"; do
+    kind="${asset_item%%$'\t'*}"
+    asset_path="${asset_item#*$'\t'}"
     remote_dir="$REMOTE_IMAGE_DIR"
-    case "$asset_path" in
-      "$LOCAL_AUDIO_DIR"/*)
-        remote_dir="$REMOTE_AUDIO_DIR"
-        ;;
-    esac
+    if [ "$kind" = "audio" ]; then
+      remote_dir="$REMOTE_AUDIO_DIR"
+    fi
     scp -P "$VM_PORT" -i "$VM_KEY" "$asset_path" "$VM_USER@$VM_HOST:$remote_dir/"
   done
 fi
 
-echo "[t017-local-push] synced json and ${#CLEAN_ASSET_FILES[@]} assets to $VM_HOST"
+echo "[t017-local-push] synced json and ${#CLEAN_ASSET_ITEMS[@]} assets to $VM_HOST"
+
+SHOULD_DEPLOY_FRONTEND="${T017_DEPLOY_FRONTEND:-0}"
+if [ -f "$DEPLOY_FRONTEND_ONCE_FLAG" ]; then
+  SHOULD_DEPLOY_FRONTEND="1"
+fi
+
+if [ "$SHOULD_DEPLOY_FRONTEND" = "1" ]; then
+  bash "$REPO_ROOT/scripts/english/deploy_t017_frontend.sh"
+  rm -f "$DEPLOY_FRONTEND_ONCE_FLAG"
+fi

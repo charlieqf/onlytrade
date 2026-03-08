@@ -382,6 +382,70 @@ export const api = {
     return Array.isArray(direct?.items) ? direct.items : []
   },
 
+  async getEnglishClassroomLive(options?: {
+    room_id?: string
+  }): Promise<{
+    room_id: string
+    live: Record<string, unknown>
+    status?: Record<string, unknown>
+  }> {
+    const params = new URLSearchParams()
+    if (options?.room_id) params.set('room_id', String(options.room_id).trim())
+    const res = await fetch(
+      `${API_BASE}/english-classroom/live?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      }
+    )
+    const payload = await handleJSONResponse<
+      {
+        room_id?: string
+        live?: Record<string, unknown>
+        status?: Record<string, unknown>
+      }
+      | {
+        success?: boolean
+        data?: {
+          room_id?: string
+          live?: Record<string, unknown>
+          status?: Record<string, unknown>
+        }
+        message?: string
+      }
+    >(res)
+    if (payload && typeof payload === 'object' && 'success' in payload) {
+      const wrapped = payload as {
+        success?: boolean
+        data?: {
+          room_id?: string
+          live?: Record<string, unknown>
+          status?: Record<string, unknown>
+        }
+        message?: string
+      }
+      if (!wrapped.success || !wrapped.data) {
+        throw new Error(wrapped.message || '获取英语课堂数据失败')
+      }
+      return {
+        room_id: String(wrapped.data.room_id || options?.room_id || 't_017'),
+        live: wrapped.data.live || {},
+        status: wrapped.data.status || {},
+      }
+    }
+    const direct = payload as {
+      room_id?: string
+      live?: Record<string, unknown>
+      status?: Record<string, unknown>
+    }
+    return {
+      room_id: String(direct.room_id || options?.room_id || 't_017'),
+      live: direct.live || {},
+      status: direct.status || {},
+    }
+  },
+
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {
     const result = await httpClient.post<TraderInfo>(
       `${API_BASE}/traders`,

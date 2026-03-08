@@ -1,0 +1,125 @@
+program_slug: five-league
+program_title: 五大联赛每日评书
+room_id: t_018
+route: /stream/topic-commentary?trader=t_018&program=five-league
+
+entities:
+  - entity_key: real_madrid
+    label: Real Madrid
+    aliases: [Real Madrid, Madrid, Los Blancos]
+    league: La Liga
+    priority_weight: 1.0
+    enabled: true
+    image_query: Real Madrid match photo
+    fallback_keywords: [Mbappe, Bellingham, Ancelotti, Bernabeu]
+    tone_notes: 豪门气质，允许嘲讽但要有压迫感
+
+  - entity_key: barcelona
+    label: Barcelona
+    aliases: [Barcelona, Barca, Blaugrana]
+    league: La Liga
+    priority_weight: 1.0
+    enabled: true
+    image_query: Barcelona match photo
+    fallback_keywords: [Yamal, Lewandowski, Flick, Camp Nou]
+    tone_notes: 青春感，技术流，允许调侃管理层和防线
+
+  - entity_key: atletico_madrid
+    label: Atletico Madrid
+    aliases: [Atletico Madrid, Atletico, Atleti]
+    league: La Liga
+    priority_weight: 0.84
+    enabled: true
+    image_query: Atletico Madrid match photo
+    fallback_keywords: [Simeone, Griezmann, Wanda Metropolitano]
+    tone_notes: 硬朗、搏杀、带西蒙尼戏剧性
+
+  - entity_key: manchester_city
+    label: Manchester City
+    aliases: [Manchester City, Man City, City]
+    league: Premier League
+    priority_weight: 1.0
+    enabled: true
+    image_query: Manchester City match photo
+    fallback_keywords: [Guardiola, Haaland, De Bruyne, Etihad]
+    tone_notes: 强队统治力，允许用机械、精密、冷酷类修辞
+
+  - entity_key: liverpool
+    label: Liverpool
+    aliases: [Liverpool, Reds]
+    league: Premier League
+    priority_weight: 1.0
+    enabled: true
+    image_query: Liverpool match photo
+    fallback_keywords: [Salah, Anfield, Klopp, Slot]
+    tone_notes: 情绪饱满，允许渲染主场和逆转气质
+
+  - entity_key: arsenal
+    label: Arsenal
+    aliases: [Arsenal, Gunners]
+    league: Premier League
+    priority_weight: 0.96
+    enabled: true
+    image_query: Arsenal match photo
+    fallback_keywords: [Arteta, Saka, Emirates Stadium]
+    tone_notes: 理想主义、青春、争冠压力
+
+  - entity_key: manchester_united
+    label: Manchester United
+    aliases: [Manchester United, Man United, United]
+    league: Premier League
+    priority_weight: 1.0
+    enabled: true
+    image_query: Manchester United match photo
+    fallback_keywords: [Old Trafford, Amorim, Rashford]
+    tone_notes: 高流量，高争议，允许更强的反差和吐槽
+
+  - entity_key: chelsea
+    label: Chelsea
+    aliases: [Chelsea, Blues]
+    league: Premier League
+    priority_weight: 0.9
+    enabled: true
+    image_query: Chelsea match photo
+    fallback_keywords: [Stamford Bridge, Palmer, Maresca]
+    tone_notes: 青年军、烧钱、起伏感
+
+  - entity_key: bayern_munich
+    label: Bayern Munich
+    aliases: [Bayern Munich, Bayern]
+    league: Bundesliga
+    priority_weight: 0.95
+    enabled: true
+    image_query: Bayern Munich match photo
+    fallback_keywords: [Kane, Kompany, Allianz Arena]
+    tone_notes: 德甲霸主，允许“碾压/自我修复”叙事
+
+  - entity_key: borussia_dortmund
+    label: Borussia Dortmund
+    aliases: [Borussia Dortmund, Dortmund, BVB]
+    league: Bundesliga
+    priority_weight: 0.8
+    enabled: true
+    image_query: Borussia Dortmund match photo
+    fallback_keywords: [Yellow Wall, Signal Iduna Park]
+    tone_notes: 青春、热血、上下限巨大
+
+  - entity_key: inter_milan
+    label: Inter Milan
+    aliases: [Inter Milan, Inter]
+    league: Serie A
+    priority_weight: 0.92
+    enabled: true
+    image_query: Inter Milan match photo
+    fallback_keywords: [San Siro, Lautaro, Inzaghi]
+    tone_notes: 强调整体性和冠军相
+
+  - entity_key: juventus
+    label: Juventus
+    aliases: [Juventus, Juve]
+    league: Serie A
+    priority_weight: 0.88
+    enabled: true
+    image_query: Juventus match photo
+    fallback_keywords: [Turin, Vlahovic, Motta]
+    tone_notes: 传统豪门、保守、复兴焦虑

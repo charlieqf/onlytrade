@@ -4,6 +4,9 @@
   "rooms": {
     "t_015": {
       "mode": "hard_block"
+    },
+    "t_017": {
+      "mode": "hard_block"
     }
   },
   "allowlist": [],

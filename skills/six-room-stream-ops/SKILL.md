@@ -179,3 +179,4 @@ If this returns 401, key auth is the blocker (not frontend/router).
 - `docs/runbooks/six-room-stream-ops-skills.md`
 - `docs/runbooks/phone-stream-pages.md`
 - `docs/design/polymarket-stream-deployment-guide.md`
+- `docs/design/topic-stream-program-blueprints.md`

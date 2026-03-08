@@ -10,6 +10,14 @@ Server baseline:
 - SSH template: `ssh -p 21522 -i <YOUR_KEY_PATH> root@113.125.202.169`
 - Default key on this workstation: `C:\Users\rdpuser\.ssh\cn169_ed25519`
 
+Deployment location baseline:
+
+- VM repo root: `/opt/onlytrade`
+- Frontend dist path: `/opt/onlytrade/onlytrade-web/dist`
+- Runtime API file: `/opt/onlytrade/runtime-api/server.mjs`
+- Nginx config: `/usr/local/nginx/conf/onlytrade.conf`
+- Nginx web root directive: `root /opt/onlytrade/onlytrade-web/dist;`
+
 ## 1) What this room is
 
 The Polymarket room is a visual stream page rendered by:

@@ -215,6 +215,27 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
     bgm.volume = isNarrating ? BGM_DUCKED_VOLUME : BGM_VOLUME
   }, [effectiveTheme, isNarrating])
 
+  const tryStartBgm = useCallback(async () => {
+    const bgm = bgmAudioRef.current
+    if (!bgm) return
+    try {
+      await bgm.play()
+      setAudioUnlockRequired(false)
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : 'bgm_play_failed')
+      if (/NotAllowedError|play\(\) failed|interact/i.test(message)) {
+        setAudioUnlockRequired(true)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const bgm = bgmAudioRef.current
+    if (!bgm) return
+    bgm.volume = isNarrating ? BGM_DUCKED_VOLUME : BGM_VOLUME
+    void tryStartBgm()
+  }, [bgmSrc, isNarrating, tryStartBgm])
+
   useEffect(() => {
     if (!audioUnlockRequired) return
     const unlock = () => {
@@ -345,7 +366,6 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
         key={bgmSrc}
         ref={bgmAudioRef}
         src={bgmSrc}
-        autoPlay
         loop
         preload="auto"
       />

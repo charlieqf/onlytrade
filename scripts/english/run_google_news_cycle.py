@@ -117,12 +117,19 @@ MATERIAL_SYSTEM_PROMPT = "\n".join(
         "- screen_title: 1句英文，简洁有信息量，适合屏幕标题。",
         "- teaching_material: 口播教学稿，中文为主并穿插英文例句，长度约5-8句，允许自然过渡。",
         "- teaching_material风格参考课堂直播：可解释词组、可加入一段英文摘要朗读材料。",
+        "- teaching_material不能只是整段英文新闻复述；必须明确包含中文讲解、词组解释或口语提示。",
+        "- teaching_material至少包含1个英语例句，并且至少包含2句中文教学说明。",
         "- 禁止固定寒暄开头：不要出现Hello everyone, welcome back... / Today we have... 或 大家好，今天...。",
         "- 话题切换要像同一直播流的自然续句，不要每条新闻都重启开场。",
         '- screen_vocabulary: 4-6条，格式必须是 "English term: 中文释义"。',
         "- 不要输出markdown，不要输出JSON以外文本。",
     ]
 )
+MATERIAL_CACHE_VERSION = "t017_material_v2"
+MATERIAL_TARGET_SECONDS = 30.0
+MATERIAL_MIN_SECONDS = 24.0
+MATERIAL_MAX_SECONDS = 40.0
+MATERIAL_GENERATION_MAX_ATTEMPTS = 3
 
 
 def _safe_text(value: Any, max_len: int = 220) -> str:
@@ -610,10 +617,10 @@ def _extract_summary_image(description_html: str, page_url: str = "") -> str:
 
 
 def _build_audio_spec(row: Dict[str, Any]) -> Tuple[str, str, str]:
-    script = _safe_text(
+    script = _normalize_tts_text(_safe_text(
         row.get("teaching_material") or row.get("summary") or row.get("title"),
         2600,
-    )
+    ))
     if not script:
         return "", "", ""
     row_id = _safe_text(row.get("id"), 80) or "headline"
@@ -721,7 +728,23 @@ def _sanitize_teaching_material(value: Any) -> str:
     text = str(value or "").replace("\r", " ").replace("\t", " ")
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \u3000]{2,}", " ", text).strip()
-    return text[:2200]
+    return _normalize_tts_text(text[:2200])
+
+
+def _normalize_tts_text(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    replacements = [
+        (r"\b24/7\s+Wall\s+St\.?\b", "twenty four seven Wall Street"),
+        (r"\b24/7\b", "twenty four seven"),
+        (r"\b24x7\b", "twenty four seven"),
+        (r"\bWall\s+St\.?\b", "Wall Street"),
+    ]
+    out = text
+    for pattern, repl in replacements:
+        out = re.sub(pattern, repl, out, flags=re.IGNORECASE)
+    return out
 
 
 def _normalize_screen_vocabulary(value: Any) -> List[str]:
@@ -770,6 +793,43 @@ def _has_generic_lead(text: str) -> bool:
     return False
 
 
+def _contains_chinese(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def _has_teaching_signal(text: str) -> bool:
+    source = str(text or "")
+    if not source:
+        return False
+    patterns = [
+        r"这里的",
+        r"这个词",
+        r"这个短语",
+        r"意思是",
+        r"可以说",
+        r"比如",
+        r"例如",
+        r"大家注意",
+        r"表达",
+        r"用法",
+        r"口语",
+        r"在新闻里",
+        r"我们可以",
+    ]
+    return any(re.search(pattern, source, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _estimate_material_seconds(text: str) -> float:
+    source = str(text or "")
+    if not source:
+        return 0.0
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", source))
+    english_words = len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", source))
+    pauses = len(re.findall(r"[，。！？,.!?;；:：]", source))
+    seconds = (chinese_chars / 4.6) + (english_words / 2.8) + (pauses * 0.18)
+    return round(seconds, 1)
+
+
 def _material_user_prompt(row: Dict[str, Any], previous_title: str) -> str:
     return "\n".join(
         [
@@ -781,6 +841,8 @@ def _material_user_prompt(row: Dict[str, Any], previous_title: str) -> str:
             "related_news: none",
             "related_commentary: none",
             "key_points: none",
+            "hard_rule: teaching_material must contain Chinese teaching explanation and cannot be only English news reading.",
+            'hard_rule: include at least one explicit teaching move such as "这里的...","可以说...","这个词..." or "比如...".',
             "style_hint: smooth transition between topics, energetic classroom tone, practical spoken English training.",
         ]
     )
@@ -923,20 +985,28 @@ def _fallback_material(row: Dict[str, Any]) -> Dict[str, Any]:
     )
     summary = _safe_text(row.get("summary"), 360)
     teaching = (
-        f"{title}。"
-        + (f"{summary}。" if summary else "")
-        + "这条素材可以先用一句英文概括，再补一句原因和影响。"
-        + '例如："The main update is..."，然后接 "It matters because..."。'
+        f"我们继续看这条新闻：{title}。"
+        + (f"它的核心信息是：{summary}。" if summary else "")
+        + "这里的 main update 可以理解成这条新闻最核心的变化。"
+        + '你可以先说："The main update is..."，再补一句 "It matters because..."。'
+        + "如果想把表达更自然，可以再加一句原因或者影响。"
+        + '比如你可以完整说："The main update is that the situation is changing fast, and it matters because people may need a different response."。'
+        + "这里的 changing fast 就是在说变化很快，different response 可以理解成要换一种应对方式。"
+        + "大家注意，课堂里不要只念新闻原句，而是要先讲新闻在说什么，再练一个你自己能复述出来的英语句子。"
     )
+    material = _sanitize_teaching_material(teaching)
     return {
         "screen_title": _sanitize_title_text(title),
-        "teaching_material": _sanitize_teaching_material(teaching),
+        "teaching_material": material,
         "screen_vocabulary": [
             "Main update: 主要更新",
             "It matters because: 重要原因是",
+            "Changing fast: 变化很快",
+            "Different response: 不同应对",
             "Cost pressure: 成本压力",
             "Supply chain: 供应链",
         ],
+        "material_estimated_seconds": _estimate_material_seconds(material),
     }
 
 
@@ -952,16 +1022,28 @@ def _validate_material(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     if _has_generic_lead(teaching):
         return None
+    if not _contains_chinese(teaching):
+        return None
+    if not _has_teaching_signal(teaching):
+        return None
+    estimated_seconds = _estimate_material_seconds(teaching)
+    if (
+        estimated_seconds < MATERIAL_MIN_SECONDS
+        or estimated_seconds > MATERIAL_MAX_SECONDS
+    ):
+        return None
     return {
         "screen_title": title,
         "teaching_material": teaching,
         "screen_vocabulary": vocab[:6],
+        "material_estimated_seconds": estimated_seconds,
     }
 
 
 def _cache_key_for_row(row: Dict[str, Any]) -> str:
     base = "|".join(
         [
+            MATERIAL_CACHE_VERSION,
             _safe_text(row.get("title"), 220),
             _safe_text(row.get("summary"), 360),
             _safe_text(row.get("source"), 80),
@@ -1172,6 +1254,8 @@ def _attach_materials_to_rows(
     generated = 0
     cache_hits = 0
     failures = 0
+    generation_attempts = 0
+    invalid_generations = 0
     previous_title = ""
     out_rows: List[Dict[str, Any]] = []
 
@@ -1202,39 +1286,46 @@ def _attach_materials_to_rows(
         should_generate = idx < max(0, int(material_max_items))
         if should_generate:
             for candidate_provider in provider_order:
-                try:
-                    if candidate_provider == "gemini" and gemini_key:
-                        raw_obj, used_model = _material_from_gemini(
-                            row_out,
-                            previous_title,
-                            gemini_candidates,
-                            gemini_key,
-                            gemini_base,
-                            material_timeout_sec,
-                        )
-                        valid = _validate_material(raw_obj)
-                        if valid:
-                            material_obj = valid
-                            material_provider = "gemini"
-                            material_model = used_model
-                            break
-                    elif candidate_provider == "openai" and openai_key:
-                        raw_obj = _material_from_openai(
-                            row_out,
-                            previous_title,
-                            openai_model,
-                            openai_key,
-                            openai_base,
-                            material_timeout_sec,
-                        )
-                        valid = _validate_material(raw_obj)
-                        if valid:
-                            material_obj = valid
-                            material_provider = "openai"
-                            material_model = openai_model
-                            break
-                except Exception:
-                    continue
+                for _attempt in range(max(1, int(MATERIAL_GENERATION_MAX_ATTEMPTS))):
+                    generation_attempts += 1
+                    try:
+                        if candidate_provider == "gemini" and gemini_key:
+                            raw_obj, used_model = _material_from_gemini(
+                                row_out,
+                                previous_title,
+                                gemini_candidates,
+                                gemini_key,
+                                gemini_base,
+                                material_timeout_sec,
+                            )
+                            valid = _validate_material(raw_obj)
+                            if valid:
+                                material_obj = valid
+                                material_provider = "gemini"
+                                material_model = used_model
+                                break
+                            invalid_generations += 1
+                        elif candidate_provider == "openai" and openai_key:
+                            raw_obj = _material_from_openai(
+                                row_out,
+                                previous_title,
+                                openai_model,
+                                openai_key,
+                                openai_base,
+                                material_timeout_sec,
+                            )
+                            valid = _validate_material(raw_obj)
+                            if valid:
+                                material_obj = valid
+                                material_provider = "openai"
+                                material_model = openai_model
+                                break
+                            invalid_generations += 1
+                    except Exception:
+                        invalid_generations += 1
+                        continue
+                if material_obj:
+                    break
 
         if material_obj:
             generated += 1
@@ -1264,6 +1355,8 @@ def _attach_materials_to_rows(
         "material_generated": generated,
         "material_cache_hits": cache_hits,
         "material_failures": failures,
+        "material_generation_attempts": generation_attempts,
+        "material_invalid_generations": invalid_generations,
         "material_max_items": max(0, int(material_max_items)),
     }
     return out_rows, material_cache, stats
@@ -1589,6 +1682,15 @@ def main() -> None:
     )
 
     if merged_rows:
+        merged_rows, material_cache, merged_material_stats = _attach_materials_to_rows(
+            merged_rows,
+            provider=_safe_text(args.material_provider, 24) or "auto",
+            material_max_items=len(merged_rows),
+            material_timeout_sec=max(8, int(args.material_timeout_sec or 40)),
+            material_cache=material_cache,
+        )
+        payload["material_stats"] = merged_material_stats
+        payload["material_cache_size"] = len(material_cache)
         fixed_rows: List[Dict[str, Any]] = []
         for idx, row in enumerate(merged_rows):
             item = dict(row)

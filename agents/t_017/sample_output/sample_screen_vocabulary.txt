@@ -1,0 +1,5 @@
+Codename: 代号
+Lead in performance: 性能领先
+Price tag: 价格标签，指价格
+Global tariffs: 全球关税
+Supply issues: 供应问题

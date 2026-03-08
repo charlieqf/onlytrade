@@ -64,6 +64,44 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
 - `t_016` -> `/stream/night-comfort?theme=hobit`
 - `t_017` -> `/stream/oral-english`
 
+Planned next topic-led pages:
+
+- `t_018` -> `/stream/topic-commentary?trader=t_018&program=five-league`
+- `t_019` -> `/stream/topic-commentary?trader=t_019&program=china-bigtech`
+
+- Topic Commentary (shared topic-stream player)
+  - Route: `/stream/topic-commentary?trader=<trader_id>&program=<five-league|china-bigtech>`
+  - 8000 bridge route: `/onlytrade/stream/topic-commentary?trader=<trader_id>&program=<...>`
+  - Target file: `onlytrade-web/src/pages/design/TopicCommentaryPage.tsx`
+  - Program mapping:
+    - `t_018` -> `five-league`
+    - `t_019` -> `china-bigtech`
+  - Planned feed endpoint: `GET /api/topic-stream/live?room_id=<trader_id>`
+  - Planned image endpoint: `GET /api/topic-stream/images/:room_id/:file`
+  - Planned audio endpoint: `GET /api/topic-stream/audio/:room_id/:file`
+  - Planned storage roots:
+    - `data/live/onlytrade/topic_stream/`
+    - `data/live/onlytrade/topic_images/<room_id>/`
+    - `data/live/onlytrade/topic_audio/<room_id>/`
+  - Playback policy:
+    - one topic per screen
+    - static MP3 is required for release feeds
+    - page must wait for current audio `ended` before switching
+    - no blind fixed-timer topic rotation
+    - if one topic audio is broken, skip that topic instead of freezing the loop
+  - Collector model:
+    - local Windows PC collects source material and generates scripts
+    - local PC pre-generates MP3 and pushes JSON + images + MP3 to VM
+    - football and big-tech share the same pipeline; only adapters / whitelist / prompt / theme differ
+  - Planned Windows automation:
+    - `scripts/windows/run-t018-local-push.ps1`
+    - `scripts/windows/run-t019-local-push.ps1`
+    - `scripts/windows/setup-t018-local-push-task.ps1`
+    - `scripts/windows/setup-t019-local-push-task.ps1`
+  - Design references:
+    - `docs/design/topic-stream-program-blueprints.md`
+    - `docs/design/topic-stream-feed-contract.md`
+
 - Night Comfort (theme-loop + narration)
   - Route: `/stream/night-comfort?trader=<trader_id>&theme=<hobit|knight1|knight2|knight3|knight4>`
   - 8000 bridge route: `/onlytrade/stream/night-comfort?trader=<trader_id>&theme=<...>`
@@ -108,6 +146,11 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
 For full operator playbooks and failure recovery, see:
 
 - `docs/runbooks/six-room-stream-ops-skills.md`
+
+For planned next-generation topic-led programs that reuse the `t_017` production pattern, see:
+
+- `docs/design/topic-stream-program-blueprints.md`
+- `docs/design/topic-stream-feed-contract.md`
 
 ## Common Data Contract
 

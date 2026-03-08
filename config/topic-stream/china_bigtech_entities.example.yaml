@@ -1,0 +1,165 @@
+program_slug: china-bigtech
+program_title: 国内大厂每日锐评
+room_id: t_019
+route: /stream/topic-commentary?trader=t_019&program=china-bigtech
+
+entities:
+  - entity_key: huawei
+    label: Huawei
+    aliases: [Huawei, 华为]
+    sector: tech
+    priority_weight: 1.0
+    enabled: true
+    image_query: Huawei product launch
+    fallback_keywords: [HarmonyOS, Kirin, Mate, 余承东]
+    tone_notes: 技术自主、民族品牌、争议和期待并存
+
+  - entity_key: alibaba
+    label: Alibaba
+    aliases: [Alibaba, 阿里, 阿里巴巴]
+    sector: tech
+    priority_weight: 0.96
+    enabled: true
+    image_query: Alibaba headquarters
+    fallback_keywords: [Taobao, Tmall, Cloud, 菜鸟]
+    tone_notes: 组织效率、电商基本盘、云与 AI 转型
+
+  - entity_key: tencent
+    label: Tencent
+    aliases: [Tencent, 腾讯]
+    sector: tech
+    priority_weight: 0.98
+    enabled: true
+    image_query: Tencent office building
+    fallback_keywords: [WeChat, QQ, 游戏, 元宝]
+    tone_notes: 流量护城河、游戏、产品克制与资本效率
+
+  - entity_key: bytedance
+    label: ByteDance
+    aliases: [ByteDance, 字节, 字节跳动]
+    sector: tech
+    priority_weight: 1.0
+    enabled: true
+    image_query: ByteDance office building
+    fallback_keywords: [Douyin, TikTok, 剪映, 豆包]
+    tone_notes: 爆款机器、算法平台、国际化和监管张力
+
+  - entity_key: baidu
+    label: Baidu
+    aliases: [Baidu, 百度]
+    sector: tech
+    priority_weight: 0.88
+    enabled: true
+    image_query: Baidu AI event
+    fallback_keywords: [Ernie, Apollo, 无人驾驶, 李彦宏]
+    tone_notes: AI 叙事、搜索转型、市场预期管理
+
+  - entity_key: meituan
+    label: Meituan
+    aliases: [Meituan, 美团]
+    sector: tech
+    priority_weight: 0.96
+    enabled: true
+    image_query: Meituan delivery rider
+    fallback_keywords: [外卖, 到店, 闪购, 王兴]
+    tone_notes: 补贴大战、本地生活、执行力和争议
+
+  - entity_key: jd
+    label: JD
+    aliases: [JD, JD.com, 京东]
+    sector: tech
+    priority_weight: 0.9
+    enabled: true
+    image_query: JD logistics warehouse
+    fallback_keywords: [物流, 京东外卖, 3C, 刘强东]
+    tone_notes: 自营、物流、低价和进攻性回归
+
+  - entity_key: pinduoduo
+    label: Pinduoduo
+    aliases: [Pinduoduo, 拼多多, Temu]
+    sector: tech
+    priority_weight: 0.92
+    enabled: true
+    image_query: Pinduoduo app screenshot
+    fallback_keywords: [Temu, 百亿补贴, 低价]
+    tone_notes: 低价效率、下沉、利润与争议并行
+
+  - entity_key: xiaomi
+    label: Xiaomi
+    aliases: [Xiaomi, 小米]
+    sector: tech
+    priority_weight: 1.0
+    enabled: true
+    image_query: Xiaomi launch event
+    fallback_keywords: [SU7, 手机, IoT, 雷军]
+    tone_notes: 流量话题性极强，适合产品叙事和舆论反差
+
+  - entity_key: li_auto
+    label: Li Auto
+    aliases: [Li Auto, 理想]
+    sector: vehicle
+    priority_weight: 0.88
+    enabled: true
+    image_query: Li Auto vehicle launch
+    fallback_keywords: [MEGA, 理想汽车, 智驾, 李想]
+    tone_notes: 家庭叙事、销量、品牌口碑波动
+
+  - entity_key: xpeng
+    label: Xpeng
+    aliases: [Xpeng, 小鹏]
+    sector: vehicle
+    priority_weight: 0.84
+    enabled: true
+    image_query: Xpeng vehicle launch
+    fallback_keywords: [MONA, 智驾, 何小鹏]
+    tone_notes: 技术标签鲜明，适合智驾与产品锐评
+
+  - entity_key: nio
+    label: Nio
+    aliases: [Nio, 蔚来]
+    sector: vehicle
+    priority_weight: 0.82
+    enabled: true
+    image_query: Nio car event
+    fallback_keywords: [换电, 乐道, 李斌]
+    tone_notes: 用户运营、品牌理想主义、财务压力
+
+  - entity_key: byd
+    label: BYD
+    aliases: [BYD, 比亚迪]
+    sector: vehicle
+    priority_weight: 0.95
+    enabled: true
+    image_query: BYD vehicle launch
+    fallback_keywords: [王朝系列, 海洋系列, 价格战]
+    tone_notes: 规模、价格战、产业链统治力
+
+  - entity_key: aito
+    label: Aito / HIMA
+    aliases: [Aito, 问界, 鸿蒙智行]
+    sector: vehicle
+    priority_weight: 0.95
+    enabled: true
+    image_query: Aito vehicle launch
+    fallback_keywords: [问界, 鸿蒙座舱, 余承东]
+    tone_notes: 华为加持、话题密度高、舆论极化
+
+  - entity_key: zeekr
+    label: Zeekr
+    aliases: [Zeekr, 极氪]
+    sector: vehicle
+    priority_weight: 0.78
+    enabled: true
+    image_query: Zeekr vehicle launch
+    fallback_keywords: [SEA, 极氪007, 智驾]
+    tone_notes: 设计感、性能、品牌定位变化
+
+  - entity_key: tesla_china
+    label: Tesla China
+    aliases: [Tesla China, 特斯拉中国, Tesla]
+    sector: vehicle
+    priority_weight: 0.94
+    enabled: true
+    image_query: Tesla China vehicle launch
+    fallback_keywords: [Model Y, FSD, 上海超级工厂]
+    tone_notes: 降价、智驾、口碑撕裂、行业鲶鱼

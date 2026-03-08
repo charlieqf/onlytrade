@@ -336,6 +336,32 @@ const ENGLISH_CLASSROOM_ROOMS = (() => {
       .filter(Boolean)
   )
 })()
+const TOPIC_STREAM_FEED_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.TOPIC_STREAM_FEED_DIR || path.join('data', 'live', 'onlytrade', 'topic_stream')
+)
+const TOPIC_STREAM_IMAGE_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.TOPIC_STREAM_IMAGE_DIR || path.join('data', 'live', 'onlytrade', 'topic_images')
+)
+const TOPIC_STREAM_AUDIO_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.TOPIC_STREAM_AUDIO_DIR || path.join('data', 'live', 'onlytrade', 'topic_audio')
+)
+const TOPIC_STREAM_REFRESH_MS = Math.max(10_000, Number(process.env.TOPIC_STREAM_REFRESH_MS || 60_000))
+const TOPIC_STREAM_STALE_MS = Math.max(60_000, Number(process.env.TOPIC_STREAM_STALE_MS || 12 * 60 * 60 * 1000))
+const TOPIC_STREAM_ROOM_CONFIG = new Map([
+  ['t_018', {
+    room_id: 't_018',
+    program_slug: 'five-league',
+    feed_file: 'five_league_live.json',
+  }],
+  ['t_019', {
+    room_id: 't_019',
+    program_slug: 'china-bigtech',
+    feed_file: 'china_bigtech_live.json',
+  }],
+])
 
 const MARKET_BREADTH_PATH_CN = path.resolve(
   ROOT_DIR,
@@ -2070,6 +2096,7 @@ function buildLiveDataFreshnessSummary() {
     buildFreshnessCheck('news_digest_us', newsDigestProviderUs.getStatus()),
     buildFreshnessCheck('x_hot_news', xHotNewsProvider.getStatus()),
     buildFreshnessCheck('english_classroom', englishClassroomProvider.getStatus()),
+    ...Array.from(topicStreamProviderByRoom.entries()).map(([roomId, provider]) => buildFreshnessCheck(`topic_stream_${roomId}`, provider.getStatus())),
     buildFreshnessCheck('market_breadth_cn_a', marketBreadthProviderCn.getStatus()),
     buildFreshnessCheck('market_breadth_us', marketBreadthProviderUs.getStatus()),
   ]
@@ -2957,6 +2984,16 @@ const englishClassroomProvider = createLiveJsonFileProvider({
   refreshMs: ENGLISH_CLASSROOM_REFRESH_MS,
   staleAfterMs: ENGLISH_CLASSROOM_STALE_MS,
 })
+const topicStreamProviderByRoom = new Map(
+  Array.from(TOPIC_STREAM_ROOM_CONFIG.entries()).map(([roomId, config]) => ([
+    roomId,
+    createLiveJsonFileProvider({
+      filePath: path.join(TOPIC_STREAM_FEED_DIR, config.feed_file),
+      refreshMs: TOPIC_STREAM_REFRESH_MS,
+      staleAfterMs: TOPIC_STREAM_STALE_MS,
+    }),
+  ]))
+)
 const marketBreadthProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_BREADTH_PATH_CN,
   refreshMs: MARKET_BREADTH_REFRESH_MS,
@@ -4179,6 +4216,131 @@ function toEnglishClassroomAudioApiUrl(fileName) {
   const safe = String(fileName || '').trim()
   if (!safe) return ''
   return `/api/english-classroom/audio/${encodeURIComponent(safe)}`
+}
+
+function getTopicStreamRoomConfig(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  return TOPIC_STREAM_ROOM_CONFIG.get(safeRoomId) || null
+}
+
+function getTopicStreamProvider(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  return topicStreamProviderByRoom.get(safeRoomId) || null
+}
+
+function toTopicStreamImageApiUrl(roomId, fileName) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeFile = String(fileName || '').trim()
+  if (!safeRoomId || !safeFile || !isSafeAssetFileName(safeFile)) return ''
+  return `/api/topic-stream/images/${encodeURIComponent(safeRoomId)}/${encodeURIComponent(safeFile)}`
+}
+
+function toTopicStreamAudioApiUrl(roomId, fileName) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeFile = String(fileName || '').trim()
+  if (!safeRoomId || !safeFile || !isSafeAssetFileName(safeFile)) return ''
+  return `/api/topic-stream/audio/${encodeURIComponent(safeRoomId)}/${encodeURIComponent(safeFile)}`
+}
+
+function normalizeTopicStreamTags(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => safePlainText(item, 64))
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+function normalizeTopicStreamTopicRow(row, defaultRoomId = '') {
+  if (!row || typeof row !== 'object') return null
+  const roomId = safePlainText(row.room_id || defaultRoomId || '', 24).toLowerCase()
+  const id = safePlainText(row.id || '', 96)
+  const entityKey = safePlainText(row.entity_key || '', 64).toLowerCase()
+  const entityLabel = safePlainText(row.entity_label || row.label || '', 80)
+  const category = safePlainText(row.category || '', 24).toLowerCase()
+  const title = safePlainText(row.title || '', 220)
+  const screenTitle = safePlainText(row.screen_title || row.title || '', 180)
+  const summaryFacts = safePlainText(row.summary_facts || row.summary || '', 600)
+  const commentaryScript = safePlainText(row.commentary_script || row.script || '', 2200)
+  const source = safePlainText(row.source || row.source_name || '', 80)
+  const sourceUrl = safePlainText(row.source_url || row.url || '', 1000)
+  const publishedAt = safePlainText(row.published_at || '', 80)
+  const imageFile = safePlainText(row.image_file || '', 120)
+  const audioFile = safePlainText(row.audio_file || '', 160)
+  const screenTags = normalizeTopicStreamTags(row.screen_tags || row.tags || [])
+  const scriptEstimatedSeconds = Number(row.script_estimated_seconds)
+  const priorityScore = Number(row.priority_score)
+  const topicReason = safePlainText(row.topic_reason || '', 180)
+
+  if (!roomId || !id || !entityKey || !title || !imageFile || !audioFile) return null
+  if (!isSafeAssetFileName(imageFile) || !isSafeAssetFileName(audioFile)) return null
+
+  return {
+    id,
+    room_id: roomId,
+    entity_key: entityKey,
+    entity_label: entityLabel || entityKey,
+    category: category || 'general',
+    title,
+    screen_title: screenTitle || title,
+    summary_facts: summaryFacts || '',
+    commentary_script: commentaryScript || '',
+    screen_tags: screenTags,
+    source: source || '',
+    source_url: sourceUrl || '',
+    published_at: publishedAt || null,
+    image_file: imageFile,
+    image_api_url: toTopicStreamImageApiUrl(roomId, imageFile),
+    audio_file: audioFile,
+    audio_api_url: toTopicStreamAudioApiUrl(roomId, audioFile),
+    script_estimated_seconds: Number.isFinite(scriptEstimatedSeconds) ? scriptEstimatedSeconds : null,
+    priority_score: Number.isFinite(priorityScore) ? priorityScore : null,
+    topic_reason: topicReason || '',
+  }
+}
+
+function normalizeTopicStreamPayload(payload, roomId = '') {
+  const row = payload && typeof payload === 'object' ? payload : {}
+  const effectiveRoomId = safePlainText(row.room_id || roomId || '', 24).toLowerCase()
+  const config = getTopicStreamRoomConfig(effectiveRoomId)
+  const topicsRaw = Array.isArray(row.topics) ? row.topics : []
+  const topics = topicsRaw
+    .map((item) => normalizeTopicStreamTopicRow(item, effectiveRoomId))
+    .filter(Boolean)
+  return {
+    schema_version: safePlainText(row.schema_version || 'topic.stream.feed.v1', 64),
+    room_id: effectiveRoomId,
+    program_slug: safePlainText(row.program_slug || config?.program_slug || '', 64),
+    program_title: safePlainText(row.program_title || '', 80),
+    program_style: safePlainText(row.program_style || '', 64) || null,
+    as_of: safePlainText(row.as_of || '', 40) || null,
+    topic_count: topics.length,
+    topics,
+    titles: topics.map((item) => item.title).slice(0, 24),
+    background_notes: Array.isArray(row.background_notes)
+      ? row.background_notes.map((item) => safePlainText(item, 160)).filter(Boolean).slice(0, 16)
+      : [],
+    generation_stats: row.generation_stats && typeof row.generation_stats === 'object'
+      ? row.generation_stats
+      : {},
+  }
+}
+
+async function getTopicStreamSnapshot(roomId) {
+  const config = getTopicStreamRoomConfig(roomId)
+  const provider = getTopicStreamProvider(roomId)
+  if (!config || !provider) return null
+  const payload = await provider.getPayload({ forceRefresh: false })
+  const status = provider.getStatus()
+  const live = normalizeTopicStreamPayload(payload, config.room_id)
+  return {
+    source_kind: payload ? 'topic_stream_file' : 'empty',
+    room_id: config.room_id,
+    program_slug: config.program_slug,
+    live,
+    status,
+  }
 }
 
 function normalizeEnglishClassroomHeadlineRow(row) {
@@ -7117,6 +7279,8 @@ async function refreshSupplementalLiveProviders() {
     newsDigestProviderCn,
     newsDigestProviderUs,
     xHotNewsProvider,
+    englishClassroomProvider,
+    ...Array.from(topicStreamProviderByRoom.values()),
     marketBreadthProviderCn,
     marketBreadthProviderUs,
   ]
@@ -8748,6 +8912,9 @@ async function buildRoomStreamPacket({ roomId, decisionLimit = 5 } = {}) {
         us: newsDigestProviderUs.getStatus(),
       },
       x_hot_news: xHotNewsProvider.getStatus(),
+      topic_stream: Object.fromEntries(
+        Array.from(topicStreamProviderByRoom.entries()).map(([roomId, provider]) => [roomId, provider.getStatus()])
+      ),
       market_breadth: {
         cn_a: marketBreadthProviderCn.getStatus(),
         us: marketBreadthProviderUs.getStatus(),
@@ -9205,6 +9372,9 @@ app.get('/api/agent/runtime/status', async (_req, res) => {
     },
     x_hot_news_file: xHotNewsProvider.getStatus(),
     english_classroom_file: englishClassroomProvider.getStatus(),
+    topic_stream_files: Object.fromEntries(
+      Array.from(topicStreamProviderByRoom.entries()).map(([roomId, provider]) => [roomId, provider.getStatus()])
+    ),
     market_breadth_files: {
       cn_a: marketBreadthProviderCn.getStatus(),
       us: marketBreadthProviderUs.getStatus(),
@@ -10200,6 +10370,86 @@ app.get('/api/english-classroom/audio/:file', (req, res) => {
     res.sendFile(target)
   } catch (error) {
     res.status(500).json({ success: false, error: error?.message || 'english_classroom_audio_failed' })
+  }
+})
+
+app.get('/api/topic-stream/live', async (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const snapshot = await getTopicStreamSnapshot(roomId)
+    if (!snapshot) {
+      res.status(404).json({ success: false, error: 'topic_stream_room_not_found' })
+      return
+    }
+    res.json(ok({
+      room_id: roomId,
+      live: snapshot.live,
+      status: snapshot.status,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'topic_stream_live_failed' })
+  }
+})
+
+app.get('/api/topic-stream/images/:roomId/:file', (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase()
+    if (!getTopicStreamRoomConfig(roomId)) {
+      res.status(404).json({ success: false, error: 'topic_stream_room_not_found' })
+      return
+    }
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw || !isSafeAssetFileName(safe)) {
+      res.status(400).json({ success: false, error: 'invalid_image_file' })
+      return
+    }
+    const roomDir = path.resolve(TOPIC_STREAM_IMAGE_DIR, roomId)
+    const target = path.resolve(roomDir, safe)
+    if (!target.startsWith(roomDir)) {
+      res.status(400).json({ success: false, error: 'invalid_image_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'image_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'topic_stream_image_failed' })
+  }
+})
+
+app.get('/api/topic-stream/audio/:roomId/:file', (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase()
+    if (!getTopicStreamRoomConfig(roomId)) {
+      res.status(404).json({ success: false, error: 'topic_stream_room_not_found' })
+      return
+    }
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw || !isSafeAssetFileName(safe)) {
+      res.status(400).json({ success: false, error: 'invalid_audio_file' })
+      return
+    }
+    const roomDir = path.resolve(TOPIC_STREAM_AUDIO_DIR, roomId)
+    const target = path.resolve(roomDir, safe)
+    if (!target.startsWith(roomDir)) {
+      res.status(400).json({ success: false, error: 'invalid_audio_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'audio_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'topic_stream_audio_failed' })
   }
 })
 

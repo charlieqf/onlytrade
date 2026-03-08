@@ -8,6 +8,7 @@ import MultiPersonBroadcastPage from './pages/design/MultiPersonBroadcastPage'
 import CyberPredictionPage from './pages/design/CyberPredictionPage'
 import T016NightComfortPage from './pages/design/T016NightComfortPage'
 import T017OralEnglishPage from './pages/design/T017OralEnglishPage'
+import TopicCommentaryPage from './pages/design/TopicCommentaryPage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -58,6 +59,7 @@ type Page =
   | 'polymarket'
   | 'nightComfort'
   | 'oralEnglish'
+  | 'topicCommentary'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
@@ -117,6 +119,8 @@ function App() {
       return 'nightComfort'
     if (path === '/stream/oral-english')
       return 'oralEnglish'
+    if (path === '/stream/topic-commentary')
+      return 'topicCommentary'
     return 'lobby'
   }
 
@@ -148,6 +152,7 @@ function App() {
       polymarket: '/stream/polymarket',
       nightComfort: '/stream/night-comfort',
       oralEnglish: '/stream/oral-english',
+      topicCommentary: '/stream/topic-commentary',
     }
     const path = pathMap[page]
     if (path) {
@@ -263,6 +268,11 @@ function App() {
         }
       } else if (path === '/stream/oral-english') {
         setCurrentPage('oralEnglish')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/stream/topic-commentary') {
+        setCurrentPage('topicCommentary')
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
@@ -756,6 +766,26 @@ function App() {
         {language === 'zh'
           ? '未选择交易员。请在 URL 中添加 ?trader=t_017'
           : 'No trader selected. Add ?trader=t_017 in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'topicCommentary') {
+    return selectedTrader ? (
+      <TopicCommentaryPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=t_019'
+          : 'No trader selected. Add ?trader=t_019 in URL.'}
       </div>
     )
   }

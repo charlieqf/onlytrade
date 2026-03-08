@@ -1,6 +1,6 @@
 ---
 name: six-room-stream-ops
-description: Use when operating, troubleshooting, or verifying zhibo stream rooms on Aliyun, especially polymarket (t_015), night-comfort (t_016), and oral-english (t_017).
+description: Use when operating, troubleshooting, or verifying zhibo stream rooms on Aliyun, especially polymarket (t_015), night-comfort (t_016), oral-english (t_017), and topic-commentary rooms such as t_019 china-bigtech and future t_018 five-league.
 ---
 
 # Stream Room Ops
@@ -15,6 +15,8 @@ Operator skill for these public rooms:
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/polymarket?trader=t_015`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/night-comfort?trader=t_016&theme=hobit`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_018&program=five-league`
 
 ## Aliyun baseline
 
@@ -71,6 +73,7 @@ curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_014/str
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_015/stream-packet?decision_limit=3"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts/profile?room_id=t_016"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/live?room_id=t_017"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
 ```
 
 ## Critical room-specific checks
@@ -131,6 +134,35 @@ Current `t_017` baseline:
 - Final feed only keeps rows with real downloaded images; fallback-image rows are dropped.
 - Frontend prefers `audio_api_url` MP3 and only falls back to live TTS if static audio fails.
 
+- `t_019` topic-commentary local collector + VM playback checks:
+
+```bash
+# run on local Windows PC (collector + generator + push)
+bash scripts/topic_stream/local_collect_and_push_t019.sh
+
+# verify public room + feed on VM/domain
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/audio/t_019/<audio>.mp3"
+```
+
+Current `t_019` baseline:
+
+- Local PC scheduler task: `OnlyTrade-T019-LocalPush-10m`
+- Daytime window: `08:00-23:00`
+- Log file: `logs/t019_local_push.log`
+- Default topic-stream direct voice: `longlaotie_v3`
+- Release feed keeps only rows with both image and pre-generated MP3.
+- Public page resolution depends on `t_019` being present in `/onlytrade/api/traders`.
+- If the public page falls back to lobby, check trader registration first, then check whether the public JS bundle actually contains `topic-commentary` / `t_019` route code.
+
+For the next `t_018` launch, reuse the `t_019` topic-stream path:
+
+- add `agents/t_018/agent.json`
+- register `t_018` locally and on the VM in `data/agents/registry.json`
+- keep the same domain-first validation path
+- prefer local frontend build + targeted dist copy if VM build is still constrained by Node 16 / Vite 6
+
 Windows local loop (current preferred method, every 5 min):
 
 ```powershell
@@ -180,3 +212,4 @@ If this returns 401, key auth is the blocker (not frontend/router).
 - `docs/runbooks/phone-stream-pages.md`
 - `docs/design/polymarket-stream-deployment-guide.md`
 - `docs/design/topic-stream-program-blueprints.md`
+- `docs/runbooks/topic-stream-ops.md`

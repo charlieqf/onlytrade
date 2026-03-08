@@ -64,7 +64,7 @@ These pages use shared stream logic in `onlytrade-web/src/pages/design/phoneStre
 - `t_016` -> `/stream/night-comfort?theme=hobit`
 - `t_017` -> `/stream/oral-english`
 
-Planned next topic-led pages:
+Live / next topic-led pages:
 
 - `t_018` -> `/stream/topic-commentary?trader=t_018&program=five-league`
 - `t_019` -> `/stream/topic-commentary?trader=t_019&program=china-bigtech`
@@ -76,10 +76,10 @@ Planned next topic-led pages:
   - Program mapping:
     - `t_018` -> `five-league`
     - `t_019` -> `china-bigtech`
-  - Planned feed endpoint: `GET /api/topic-stream/live?room_id=<trader_id>`
-  - Planned image endpoint: `GET /api/topic-stream/images/:room_id/:file`
-  - Planned audio endpoint: `GET /api/topic-stream/audio/:room_id/:file`
-  - Planned storage roots:
+  - Feed endpoint: `GET /api/topic-stream/live?room_id=<trader_id>`
+  - Image endpoint: `GET /api/topic-stream/images/:room_id/:file`
+  - Audio endpoint: `GET /api/topic-stream/audio/:room_id/:file`
+  - Storage roots:
     - `data/live/onlytrade/topic_stream/`
     - `data/live/onlytrade/topic_images/<room_id>/`
     - `data/live/onlytrade/topic_audio/<room_id>/`
@@ -93,14 +93,25 @@ Planned next topic-led pages:
     - local Windows PC collects source material and generates scripts
     - local PC pre-generates MP3 and pushes JSON + images + MP3 to VM
     - football and big-tech share the same pipeline; only adapters / whitelist / prompt / theme differ
-  - Planned Windows automation:
+  - Windows automation:
     - `scripts/windows/run-t018-local-push.ps1`
     - `scripts/windows/run-t019-local-push.ps1`
     - `scripts/windows/setup-t018-local-push-task.ps1`
     - `scripts/windows/setup-t019-local-push-task.ps1`
+  - Current `t_019` local baseline:
+    - scheduler task: `OnlyTrade-T019-LocalPush-10m`
+    - log file: `logs/t019_local_push.log`
+    - daytime window: `08:00-23:00`
+    - default voice: `longlaotie_v3`
+    - public URL: `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech`
+  - Launch lessons to carry into `t_018`:
+    - the room must exist in `/onlytrade/api/traders` before the page can resolve `?trader=<room_id>`
+    - public domain validation must confirm the latest frontend bundle, not just the backend route
+    - voice changes should regenerate MP3 filenames instead of reusing old cached audio
   - Design references:
     - `docs/design/topic-stream-program-blueprints.md`
     - `docs/design/topic-stream-feed-contract.md`
+    - `docs/runbooks/topic-stream-ops.md`
 
 - Night Comfort (theme-loop + narration)
   - Route: `/stream/night-comfort?trader=<trader_id>&theme=<hobit|knight1|knight2|knight3|knight4>`

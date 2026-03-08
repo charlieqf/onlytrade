@@ -37,6 +37,7 @@ DEFAULT_ENV_FILE = REPO_ROOT / "runtime-api/.env.local"
 DEFAULT_SELFHOSTED_TTS_URL = os.getenv(
     "TOPIC_STREAM_SELFHOSTED_TTS_URL", "http://101.227.82.130:13002/tts"
 )
+DEFAULT_TTS_VOICE_ID = os.getenv("TOPIC_STREAM_TTS_VOICE", "longlaotie_v3")
 
 COMMENTARY_SYSTEM_PROMPT = "\n".join(
     [
@@ -400,7 +401,7 @@ def generate_commentary_block(
 
 
 def build_selfhosted_tts_payload(
-    text: str, voice_id: str = "xuanyijiangjie", speed: float = 1.0
+    text: str, voice_id: str = DEFAULT_TTS_VOICE_ID, speed: float = 1.0
 ) -> Dict[str, Any]:
     safe_text = _safe_text(text, 2600)
     if len(safe_text) < 10:
@@ -426,14 +427,28 @@ def build_selfhosted_tts_payload(
         "super_sampling": False,
         "sample_rate": 32000,
         "fragment_interval": 0.01,
-        "voice_id": _safe_text(voice_id, 80) or "xuanyijiangjie",
+        "voice_id": _safe_text(voice_id, 80) or DEFAULT_TTS_VOICE_ID,
     }
 
 
+def _build_voice_aware_audio_spec(
+    row: Dict[str, Any], voice_id: str
+) -> tuple[str, str, str]:
+    base_audio_key, base_message_id, script = english._build_audio_spec(row)
+    safe_voice = _safe_text(voice_id, 80).lower() or DEFAULT_TTS_VOICE_ID
+    if not base_audio_key or not script:
+        return "", "", ""
+    audio_key = hashlib.sha1(
+        f"{base_audio_key}|voice|{safe_voice}".encode("utf-8", errors="ignore")
+    ).hexdigest()[:24]
+    message_id = _safe_text(f"{base_message_id}_{safe_voice}", 120) or base_message_id
+    return audio_key, message_id, script
+
+
 def synthesize_audio_direct_selfhosted(
-    row: Dict[str, Any], audio_dir: Path, tts_url: str, timeout_sec: int
+    row: Dict[str, Any], audio_dir: Path, tts_url: str, timeout_sec: int, voice_id: str
 ) -> Optional[str]:
-    audio_key, _message_id, script = english._build_audio_spec(row)
+    audio_key, _message_id, script = _build_voice_aware_audio_spec(row, voice_id)
     if not audio_key or not script:
         return None
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -444,7 +459,7 @@ def synthesize_audio_direct_selfhosted(
     try:
         body, content_type = english._post_json_bytes(
             _safe_text(tts_url, 500) or DEFAULT_SELFHOSTED_TTS_URL,
-            build_selfhosted_tts_payload(script),
+            build_selfhosted_tts_payload(script, voice_id=voice_id),
             timeout_sec=max(8, int(timeout_sec)),
         )
     except Exception:
@@ -504,6 +519,7 @@ def build_payload(
     timeout_sec: int,
     audio_tts_url: str,
     audio_timeout_sec: int,
+    audio_tts_voice: str,
 ) -> Dict[str, Any]:
     english.ROOM_ID = ROOM_ID
     entities = load_enabled_entities(config_path)
@@ -561,18 +577,19 @@ def build_payload(
             "topic_reason": generated["topic_reason"],
             "teaching_material": generated["commentary_script"],
         }
-        audio_file = english._synthesize_audio_for_item(
+        audio_file = synthesize_audio_direct_selfhosted(
             row,
             audio_dir=audio_dir,
             tts_url=_safe_text(audio_tts_url, 500),
-            tts_timeout_sec=max(8, int(audio_timeout_sec)),
+            timeout_sec=max(8, int(audio_timeout_sec)),
+            voice_id=_safe_text(audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID,
         )
         if not audio_file:
-            audio_file = synthesize_audio_direct_selfhosted(
+            audio_file = english._synthesize_audio_for_item(
                 row,
                 audio_dir=audio_dir,
-                tts_url=DEFAULT_SELFHOSTED_TTS_URL,
-                timeout_sec=max(8, int(audio_timeout_sec)),
+                tts_url=english.DEFAULT_TTS_URL,
+                tts_timeout_sec=max(8, int(audio_timeout_sec)),
             )
         if not audio_file:
             continue
@@ -629,7 +646,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--audio-tts-url",
-        default=os.getenv("TOPIC_STREAM_TTS_URL", english.DEFAULT_TTS_URL),
+        default=os.getenv("TOPIC_STREAM_TTS_URL", DEFAULT_SELFHOSTED_TTS_URL),
+    )
+    parser.add_argument(
+        "--audio-tts-voice",
+        default=os.getenv("TOPIC_STREAM_TTS_VOICE", DEFAULT_TTS_VOICE_ID),
     )
     parser.add_argument(
         "--audio-timeout-sec",
@@ -661,6 +682,7 @@ def main() -> None:
         timeout_sec=max(8, int(args.timeout_sec)),
         audio_tts_url=_safe_text(args.audio_tts_url, 500),
         audio_timeout_sec=max(8, int(args.audio_timeout_sec)),
+        audio_tts_voice=_safe_text(args.audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID,
     )
     print(
         json.dumps(

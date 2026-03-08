@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PYTHON_BIN="${T019_LOCAL_PYTHON_BIN:-python}"
+T019_AUDIO_TTS_VOICE="${T019_AUDIO_TTS_VOICE:-longlaotie_v3}"
 
 VM_HOST="${T019_VM_HOST:-113.125.202.169}"
 VM_PORT="${T019_VM_PORT:-21522}"
@@ -29,7 +30,8 @@ cd "$REPO_ROOT"
   --lookback-hours "${T019_LOOKBACK_HOURS:-72}" \
   --provider "${T019_COMMENTARY_PROVIDER:-auto}" \
   --timeout-sec "${T019_TIMEOUT_SEC:-40}" \
-  --audio-timeout-sec "${T019_AUDIO_TIMEOUT_SEC:-60}"
+  --audio-timeout-sec "${T019_AUDIO_TIMEOUT_SEC:-60}" \
+  --audio-tts-voice "$T019_AUDIO_TTS_VOICE"
 
 mapfile -t ASSET_ITEMS < <(REPO_ROOT="$REPO_ROOT" "$PYTHON_BIN" - <<'PY'
 import json

@@ -2,7 +2,9 @@ param(
   [string]$RepoRoot = "",
   [string]$BashExe = "",
   [string]$LogDir = "",
-  [int]$MaxLogSizeMb = 20
+  [int]$MaxLogSizeMb = 20,
+  [int]$StartHour = 8,
+  [int]$EndHour = 23
 )
 
 Set-StrictMode -Version Latest
@@ -51,6 +53,25 @@ function Write-LogLine {
   Add-Content -Path $Path -Value ("[{0}] {1}" -f $stamp, $Message) -Encoding UTF8
 }
 
+function Test-IsWithinDayWindow {
+  param(
+    [int]$WindowStartHour,
+    [int]$WindowEndHour
+  )
+  $now = Get-Date
+  $hour = $now.Hour
+  if ($WindowStartHour -lt 0 -or $WindowStartHour -gt 23) {
+    throw "StartHour must be between 0 and 23"
+  }
+  if ($WindowEndHour -lt 1 -or $WindowEndHour -gt 24) {
+    throw "EndHour must be between 1 and 24"
+  }
+  if ($WindowStartHour -ge $WindowEndHour) {
+    throw "StartHour must be less than EndHour"
+  }
+  return ($hour -ge $WindowStartHour -and $hour -lt $WindowEndHour)
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
   $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
   $RepoRoot = (Resolve-Path (Join-Path $scriptDir "..\..")).Path
@@ -84,6 +105,11 @@ try {
 
   if (-not $hasLock) {
     Write-LogLine -Path $logPath -Message "skip: another t019 local push is already running"
+    exit 0
+  }
+
+  if (-not (Test-IsWithinDayWindow -WindowStartHour $StartHour -WindowEndHour $EndHour)) {
+    Write-LogLine -Path $logPath -Message ("skip: outside daytime window {0}:00-{1}:00" -f $StartHour, $EndHour)
     exit 0
   }
 

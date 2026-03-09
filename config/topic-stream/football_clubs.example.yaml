@@ -1,5 +1,5 @@
 program_slug: five-league
-program_title: 五大联赛每日评书
+program_title: 五大联赛豪门每日评书
 room_id: t_018
 route: /stream/topic-commentary?trader=t_018&program=five-league
 

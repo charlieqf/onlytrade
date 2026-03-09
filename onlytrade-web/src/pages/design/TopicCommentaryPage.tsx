@@ -31,7 +31,7 @@ const TOPIC_ADVANCE_ON_ERROR_MS = 1500
 
 const PROGRAM_THEMES: Record<string, ThemeSpec> = {
   'five-league': {
-    label: '五大联赛每日评书',
+    label: '五大联赛豪门每日评书',
     eyebrow: 'Match Night Bulletin',
     accent: '#f5d77b',
     badge: 'bg-[#10281d]/78 text-[#f7e6a6] border-[#d7b85f]/60',

@@ -79,21 +79,61 @@ for item in "${ASSET_ITEMS[@]}"; do
   fi
 done
 
+IMAGE_BASENAMES=()
+AUDIO_BASENAMES=()
+for asset_item in "${CLEAN_ASSET_ITEMS[@]}"; do
+  kind="${asset_item%%$'\t'*}"
+  asset_path="${asset_item#*$'\t'}"
+  asset_name="$(basename "$asset_path")"
+  if [ "$kind" = "audio" ]; then
+    AUDIO_BASENAMES+=("$asset_name")
+  else
+    IMAGE_BASENAMES+=("$asset_name")
+  fi
+done
+
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+IMAGE_TARBALL="$TMP_DIR/t017-images.tgz"
+AUDIO_TARBALL="$TMP_DIR/t017-audio.tgz"
+
+if [ "${#IMAGE_BASENAMES[@]}" -gt 0 ]; then
+  tar -czf "$IMAGE_TARBALL" -C "$LOCAL_IMAGE_DIR" "${IMAGE_BASENAMES[@]}"
+fi
+
+if [ "${#AUDIO_BASENAMES[@]}" -gt 0 ]; then
+  tar -czf "$AUDIO_TARBALL" -C "$LOCAL_AUDIO_DIR" "${AUDIO_BASENAMES[@]}"
+fi
+
 ssh -p "$VM_PORT" -i "$VM_KEY" "$VM_USER@$VM_HOST" \
   "mkdir -p '$(dirname "$REMOTE_JSON")' '$REMOTE_IMAGE_DIR' '$REMOTE_AUDIO_DIR'"
 
 scp -P "$VM_PORT" -i "$VM_KEY" "$LOCAL_JSON" "$VM_USER@$VM_HOST:$REMOTE_JSON"
 
-if [ "${#CLEAN_ASSET_ITEMS[@]}" -gt 0 ]; then
-  for asset_item in "${CLEAN_ASSET_ITEMS[@]}"; do
-    kind="${asset_item%%$'\t'*}"
-    asset_path="${asset_item#*$'\t'}"
-    remote_dir="$REMOTE_IMAGE_DIR"
-    if [ "$kind" = "audio" ]; then
-      remote_dir="$REMOTE_AUDIO_DIR"
-    fi
-    scp -P "$VM_PORT" -i "$VM_KEY" "$asset_path" "$VM_USER@$VM_HOST:$remote_dir/"
-  done
+if [ -f "$IMAGE_TARBALL" ]; then
+  scp -P "$VM_PORT" -i "$VM_KEY" "$IMAGE_TARBALL" "$VM_USER@$VM_HOST:$REMOTE_ROOT/t017-images.tgz"
+fi
+
+if [ -f "$AUDIO_TARBALL" ]; then
+  scp -P "$VM_PORT" -i "$VM_KEY" "$AUDIO_TARBALL" "$VM_USER@$VM_HOST:$REMOTE_ROOT/t017-audio.tgz"
+fi
+
+if [ -f "$IMAGE_TARBALL" ] || [ -f "$AUDIO_TARBALL" ]; then
+  ssh -p "$VM_PORT" -i "$VM_KEY" "$VM_USER@$VM_HOST" 'bash -s' <<REMOTE
+set -euo pipefail
+if [ -f "$REMOTE_ROOT/t017-images.tgz" ]; then
+  tar -xzf "$REMOTE_ROOT/t017-images.tgz" -C "$REMOTE_IMAGE_DIR"
+  rm -f "$REMOTE_ROOT/t017-images.tgz"
+fi
+if [ -f "$REMOTE_ROOT/t017-audio.tgz" ]; then
+  tar -xzf "$REMOTE_ROOT/t017-audio.tgz" -C "$REMOTE_AUDIO_DIR"
+  rm -f "$REMOTE_ROOT/t017-audio.tgz"
+fi
+REMOTE
 fi
 
 echo "[t017-local-push] synced json and ${#CLEAN_ASSET_ITEMS[@]} assets to $VM_HOST"

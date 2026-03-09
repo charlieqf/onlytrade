@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PYTHON_BIN="${T018_LOCAL_PYTHON_BIN:-python}"
 T018_AUDIO_TTS_VOICE="${T018_AUDIO_TTS_VOICE:-longlaotie_v3}"
+T018_AUDIO_TTS_SPEED="${T018_AUDIO_TTS_SPEED:-1.2}"
 
 VM_HOST="${T018_VM_HOST:-113.125.202.169}"
 VM_PORT="${T018_VM_PORT:-21522}"
@@ -32,7 +33,8 @@ cd "$REPO_ROOT"
   --timeout-sec "${T018_TIMEOUT_SEC:-40}" \
   --audio-tts-url "${T018_AUDIO_TTS_URL:-http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts}" \
   --audio-timeout-sec "${T018_AUDIO_TIMEOUT_SEC:-60}" \
-  --audio-tts-voice "$T018_AUDIO_TTS_VOICE"
+  --audio-tts-voice "$T018_AUDIO_TTS_VOICE" \
+  --audio-tts-speed "$T018_AUDIO_TTS_SPEED"
 
 mapfile -t ASSET_ITEMS < <(REPO_ROOT="$REPO_ROOT" "$PYTHON_BIN" - <<'PY'
 import json

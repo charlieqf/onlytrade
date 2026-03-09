@@ -30,8 +30,28 @@ cd "$REPO_ROOT"
   --lookback-hours "${T019_LOOKBACK_HOURS:-72}" \
   --provider "${T019_COMMENTARY_PROVIDER:-auto}" \
   --timeout-sec "${T019_TIMEOUT_SEC:-40}" \
+  --audio-tts-url "${T019_AUDIO_TTS_URL:-http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts}" \
   --audio-timeout-sec "${T019_AUDIO_TIMEOUT_SEC:-60}" \
   --audio-tts-voice "$T019_AUDIO_TTS_VOICE"
+
+TOPIC_COUNT="$(LOCAL_JSON_PATH="$LOCAL_JSON" $PYTHON_BIN - <<'PY'
+import json
+import os
+from pathlib import Path
+path = Path(os.getenv("LOCAL_JSON_PATH") or "")
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("0")
+    raise SystemExit(0)
+print(int(data.get("topic_count") or 0))
+PY
+)"
+
+if [ "$TOPIC_COUNT" -le 0 ]; then
+  echo "[t019-local-push] generated 0 topics; skip remote publish"
+  exit 3
+fi
 
 mapfile -t ASSET_ITEMS < <(REPO_ROOT="$REPO_ROOT" "$PYTHON_BIN" - <<'PY'
 import json

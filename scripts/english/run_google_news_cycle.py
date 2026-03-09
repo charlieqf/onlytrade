@@ -65,6 +65,47 @@ GOOGLE_TOPIC_BY_CATEGORY = {
     "business": "BUSINESS",
 }
 
+MEDIA_NS = {"media": "http://search.yahoo.com/mrss/"}
+
+DIRECT_FEED_SOURCES = [
+    {
+        "category": "world",
+        "category_label": "World",
+        "source": "BBC World",
+        "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    },
+    {
+        "category": "world",
+        "category_label": "World",
+        "source": "The Guardian World",
+        "url": "https://www.theguardian.com/world/rss",
+    },
+    {
+        "category": "technology",
+        "category_label": "Technology",
+        "source": "9to5Mac",
+        "url": "https://9to5mac.com/feed/",
+    },
+    {
+        "category": "technology",
+        "category_label": "Technology",
+        "source": "Engadget",
+        "url": "https://www.engadget.com/rss.xml",
+    },
+    {
+        "category": "business",
+        "category_label": "Business",
+        "source": "BBC Business",
+        "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    },
+    {
+        "category": "business",
+        "category_label": "Business",
+        "source": "The Guardian Business",
+        "url": "https://www.theguardian.com/business/rss",
+    },
+]
+
 SENSITIVE_TOKENS = [
     "war",
     "armed conflict",
@@ -382,6 +423,34 @@ def _extract_google_outbound_url(google_url: str) -> str:
     return ""
 
 
+GOOGLE_NEWS_PLACEHOLDER_TOKENS = (
+    "j6_cofbogxhri9im864nl_ligxvsqp2aupskei7z0cnnfdvgumwuy20nuuhkreqyrpy4beeibuc",
+)
+
+GOOGLE_NEWS_PLACEHOLDER_SHA256 = {
+    "894b715d865291877a35f75420e99152bb6b44c1dd5d084bb3da0cf061f99978",
+}
+
+
+def _is_google_news_placeholder_image_url(image_url: str) -> bool:
+    safe_url = _safe_text(image_url, 1400)
+    if not safe_url:
+        return False
+    parsed = urlparse(safe_url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if not host.endswith("googleusercontent.com"):
+        return False
+    return any(token in path for token in GOOGLE_NEWS_PLACEHOLDER_TOKENS)
+
+
+def _is_known_placeholder_image_bytes(body: bytes) -> bool:
+    if not body:
+        return False
+    digest = hashlib.sha256(body).hexdigest()
+    return digest in GOOGLE_NEWS_PLACEHOLDER_SHA256
+
+
 def _extract_og_image(page_url: str) -> str:
     target = _safe_text(page_url, 900)
     if not target:
@@ -428,6 +497,8 @@ def _extract_og_image(page_url: str) -> str:
         if image_host.endswith("gstatic.com"):
             continue
         if image_host.endswith("googleusercontent.com"):
+            if _is_google_news_placeholder_image_url(resolved):
+                continue
             # Skip tiny icon variants but keep real thumbnails like ...=s0-w300.
             if re.search(r"=w(16|24|32|48)(?:$|[&#])", resolved, flags=re.IGNORECASE):
                 continue
@@ -506,7 +577,11 @@ def _convert_audio_to_mp3(source_path: Path, target_path: Path) -> bool:
         )
     except Exception:
         return False
-    return completed.returncode == 0 and target_path.exists() and target_path.stat().st_size > 512
+    return (
+        completed.returncode == 0
+        and target_path.exists()
+        and target_path.stat().st_size > 512
+    )
 
 
 def _center_crop_to_portrait_9_16(raw_path: Path, out_path: Path) -> bool:
@@ -559,6 +634,10 @@ def _download_image_for_item(
         return None
     if not body or len(body) < 1024:
         return None
+    if _is_google_news_placeholder_image_url(
+        target_url
+    ) or _is_known_placeholder_image_bytes(body):
+        return None
     ext = _guess_ext(target_url, ctype)
     raw_path = image_dir / f"{image_key}{ext}"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -571,7 +650,7 @@ def _download_image_for_item(
         try:
             with Image.open(raw_path) as im:
                 w, h = im.size
-                if w < 220 or h < 120:
+                if w < 120 or h < 80:
                     try:
                         raw_path.unlink(missing_ok=True)
                     except Exception:
@@ -611,16 +690,38 @@ def _extract_summary_image(description_html: str, page_url: str = "") -> str:
             if not candidate:
                 continue
             resolved = _safe_text(urljoin(page_url or "", candidate), 1200)
-            if resolved:
-                return resolved
+            if not resolved:
+                continue
+            parsed = urlparse(resolved)
+            host = parsed.netloc.lower()
+            if host.endswith("gstatic.com"):
+                continue
+            if _is_google_news_placeholder_image_url(resolved):
+                continue
+            return resolved
     return ""
 
 
+def _is_invalid_image_asset(image_file: str, image_dir: Path) -> bool:
+    safe_name = _safe_text(image_file, 120)
+    if not safe_name or safe_name.startswith("fallback_"):
+        return True
+    probe = (image_dir / safe_name).resolve()
+    try:
+        if not probe.exists() or not probe.is_file():
+            return True
+        return _is_known_placeholder_image_bytes(probe.read_bytes())
+    except Exception:
+        return True
+
+
 def _build_audio_spec(row: Dict[str, Any]) -> Tuple[str, str, str]:
-    script = _normalize_tts_text(_safe_text(
-        row.get("teaching_material") or row.get("summary") or row.get("title"),
-        2600,
-    ))
+    script = _normalize_tts_text(
+        _safe_text(
+            row.get("teaching_material") or row.get("summary") or row.get("title"),
+            2600,
+        )
+    )
     if not script:
         return "", "", ""
     row_id = _safe_text(row.get("id"), 80) or "headline"
@@ -1167,6 +1268,101 @@ def _collect_google_rows(
     return rows
 
 
+def _extract_feed_item_image_url(
+    item: ET.Element, description_html: str, link: str
+) -> str:
+    media_thumbnail = item.find("media:thumbnail", MEDIA_NS)
+    if media_thumbnail is not None:
+        candidate = _safe_text(media_thumbnail.attrib.get("url"), 1200)
+        if candidate:
+            return candidate
+    media_content = item.find("media:content", MEDIA_NS)
+    if media_content is not None:
+        candidate = _safe_text(media_content.attrib.get("url"), 1200)
+        if candidate:
+            return candidate
+    enclosure = item.find("enclosure")
+    if enclosure is not None:
+        enc_type = _safe_text(enclosure.attrib.get("type"), 80).lower()
+        candidate = _safe_text(enclosure.attrib.get("url"), 1200)
+        if candidate and (enc_type.startswith("image/") or not enc_type):
+            return candidate
+    return _extract_summary_image(description_html, link)
+
+
+def _collect_rows_from_feed_xml(
+    rss_text: str, feed_cfg: Dict[str, Any], lookback_hours: int
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    lookback_ms = max(1, int(lookback_hours)) * 3600 * 1000
+    try:
+        root = ET.fromstring(rss_text)
+    except Exception:
+        return rows
+
+    seen = set()
+    for item in root.findall(".//item"):
+        title = _safe_text(item.findtext("title"), 220)
+        if not title or _contains_sensitive(title) or _is_generic_news_title(title):
+            continue
+        title_fp = re.sub(r"\s+", "", title.lower())
+        if not title_fp or title_fp in seen:
+            continue
+        description_html = item.findtext("description") or ""
+        summary = _parse_item_summary(description_html)
+        if _contains_sensitive(summary):
+            continue
+        pub_date = _safe_text(item.findtext("pubDate"), 80)
+        pub_ts_ms = _parse_pub_ts(pub_date)
+        if pub_ts_ms is not None and (now_ms - pub_ts_ms) > lookback_ms:
+            continue
+        link = _safe_text(item.findtext("link"), 1000)
+        if not link:
+            continue
+        image_url = _extract_feed_item_image_url(item, description_html, link)
+        rows.append(
+            {
+                "category": _safe_text(feed_cfg.get("category"), 24),
+                "category_label": _safe_text(feed_cfg.get("category_label"), 24),
+                "query": _safe_text(feed_cfg.get("source"), 80),
+                "title": title,
+                "summary": summary,
+                "summary_html": description_html,
+                "source": _safe_text(item.findtext("source"), 80)
+                or _safe_text(feed_cfg.get("source"), 80),
+                "url": link,
+                "published_at": pub_date,
+                "published_ts_ms": pub_ts_ms,
+                "image_url": image_url,
+                "has_image": bool(image_url),
+            }
+        )
+        seen.add(title_fp)
+    return rows
+
+
+def _collect_direct_rows(lookback_hours: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for feed_cfg in DIRECT_FEED_SOURCES:
+        try:
+            rss_text = _fetch_text(
+                _safe_text(feed_cfg.get("url"), 1000), timeout_sec=DEFAULT_TIMEOUT_SEC
+            )
+        except Exception:
+            continue
+        for row in _collect_rows_from_feed_xml(rss_text, feed_cfg, lookback_hours):
+            key = (
+                _safe_text(row.get("url"), 1000) or _safe_text(row.get("title"), 220)
+            ).lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
 def _dedupe_rows(rows: List[Dict[str, Any]], limit_total: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     seen = set()
@@ -1377,7 +1573,8 @@ def build_payload(
     audio_max_items: int,
 ) -> Dict[str, Any]:
     fallback_images = _prepare_fallback_images(image_dir)
-    rows = _collect_google_rows(
+    direct_rows = _collect_direct_rows(max(1, int(lookback_hours)))
+    rows = direct_rows + _collect_google_rows(
         max(1, int(limit_per_category)),
         max(1, int(lookback_hours)),
     )
@@ -1398,13 +1595,14 @@ def build_payload(
         image_key = hashlib.sha1(key_raw.encode("utf-8", errors="ignore")).hexdigest()[
             :20
         ]
-        image_url = (
-            _extract_summary_image(
-                _safe_text(row.get("summary_html"), 4000),
-                _safe_text(row.get("url"), 1000),
-            )
-            or _extract_og_image(_safe_text(row.get("url"), 1000))
+        article_url = _safe_text(row.get("url"), 1000)
+        summary_image_url = _extract_summary_image(
+            _safe_text(row.get("summary_html"), 4000),
+            article_url,
         )
+        image_url = summary_image_url
+        if not image_url or _is_google_news_placeholder_image_url(image_url):
+            image_url = _extract_og_image(article_url)
         image_file = (
             _download_image_for_item(image_url, image_dir, image_key)
             if image_url
@@ -1417,7 +1615,7 @@ def build_payload(
         row_out = {
             **row,
             "id": f"gnews_{image_key}",
-            "image_url": image_url,
+            "image_url": image_url if image_file else "",
             "image_file": image_file or fallback_image,
             "image_fit": "original",
         }
@@ -1694,10 +1892,15 @@ def main() -> None:
         fixed_rows: List[Dict[str, Any]] = []
         for idx, row in enumerate(merged_rows):
             item = dict(row)
+            image_url = _safe_text(item.get("image_url"), 1200)
             image_file = _safe_text(item.get("image_file"), 120)
-            if not image_file or image_file.startswith("fallback_"):
+            if _is_google_news_placeholder_image_url(image_url):
                 continue
-            if len(fixed_rows) < max(0, int(args.audio_max_items or 0)) and not _safe_text(item.get("audio_file"), 120):
+            if _is_invalid_image_asset(image_file, image_dir):
+                continue
+            if len(fixed_rows) < max(
+                0, int(args.audio_max_items or 0)
+            ) and not _safe_text(item.get("audio_file"), 120):
                 audio_file = _synthesize_audio_for_item(
                     item,
                     audio_dir=audio_dir,

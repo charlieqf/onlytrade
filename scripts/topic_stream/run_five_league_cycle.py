@@ -33,19 +33,30 @@ DEFAULT_SELFHOSTED_TTS_URL = os.getenv(
     "TOPIC_STREAM_SELFHOSTED_TTS_URL", "http://101.227.82.130:13002/tts"
 )
 DEFAULT_TTS_VOICE_ID = os.getenv("TOPIC_STREAM_TTS_VOICE", "longlaotie_v3")
+DEFAULT_TTS_SPEED = float(os.getenv("TOPIC_STREAM_TTS_SPEED", "1.2"))
+MEDIA_NS = {"media": "http://search.yahoo.com/mrss/"}
+DIRECT_FEED_SOURCES = [
+    {"name": "BBC Sport", "url": "https://feeds.bbci.co.uk/sport/football/rss.xml"},
+    {"name": "The Guardian", "url": "https://www.theguardian.com/football/rss"},
+    {"name": "Sky Sports", "url": "https://www.skysports.com/rss/12040"},
+]
 
 COMMENTARY_SYSTEM_PROMPT = "\n".join(
     [
         "你是《五大联赛豪门每日评书》的固定主播。",
         "你要把豪门俱乐部新闻改写成可直接口播的中文说书/锐评节目。",
+        "口吻必须像看球很多年的老球迷，懂更衣室气味、懂豪门旧账、懂球迷情绪。",
+        "允许幽默、阴阳、挖苦和反讽，但不能低俗，也不能编造事实。",
         '输出严格JSON: {"screen_title":"...","summary_facts":"...","commentary_script":"...","screen_tags":["..."],"topic_reason":"..."}',
         "要求：",
         "- screen_title: 12-28字，要像赛后海报或豪门热搜标题。",
         "- summary_facts: 只写事实，不要把调侃混进去。",
-        "- commentary_script: 60-90秒口播，要有豪门叙事感、势头感、调侃感，但不能编造比赛事实或转会结论。",
+        "- commentary_script: 45-80秒口播，要有豪门叙事感、势头感、调侃感，像资深球迷在直播里开麦。",
+        "- commentary_script 至少要有一句让老球迷会心一笑的锐评，允许短促吐槽，但不能像机器写稿。",
         "- commentary_script 必须包含一个后续观察钩子，例如 接下来要看 / 下一场要看 / 真正要看。",
         "- screen_tags: 3-5个短标签。",
         "- 如果素材包含传闻或转会猜测，必须明确写成 传闻 / 外界猜测 / 尚未官宣。",
+        "- 少用空话套话，不要每条都像新闻播报，不要开场寒暄。",
         "- 不要写成比赛战报，不要输出 JSON 以外文本。",
     ]
 )
@@ -122,6 +133,15 @@ def build_entity_query(entity: Dict[str, Any]) -> str:
     return f"({joined}) ({suffix})"
 
 
+def _matches_token(text: str, token: str) -> bool:
+    safe_text = _safe_text(text, 800).lower()
+    safe_token = _safe_text(token, 80).lower()
+    if not safe_text or not safe_token:
+        return False
+    pattern = r"(?<![a-z0-9])" + re.escape(safe_token) + r"(?![a-z0-9])"
+    return re.search(pattern, safe_text, flags=re.IGNORECASE) is not None
+
+
 def score_candidate(
     entity: Dict[str, Any], row: Dict[str, Any], now_ts_ms: Optional[int] = None
 ) -> float:
@@ -130,12 +150,9 @@ def score_candidate(
     summary = _safe_text(row.get("summary"), 360).lower()
     aliases = [str(alias).lower() for alias in entity.get("aliases") or []]
     keywords = [str(word).lower() for word in entity.get("fallback_keywords") or []]
-    alias_hits = sum(
-        1 for alias in aliases if alias and (alias in title or alias in summary)
-    )
-    keyword_hits = sum(
-        1 for word in keywords if word and (word in title or word in summary)
-    )
+    combined = f"{title} {summary}"
+    alias_hits = sum(1 for alias in aliases if _matches_token(combined, alias))
+    keyword_hits = sum(1 for word in keywords if _matches_token(combined, word))
     pub_ts_ms = int(row.get("published_ts_ms") or 0)
     age_hours = max(0.0, (now_ms - pub_ts_ms) / 3_600_000) if pub_ts_ms else 72.0
     freshness_score = max(0.0, 40.0 - min(age_hours, 40.0))
@@ -221,6 +238,142 @@ def collect_entity_rows(
     return rows
 
 
+def _extract_feed_item_image_url(item: ET.Element) -> str:
+    media_thumbnail = item.find("media:thumbnail", MEDIA_NS)
+    if media_thumbnail is not None:
+        candidate = _safe_text(media_thumbnail.attrib.get("url"), 1200)
+        if candidate:
+            return candidate
+    media_content = item.find("media:content", MEDIA_NS)
+    if media_content is not None:
+        candidate = _safe_text(media_content.attrib.get("url"), 1200)
+        if candidate:
+            return candidate
+    enclosure = item.find("enclosure")
+    if enclosure is not None:
+        enc_type = _safe_text(enclosure.attrib.get("type"), 80).lower()
+        candidate = _safe_text(enclosure.attrib.get("url"), 1200)
+        if candidate and (enc_type.startswith("image/") or not enc_type):
+            return candidate
+    return ""
+
+
+def _collect_rows_from_feed_xml(
+    rss_text: str, source_name: str, lookback_hours: int
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    now_ms = _now_ts_ms()
+    lookback_ms = max(1, int(lookback_hours)) * 3600 * 1000
+    try:
+        root = ET.fromstring(rss_text)
+    except Exception:
+        return rows
+
+    seen = set()
+    for item in root.findall(".//item"):
+        title = _safe_text(item.findtext("title"), 220)
+        if not title or english._contains_sensitive(title):
+            continue
+        title_fp = re.sub(r"\s+", "", title.lower())
+        if not title_fp or title_fp in seen:
+            continue
+        summary_html = item.findtext("description") or ""
+        summary = english._parse_item_summary(summary_html)
+        if english._contains_sensitive(summary):
+            continue
+        pub_date = _safe_text(item.findtext("pubDate"), 80)
+        pub_ts_ms = english._parse_pub_ts(pub_date)
+        if pub_ts_ms is not None and (now_ms - pub_ts_ms) > lookback_ms:
+            continue
+        link = _safe_text(item.findtext("link"), 1000)
+        if not link:
+            continue
+        direct_source = _safe_text(item.findtext("source"), 80)
+        image_url = _extract_feed_item_image_url(item)
+        category = _safe_text(item.findtext("category"), 80).lower()
+        rows.append(
+            {
+                "title": title,
+                "summary": summary,
+                "summary_html": summary_html,
+                "source": direct_source or _safe_text(source_name, 80),
+                "url": link,
+                "published_at": pub_date,
+                "published_ts_ms": pub_ts_ms,
+                "image_url": image_url,
+                "has_image": bool(image_url),
+                "category": category,
+                "source_feed": _safe_text(source_name, 80),
+            }
+        )
+        seen.add(title_fp)
+    return rows
+
+
+def collect_direct_source_rows(lookback_hours: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for source in DIRECT_FEED_SOURCES:
+        try:
+            rss_text = english._fetch_text(
+                _safe_text(source.get("url"), 1000),
+                timeout_sec=english.DEFAULT_TIMEOUT_SEC,
+            )
+        except Exception:
+            continue
+        for row in _collect_rows_from_feed_xml(
+            rss_text, _safe_text(source.get("name"), 80), lookback_hours
+        ):
+            url_key = _safe_text(row.get("url"), 1000) or _safe_text(
+                row.get("title"), 220
+            )
+            key = url_key.lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
+def _select_best_direct_rows(
+    entities: List[Dict[str, Any]],
+    source_rows: List[Dict[str, Any]],
+    per_entity_limit: int,
+    now_ts_ms: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    now_ms = int(now_ts_ms or _now_ts_ms())
+    chosen: List[Dict[str, Any]] = []
+    for entity in entities:
+        scored: List[Dict[str, Any]] = []
+        for row in source_rows:
+            item = dict(row)
+            item["priority_score"] = score_candidate(entity, item, now_ts_ms=now_ms)
+            aliases = [str(alias).lower() for alias in entity.get("aliases") or []]
+            keywords = [
+                str(word).lower() for word in entity.get("fallback_keywords") or []
+            ]
+            haystack = f"{_safe_text(item.get('title'), 240).lower()} {_safe_text(item.get('summary'), 360).lower()}"
+            alias_matched = any(_matches_token(haystack, token) for token in aliases)
+            if not alias_matched:
+                continue
+            item["alias_matched"] = alias_matched
+            item["keyword_matched"] = any(
+                _matches_token(haystack, token) for token in keywords
+            )
+            scored.append(item)
+        if not scored:
+            continue
+        best = sorted(
+            scored,
+            key=lambda item: float(item.get("priority_score") or 0.0),
+            reverse=True,
+        )[: max(1, int(per_entity_limit))][0]
+        chosen.append({**best, "entity": entity})
+    return sorted(
+        chosen, key=lambda item: float(item.get("priority_score") or 0.0), reverse=True
+    )
+
+
 def validate_generated_block(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     screen_title = _safe_text(obj.get("screen_title") or obj.get("title"), 80)
     summary_facts = _safe_text(obj.get("summary_facts") or obj.get("summary"), 500)
@@ -271,7 +424,8 @@ def _commentary_user_prompt(entity: Dict[str, Any], row: Dict[str, Any]) -> str:
             f"tone_notes: {_safe_text(entity.get('tone_notes'), 180) or '豪门叙事、调侃、带势头'}",
             "hard_rules:",
             "- 不要把它写成比赛战报",
-            "- 要有一个尖锐角度或调侃点",
+            "- 要像看球很多年的老球迷在开麦，不要像念稿",
+            "- 要有一个尖锐角度或调侃点，最好带一点懂球梗或豪门旧账感",
             "- 如果是传闻必须写清楚未官宣",
             "- 要有一个下一场/下一步观察钩子",
             "- 要像主播在说，不要像体育记者发稿",
@@ -373,14 +527,14 @@ def _fallback_commentary(entity: Dict[str, Any], row: Dict[str, Any]) -> Dict[st
     title = _safe_text(row.get("title"), 80)
     league = _safe_text(entity.get("league"), 32)
     script = (
-        f"今天{label}这条消息，表面看是在讲{title}。"
+        f"{label}这条消息，表面上看是在讲{title}，"
         f"先把事实摆清楚：{summary}。"
-        f"但豪门新闻从来不只看表面，真正要看的是这支队伍的气势、教练压力和下一场叙事会不会继续抬头。"
-        f"如果这波动静能接成连续表现，{league}这条线就会越炒越热；如果只是一天热搜，反噬和吐槽很快也会跟上。"
-        f"所以接下来要看，教练调整、更衣室反应和下一场比赛走势，能不能把这股声量继续顶上去。"
+        f"但老球迷都知道，豪门新闻从来不是看字面意思，真正刺耳的地方在于这背后到底是气势起来了，还是熟悉的老毛病又冒头。"
+        f"如果这波动静能接成连续表现，{league}这条线还会继续发烫；如果只是一天热搜，球迷的吐槽和媒体的放大镜很快就会补上第二刀。"
+        f"所以真正要看，不是今天谁上热搜，而是教练调整、更衣室反应和下一场走势，能不能把这口气续住。"
     )
     block = {
-        "screen_title": f"{label}这条线，热闹之外更要看后手",
+        "screen_title": f"{label}这条线，热闹后面还有刀口",
         "summary_facts": summary or title,
         "commentary_script": script,
         "screen_tags": [label, league or "Football", "Momentum", "Next match"],
@@ -415,7 +569,7 @@ def generate_commentary_block(
 
 
 def build_selfhosted_tts_payload(
-    text: str, voice_id: str = DEFAULT_TTS_VOICE_ID, speed: float = 1.0
+    text: str, voice_id: str = DEFAULT_TTS_VOICE_ID, speed: float = DEFAULT_TTS_SPEED
 ) -> Dict[str, Any]:
     safe_text = _safe_text(text, 2600)
     if len(safe_text) < 10:
@@ -445,24 +599,49 @@ def build_selfhosted_tts_payload(
     }
 
 
+def build_runtime_tts_payload(
+    room_id: str, text: str, message_id: str, speed: float
+) -> Dict[str, Any]:
+    safe_text = _safe_text(text, 2600)
+    if len(safe_text) < 10:
+        safe_text = f"{safe_text}。接着看下一场走势。".strip()
+    return {
+        "room_id": _safe_text(room_id, 80) or ROOM_ID,
+        "text": safe_text,
+        "message_id": _safe_text(message_id, 120),
+        "speed": max(0.7, min(float(speed), 1.3)),
+    }
+
+
 def _build_voice_aware_audio_spec(
-    row: Dict[str, Any], voice_id: str
+    row: Dict[str, Any], voice_id: str, speed: float
 ) -> tuple[str, str, str]:
     base_audio_key, base_message_id, script = english._build_audio_spec(row)
     safe_voice = _safe_text(voice_id, 80).lower() or DEFAULT_TTS_VOICE_ID
+    safe_speed = f"{max(0.7, min(float(speed), 1.3)):.2f}"
     if not base_audio_key or not script:
         return "", "", ""
     audio_key = hashlib.sha1(
-        f"{base_audio_key}|voice|{safe_voice}".encode("utf-8", errors="ignore")
+        f"{base_audio_key}|voice|{safe_voice}|speed|{safe_speed}".encode(
+            "utf-8", errors="ignore"
+        )
     ).hexdigest()[:24]
-    message_id = _safe_text(f"{base_message_id}_{safe_voice}", 120) or base_message_id
+    message_id = (
+        _safe_text(f"{base_message_id}_{safe_voice}_{safe_speed}", 120)
+        or base_message_id
+    )
     return audio_key, message_id, script
 
 
 def synthesize_audio_direct_selfhosted(
-    row: Dict[str, Any], audio_dir: Path, tts_url: str, timeout_sec: int, voice_id: str
+    row: Dict[str, Any],
+    audio_dir: Path,
+    tts_url: str,
+    timeout_sec: int,
+    voice_id: str,
+    speed: float,
 ) -> Optional[str]:
-    audio_key, _message_id, script = _build_voice_aware_audio_spec(row, voice_id)
+    audio_key, _message_id, script = _build_voice_aware_audio_spec(row, voice_id, speed)
     if not audio_key or not script:
         return None
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -473,7 +652,49 @@ def synthesize_audio_direct_selfhosted(
     try:
         body, content_type = english._post_json_bytes(
             _safe_text(tts_url, 500) or DEFAULT_SELFHOSTED_TTS_URL,
-            build_selfhosted_tts_payload(script, voice_id=voice_id),
+            build_selfhosted_tts_payload(script, voice_id=voice_id, speed=speed),
+            timeout_sec=max(8, int(timeout_sec)),
+        )
+    except Exception:
+        return None
+    if not body or len(body) < 1024:
+        return None
+    ext = english._guess_audio_ext(content_type)
+    target = audio_dir / f"{audio_key}{ext}"
+    try:
+        target.write_bytes(body)
+    except Exception:
+        return None
+    mp3_target = audio_dir / f"{audio_key}.mp3"
+    if ext != ".mp3" and english._convert_audio_to_mp3(target, mp3_target):
+        try:
+            target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return mp3_target.name
+    return target.name
+
+
+def synthesize_audio_via_runtime_api(
+    row: Dict[str, Any],
+    audio_dir: Path,
+    tts_url: str,
+    timeout_sec: int,
+    voice_id: str,
+    speed: float,
+) -> Optional[str]:
+    audio_key, message_id, script = _build_voice_aware_audio_spec(row, voice_id, speed)
+    if not audio_key or not script:
+        return None
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    for probe_ext in (".mp3", ".wav", ".ogg", ".aac", ".bin"):
+        existing = audio_dir / f"{audio_key}{probe_ext}"
+        if existing.exists() and existing.is_file() and existing.stat().st_size > 1024:
+            return existing.name
+    try:
+        body, content_type = english._post_json_bytes(
+            _safe_text(tts_url, 500),
+            build_runtime_tts_payload(ROOM_ID, script, message_id, speed),
             timeout_sec=max(8, int(timeout_sec)),
         )
     except Exception:
@@ -501,7 +722,19 @@ def choose_best_rows(
 ) -> List[Dict[str, Any]]:
     now_ts_ms = _now_ts_ms()
     chosen: List[Dict[str, Any]] = []
+    direct_rows = collect_direct_source_rows(lookback_hours)
+    chosen.extend(
+        _select_best_direct_rows(
+            entities,
+            direct_rows,
+            per_entity_limit=per_entity_limit,
+            now_ts_ms=now_ts_ms,
+        )
+    )
+    already_picked = {row["entity"]["entity_key"] for row in chosen}
     for entity in entities:
+        if entity["entity_key"] in already_picked:
+            continue
         candidates = collect_entity_rows(entity, lookback_hours, per_entity_limit)
         if not candidates:
             continue
@@ -534,27 +767,35 @@ def build_payload(
     audio_tts_url: str,
     audio_timeout_sec: int,
     audio_tts_voice: str,
+    audio_tts_speed: float,
 ) -> Dict[str, Any]:
     english.ROOM_ID = ROOM_ID
     entities = load_enabled_entities(config_path)
-    selected = choose_best_rows(entities, lookback_hours, per_entity_limit)[
-        : max(1, int(limit_total))
-    ]
+    ranked_rows = choose_best_rows(entities, lookback_hours, per_entity_limit)
+    target_total = max(1, int(limit_total))
     image_dir.mkdir(parents=True, exist_ok=True)
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     topics: List[Dict[str, Any]] = []
-    for item in selected:
+    attempted_rows = 0
+    for item in ranked_rows:
+        if len(topics) >= target_total:
+            break
+        attempted_rows += 1
         entity = item["entity"]
         image_key = hashlib.sha1(
             f"{entity['entity_key']}|{item.get('title', '')}|{item.get('url', '')}|{item.get('published_at', '')}".encode(
                 "utf-8", errors="ignore"
             )
         ).hexdigest()[:20]
-        image_url = english._extract_summary_image(
-            _safe_text(item.get("summary_html"), 4000),
-            _safe_text(item.get("url"), 1000),
-        ) or english._extract_og_image(_safe_text(item.get("url"), 1000))
+        image_url = (
+            _safe_text(item.get("image_url"), 1200)
+            or english._extract_summary_image(
+                _safe_text(item.get("summary_html"), 4000),
+                _safe_text(item.get("url"), 1000),
+            )
+            or english._extract_og_image(_safe_text(item.get("url"), 1000))
+        )
         image_file = (
             english._download_image_for_item(image_url, image_dir, image_key)
             if image_url
@@ -591,13 +832,27 @@ def build_payload(
             "topic_reason": generated["topic_reason"],
             "teaching_material": generated["commentary_script"],
         }
-        audio_file = synthesize_audio_direct_selfhosted(
-            row,
-            audio_dir=audio_dir,
-            tts_url=_safe_text(audio_tts_url, 500),
-            timeout_sec=max(8, int(audio_timeout_sec)),
-            voice_id=_safe_text(audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID,
-        )
+        safe_tts_url = _safe_text(audio_tts_url, 500)
+        target_voice = _safe_text(audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID
+        target_speed = max(0.7, min(float(audio_tts_speed), 1.3))
+        if safe_tts_url.endswith("/api/chat/tts"):
+            audio_file = synthesize_audio_via_runtime_api(
+                row,
+                audio_dir=audio_dir,
+                tts_url=safe_tts_url,
+                timeout_sec=max(8, int(audio_timeout_sec)),
+                voice_id=target_voice,
+                speed=target_speed,
+            )
+        else:
+            audio_file = synthesize_audio_direct_selfhosted(
+                row,
+                audio_dir=audio_dir,
+                tts_url=safe_tts_url,
+                timeout_sec=max(8, int(audio_timeout_sec)),
+                voice_id=target_voice,
+                speed=target_speed,
+            )
         if not audio_file:
             audio_file = english._synthesize_audio_for_item(
                 row,
@@ -622,7 +877,8 @@ def build_payload(
         "topics": topics,
         "generation_stats": {
             "candidate_entities": len(entities),
-            "selected_entities": len(selected),
+            "selected_entities": min(len(ranked_rows), target_total),
+            "attempted_rows": attempted_rows,
             "released_topics": len(topics),
             "provider": _safe_text(provider, 24) or "auto",
         },
@@ -665,6 +921,11 @@ def main() -> None:
         default=os.getenv("TOPIC_STREAM_TTS_VOICE", DEFAULT_TTS_VOICE_ID),
     )
     parser.add_argument(
+        "--audio-tts-speed",
+        type=float,
+        default=float(os.getenv("TOPIC_STREAM_TTS_SPEED", str(DEFAULT_TTS_SPEED))),
+    )
+    parser.add_argument(
         "--audio-timeout-sec",
         type=int,
         default=int(os.getenv("TOPIC_STREAM_AUDIO_TIMEOUT_SEC", "60")),
@@ -695,6 +956,7 @@ def main() -> None:
         audio_tts_url=_safe_text(args.audio_tts_url, 500),
         audio_timeout_sec=max(8, int(args.audio_timeout_sec)),
         audio_tts_voice=_safe_text(args.audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID,
+        audio_tts_speed=max(0.7, min(float(args.audio_tts_speed), 1.3)),
     )
     print(
         json.dumps(

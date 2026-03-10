@@ -4,11 +4,15 @@ import { useFullscreenLock } from '../../hooks/useFullscreenLock'
 import { api } from '../../lib/api'
 import type { FormalStreamDesignPageProps } from './phoneStreamShared'
 
-type ThemeKey = 'hobit' | 'knight1' | 'knight2' | 'knight3' | 'knight4'
+type ThemeKey = 'hobit' | 'knight1' | 'knight2' | 'knight3' | 'knight4' | 'vibe-coding'
+
+type ThemeAssetSource = 'theme-loop' | 'agent-asset'
 
 type ThemeAsset = {
   video: string
   audio: string
+  source: ThemeAssetSource
+  narration: 'script' | 'none'
 }
 
 type ComfortSegment = {
@@ -16,7 +20,7 @@ type ComfortSegment = {
   speed: number
 }
 
-const AGENT_ID = 't_016'
+const DEFAULT_AGENT_ID = 't_016'
 const DEFAULT_THEME: ThemeKey = 'hobit'
 const NARRATION_FILE = 'late_night_comfort.json'
 const HOST_VIDEO_FILE = 'host.mp4'
@@ -27,22 +31,38 @@ const THEME_ASSETS: Record<ThemeKey, ThemeAsset> = {
   hobit: {
     video: 'hobit.mp4',
     audio: 'hobit.mp3',
+    source: 'theme-loop',
+    narration: 'script',
   },
   knight1: {
     video: 'knight1.mp4',
     audio: 'knight.mp3',
+    source: 'theme-loop',
+    narration: 'script',
   },
   knight2: {
     video: 'knight2.mp4',
     audio: 'knight.mp3',
+    source: 'theme-loop',
+    narration: 'script',
   },
   knight3: {
     video: 'knight3.mp4',
     audio: 'knight.mp3',
+    source: 'theme-loop',
+    narration: 'script',
   },
   knight4: {
     video: 'knight4.mp4',
     audio: 'knight.mp3',
+    source: 'theme-loop',
+    narration: 'script',
+  },
+  'vibe-coding': {
+    video: '7xb_shorts_first_20s_silent.mp4',
+    audio: 'vibe_coding_mixed_final.mp3',
+    source: 'agent-asset',
+    narration: 'none',
   },
 }
 
@@ -70,6 +90,19 @@ function normalizeTheme(value: unknown): ThemeKey | null {
   const theme = String(value || '').trim().toLowerCase()
   if (!theme) return null
   return ALLOWED_THEMES.includes(theme as ThemeKey) ? (theme as ThemeKey) : null
+}
+
+function buildThemeAssetUrl(
+  pathBase: string,
+  roomId: string,
+  assetVersion: string,
+  themeAsset: ThemeAsset,
+  fileName: string
+): string {
+  const base = themeAsset.source === 'agent-asset'
+    ? `${pathBase}/api/agents/${roomId}/assets/${fileName}`
+    : `${pathBase}/theme-loop/${roomId}/${fileName}`
+  return withAssetVersion(base, assetVersion)
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -115,7 +148,7 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
 
   const pathBase = useMemo(() => detectPathBase(), [])
   const assetVersion = useMemo(() => String(Date.now()), [])
-  const roomId = String(selectedTrader?.trader_id || AGENT_ID).trim().toLowerCase() || AGENT_ID
+  const roomId = String(selectedTrader?.trader_id || DEFAULT_AGENT_ID).trim().toLowerCase() || DEFAULT_AGENT_ID
 
   const [searchText, setSearchText] = useState(() => String(window.location.search || ''))
   const [backendTheme, setBackendTheme] = useState<ThemeKey | null>(null)
@@ -139,12 +172,12 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
 
   const effectiveTheme: ThemeKey = urlTheme || backendTheme || DEFAULT_THEME
   const themeAsset = THEME_ASSETS[effectiveTheme]
+  const usesNarration = themeAsset.narration === 'script'
 
-  const mediaBase = `${pathBase}/theme-loop/${AGENT_ID}`
-  const videoSrc = withAssetVersion(`${mediaBase}/${themeAsset.video}`, assetVersion)
-  const bgmSrc = withAssetVersion(`${mediaBase}/${themeAsset.audio}`, assetVersion)
+  const videoSrc = buildThemeAssetUrl(pathBase, roomId, assetVersion, themeAsset, themeAsset.video)
+  const bgmSrc = buildThemeAssetUrl(pathBase, roomId, assetVersion, themeAsset, themeAsset.audio)
   const hostSrc = withAssetVersion(
-    `${pathBase}/api/agents/${AGENT_ID}/assets/${HOST_VIDEO_FILE}`,
+    `${pathBase}/api/agents/${roomId}/assets/${HOST_VIDEO_FILE}`,
     assetVersion
   )
 
@@ -183,9 +216,12 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
   useEffect(() => {
     let cancelled = false
     const loadSegments = async () => {
+      setSegments([])
+      setNarrationError('')
+      if (!usesNarration) return
       try {
         const url = withAssetVersion(
-          `${pathBase}/api/agents/${AGENT_ID}/assets/${NARRATION_FILE}`,
+          `${pathBase}/api/agents/${roomId}/assets/${NARRATION_FILE}`,
           assetVersion
         )
         const res = await fetch(url, {
@@ -207,7 +243,7 @@ export default function T016NightComfortPage({ selectedTrader }: FormalStreamDes
     return () => {
       cancelled = true
     }
-  }, [pathBase, assetVersion])
+  }, [pathBase, assetVersion, roomId, usesNarration])
 
   useEffect(() => {
     const bgm = bgmAudioRef.current

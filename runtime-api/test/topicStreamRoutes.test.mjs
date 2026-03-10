@@ -154,3 +154,82 @@ test('topic stream live and asset routes serve room-scoped topic feed', { timeou
   const missingRoomRes = await fetch(`${baseUrl}/api/topic-stream/live`)
   assert.equal(missingRoomRes.status, 400)
 })
+
+test('topic stream live and asset routes support t_020 market radar lab room', { timeout: 60000 }, async (t) => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'onlytrade-topic-stream-t020-'))
+  const topicStreamDir = path.join(rootDir, 'topic_stream')
+  const topicImageDir = path.join(rootDir, 'topic_images', 't_020')
+  const topicAudioDir = path.join(rootDir, 'topic_audio', 't_020')
+  await mkdir(topicStreamDir, { recursive: true })
+  await mkdir(topicImageDir, { recursive: true })
+  await mkdir(topicAudioDir, { recursive: true })
+
+  await writeFile(path.join(topicImageDir, 'nvidia-breakout.jpg'), 'image-bytes', 'utf8')
+  await writeFile(path.join(topicAudioDir, 'nvidia-breakout.mp3'), 'audio-bytes', 'utf8')
+  await writeFile(
+    path.join(topicStreamDir, 'market_radar_lab_live.json'),
+    JSON.stringify({
+      schema_version: 'topic.stream.feed.v1',
+      room_id: 't_020',
+      program_slug: 'market-radar-lab',
+      program_title: '市场快评实验室',
+      as_of: '2026-03-09T10:00:00Z',
+      topics: [
+        {
+          id: 'topic_nvidia_breakout',
+          entity_key: 'nvidia',
+          entity_label: 'NVIDIA',
+          category: 'market',
+          title: 'NVIDIA keeps the AI narrative hot',
+          screen_title: '英伟达这条线，还在带市场情绪',
+          summary_facts: 'NVIDIA remained at the center of AI trading attention.',
+          commentary_script: '真正要看的不是热度本身，而是热度还能不能继续变成资金追逐。',
+          screen_tags: ['英伟达', 'AI', '情绪'],
+          source: 'Example Source',
+          source_url: 'https://example.com/nvidia-breakout',
+          published_at: '2026-03-09T09:20:00Z',
+          image_file: 'nvidia-breakout.jpg',
+          audio_file: 'nvidia-breakout.mp3',
+          script_estimated_seconds: 64,
+          priority_score: 0.98,
+          topic_reason: 'ai market leadership'
+        }
+      ]
+    }, null, 2),
+    'utf8'
+  )
+
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      TOPIC_STREAM_FEED_DIR: topicStreamDir,
+      TOPIC_STREAM_IMAGE_DIR: path.join(rootDir, 'topic_images'),
+      TOPIC_STREAM_AUDIO_DIR: path.join(rootDir, 'topic_audio'),
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    await rm(rootDir, { recursive: true, force: true })
+  })
+
+  await waitForServer(baseUrl)
+
+  const liveRes = await fetch(`${baseUrl}/api/topic-stream/live?room_id=t_020`)
+  const liveBody = await liveRes.json()
+  assert.equal(liveRes.ok, true)
+  assert.equal(liveBody.success, true)
+  assert.equal(liveBody.data.room_id, 't_020')
+  assert.equal(liveBody.data.live.program_slug, 'market-radar-lab')
+  assert.equal(liveBody.data.live.topic_count, 1)
+  assert.equal(liveBody.data.live.topics[0].image_api_url, '/api/topic-stream/images/t_020/nvidia-breakout.jpg')
+  assert.equal(liveBody.data.live.topics[0].audio_api_url, '/api/topic-stream/audio/t_020/nvidia-breakout.mp3')
+})

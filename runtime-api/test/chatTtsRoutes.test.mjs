@@ -6,7 +6,7 @@ import { createServer } from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -170,6 +170,65 @@ test('chat tts config + validation routes', { timeout: 45000 }, async (t) => {
   assert.equal(badRoomRes.status, 404)
   assert.equal(badRoomBody.success, false)
   assert.equal(badRoomBody.error, 'room_not_found')
+})
+
+test('chat tts config exposes t_021 default selfhosted voice after registration', { timeout: 45000 }, async (t) => {
+  const port = await getFreePort()
+  const baseUrl = `http://127.0.0.1:${port}`
+  const tmpDir = path.resolve(__dirname, '.tmp', `tts-room-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  const agentsDir = path.join(tmpDir, 'agents')
+  const registryPath = path.join(tmpDir, 'registry.json')
+  await mkdir(agentsDir, { recursive: true })
+  await writeFile(path.join(registryPath), JSON.stringify({ schema_version: 'agent.registry.v1', agents: {} }, null, 2), 'utf8')
+  await mkdir(path.join(agentsDir, 't_021'), { recursive: true })
+  await writeFile(
+    path.join(agentsDir, 't_021', 'agent.json'),
+    JSON.stringify({
+      agent_id: 't_021',
+      agent_name: 'Night Comfort Longxing',
+      ai_model: 'gpt-4o-mini',
+      exchange_id: 'sim-cn',
+    }, null, 2),
+    'utf8'
+  )
+
+  const child = spawn(process.execPath, ['server.mjs'], {
+    cwd: RUNTIME_API_DIR,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      AGENT_LLM_ENABLED: 'false',
+      RUNTIME_DATA_MODE: 'replay',
+      STRICT_LIVE_MODE: 'false',
+      CHAT_TTS_ENABLED: 'true',
+      OPENAI_API_KEY: 'test_dummy_key',
+      OPENAI_BASE_URL: 'http://127.0.0.1:1',
+      CHAT_TTS_PROFILE_PATH: path.resolve(__dirname, '.tmp', `tts-profiles-${port}-t021.json`),
+      AGENTS_DIR: agentsDir,
+      AGENT_REGISTRY_PATH: registryPath,
+    },
+    stdio: 'ignore',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  await waitForServer(baseUrl)
+
+  const registerRes = await fetch(`${baseUrl}/api/agents/t_021/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(registerRes.ok, true)
+
+  const cfgRes = await fetch(`${baseUrl}/api/chat/tts/config`)
+  const cfgBody = await cfgRes.json()
+  assert.equal(cfgRes.ok, true)
+  assert.equal(cfgBody.success, true)
+  assert.equal(cfgBody.data.voice_map?.t_021, 'longxing_v3')
 })
 
 test('chat tts disabled returns 503', { timeout: 45000 }, async (t) => {

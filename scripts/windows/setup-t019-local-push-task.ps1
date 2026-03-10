@@ -1,6 +1,7 @@
 param(
   [string]$TaskName = "OnlyTrade-T019-LocalPush-10m",
   [int]$IntervalMinutes = 10,
+  [int]$StartDelayMinutes = 4,
   [int]$StartHour = 8,
   [int]$EndHour = 23,
   [string]$RepoRoot = "",
@@ -39,6 +40,9 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 if ($IntervalMinutes -lt 1) {
   throw "IntervalMinutes must be >= 1"
 }
+if ($StartDelayMinutes -lt 0) {
+  throw "StartDelayMinutes must be >= 0"
+}
 if ($StartHour -lt 0 -or $StartHour -gt 23) {
   throw "StartHour must be between 0 and 23"
 }
@@ -60,27 +64,20 @@ if (-not (Test-Path $powershellExe)) {
   $powershellExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 }
 
-$startText = "{0:D2}:00" -f $StartHour
-$endText = "{0:D2}:00" -f $EndHour
-$actionArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -RepoRoot "{1}" -StartHour {2} -EndHour {3}' -f $runnerPath, $RepoRoot, $StartHour, $EndHour
-$escapedTaskRun = '"{0}" {1}' -f $powershellExe, $actionArgs
-$schtasksArgs = @(
-  '/Create',
-  '/TN', $TaskName,
-  '/SC', 'MINUTE',
-  '/MO', [string]$IntervalMinutes,
-  '/ST', $startText,
-  '/ET', $endText,
-  '/TR', $escapedTaskRun,
-  '/F'
-)
+$startAt = (Get-Date).AddMinutes($StartDelayMinutes)
+$repeatSpan = New-TimeSpan -Minutes $IntervalMinutes
+$trigger = New-ScheduledTaskTrigger -Once -At $startAt -RepetitionInterval $repeatSpan -RepetitionDuration (New-TimeSpan -Days 3650)
+$actionArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -RepoRoot "{1}" -BashExe "{2}" -StartHour {3} -EndHour {4}' -f $runnerPath, $RepoRoot, $BashExe, $StartHour, $EndHour
+$action = New-ScheduledTaskAction -Execute $powershellExe -Argument $actionArgs
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
 
-& schtasks.exe @schtasksArgs | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
 Write-Host "Task registered:" $TaskName
 Write-Host "Runner:" $runnerPath
 Write-Host "Bash:" $BashExe
 Write-Host "Interval minutes:" $IntervalMinutes
+Write-Host "Start delay minutes:" $StartDelayMinutes
 Write-Host "Daytime window:" ("{0}:00-{1}:00" -f $StartHour, $EndHour)
 Write-Host "Command:" "$powershellExe $actionArgs"
 

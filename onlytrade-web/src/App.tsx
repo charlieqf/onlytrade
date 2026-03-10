@@ -9,6 +9,7 @@ import CyberPredictionPage from './pages/design/CyberPredictionPage'
 import T016NightComfortPage from './pages/design/T016NightComfortPage'
 import T017OralEnglishPage from './pages/design/T017OralEnglishPage'
 import TopicCommentaryPage from './pages/design/TopicCommentaryPage'
+import T020MarketRadarLabPage from './pages/design/T020MarketRadarLabPage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -60,6 +61,7 @@ type Page =
   | 'nightComfort'
   | 'oralEnglish'
   | 'topicCommentary'
+  | 'marketRadarLab'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
@@ -115,12 +117,14 @@ function App() {
       return 'multiBroadcast'
     if (path === '/stream/polymarket')
       return 'polymarket'
-    if (path === '/stream/night-comfort')
+    if (path === '/stream/night-comfort' || path === '/stream/night-work')
       return 'nightComfort'
     if (path === '/stream/oral-english')
       return 'oralEnglish'
     if (path === '/stream/topic-commentary')
       return 'topicCommentary'
+    if (path === '/stream/market-radar-lab')
+      return 'marketRadarLab'
     return 'lobby'
   }
 
@@ -153,6 +157,7 @@ function App() {
       nightComfort: '/stream/night-comfort',
       oralEnglish: '/stream/oral-english',
       topicCommentary: '/stream/topic-commentary',
+      marketRadarLab: '/stream/market-radar-lab',
     }
     const path = pathMap[page]
     if (path) {
@@ -261,7 +266,7 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
-      } else if (path === '/stream/night-comfort') {
+      } else if (path === '/stream/night-comfort' || path === '/stream/night-work') {
         setCurrentPage('nightComfort')
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
@@ -273,6 +278,11 @@ function App() {
         }
       } else if (path === '/stream/topic-commentary') {
         setCurrentPage('topicCommentary')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/stream/market-radar-lab') {
+        setCurrentPage('marketRadarLab')
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
@@ -553,7 +563,7 @@ function App() {
       setCurrentPage('multiBroadcast')
     } else if (route === '/stream/polymarket') {
       setCurrentPage('polymarket')
-    } else if (route === '/stream/night-comfort') {
+    } else if (route === '/stream/night-comfort' || route === '/stream/night-work') {
       setCurrentPage('nightComfort')
     }
   }, [route])
@@ -786,6 +796,26 @@ function App() {
         {language === 'zh'
           ? '未选择交易员。请在 URL 中添加 ?trader=t_019'
           : 'No trader selected. Add ?trader=t_019 in URL.'}
+      </div>
+    )
+  }
+  if (currentPage === 'marketRadarLab') {
+    return selectedTrader ? (
+      <T020MarketRadarLabPage
+        selectedTrader={selectedTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
+    ) : (
+      <div
+        className="min-h-screen px-6 py-10 text-sm text-zinc-300"
+        style={{ background: '#0B0E11' }}
+      >
+        {language === 'zh'
+          ? '未选择交易员。请在 URL 中添加 ?trader=t_020'
+          : 'No trader selected. Add ?trader=t_020 in URL.'}
       </div>
     )
   }

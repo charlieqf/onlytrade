@@ -361,6 +361,11 @@ const TOPIC_STREAM_ROOM_CONFIG = new Map([
     program_slug: 'china-bigtech',
     feed_file: 'china_bigtech_live.json',
   }],
+  ['t_020', {
+    room_id: 't_020',
+    program_slug: 'market-radar-lab',
+    feed_file: 'market_radar_lab_live.json',
+  }],
 ])
 
 const MARKET_BREADTH_PATH_CN = path.resolve(
@@ -5053,6 +5058,7 @@ function resolveSelfHostedTtsVoiceForTraderId(traderId) {
   const dynamicVoice = dynamicKey ? String(process.env[dynamicKey] || '').trim() : ''
   if (dynamicVoice) return dynamicVoice
   if (safeTraderId === 't_016') return 'longyuan_v3'
+  if (safeTraderId === 't_021') return 'longxing_v3'
   return CHAT_TTS_SELFHOSTED_VOICE_DEFAULT
 }
 
@@ -5199,7 +5205,15 @@ function resolveEffectiveTtsProfileForRoom({ roomId, tone = '', seed = '' } = {}
       fallback_provider: 'none',
       updated_ts_ms: Date.now(),
     }
-    : null
+    : safeRoomId === 't_021'
+      ? {
+        provider: 'selfhosted',
+        voice: 'longxing_v3',
+        speed: null,
+        fallback_provider: 'none',
+        updated_ts_ms: Date.now(),
+      }
+      : null
   const effectiveOverride = override || roomDefaultOverride
 
   const provider = normalizeTtsProvider(effectiveOverride?.provider, defaultProvider)

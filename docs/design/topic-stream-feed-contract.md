@@ -117,6 +117,17 @@ These are hard rules for `t_018` and `t_019` release feeds.
 - `topic_count` must equal the number of valid released topics
 - weak or incomplete topics should be dropped, not padded
 
+## Snapshot semantics
+
+- The runtime contract shape stays the same for all rooms: one canonical JSON payload with one `topics` array.
+- Canonical internal endpoints remain `/api/topic-stream/...`; public deployments may expose the same payload through the `/onlytrade/api/topic-stream/...` bridge without changing the payload contract.
+- For direct-batch rooms, that payload may be a straight snapshot of the latest generation run.
+- For `t_019` MVP, the payload is still a snapshot, but it is a retained rolling-buffer snapshot generated on the VM after merging the newest incoming batch into the existing canonical feed.
+- The retained `t_019` MVP contract is: canonical file `data/live/onlytrade/topic_stream/china_bigtech_live.json`, dedupe key `topic.id`, keep-count `20`. See `docs/runbooks/topic-stream-ops.md` for the operator runbook.
+- The retained `t_019` snapshot keeps the newest `20` valid topics after dedupe by `topic.id`; older retained topics may remain visible when the newest batch is smaller or weaker.
+- This means a new `t_019` batch with only `1` valid topic should not collapse the live feed to `1` if older valid retained topics still exist.
+- `topic_count`, `as_of`, and the `topics` array still describe the currently published canonical snapshot exposed by `/api/topic-stream/live`.
+
 ## Runtime endpoints
 
 - `GET /api/topic-stream/live?room_id=<room_id>`

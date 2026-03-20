@@ -20,11 +20,10 @@ This runbook captures the real deployment and operations lessons from launching 
 
 ## Topic commentary contract
 
+- Canonical internal API endpoints: `/api/topic-stream/live`, `/api/topic-stream/images/<room_id>/<file>`, `/api/topic-stream/audio/<room_id>/<file>`
 - Shared page route: `/stream/topic-commentary?trader=<room_id>&program=<program_slug>`
 - Public bridge route: `/onlytrade/stream/topic-commentary?trader=<room_id>&program=<program_slug>`
-- Feed endpoint: `GET /onlytrade/api/topic-stream/live?room_id=<room_id>`
-- Image endpoint: `GET /onlytrade/api/topic-stream/images/<room_id>/<file>`
-- Audio endpoint: `GET /onlytrade/api/topic-stream/audio/<room_id>/<file>`
+- Public bridge endpoints: `GET /onlytrade/api/topic-stream/live?room_id=<room_id>`, `GET /onlytrade/api/topic-stream/images/<room_id>/<file>`, `GET /onlytrade/api/topic-stream/audio/<room_id>/<file>`
 - Playback rule: page advances only after current audio `ended`
 - Release rule: final feed rows must have both real image and pre-generated MP3
 
@@ -38,13 +37,21 @@ This runbook captures the real deployment and operations lessons from launching 
 - Default TTS voice: `longlaotie_v3`
 - Default direct TTS URL: `http://101.227.82.130:13002/tts`
 
+### t019 retained-feed MVP behavior
+
+- The VM canonical feed file for `t_019` is a retained rolling buffer during the MVP, not a direct mirror of the newest local batch.
+- The local PC still generates one batch JSON per run, but the VM merge step upserts that batch into the canonical `china_bigtech_live.json` and keeps the newest `20` valid topics.
+- The retained merge contract for this MVP is: canonical file `data/live/onlytrade/topic_stream/china_bigtech_live.json`, dedupe key `topic.id`, keep-count `20`. See `docs/design/topic-stream-feed-contract.md` for the runtime payload shape.
+- A weak batch with only `1` valid topic should not collapse the live room to `1` topic when older valid retained topics still exist on the VM.
+- Only valid topics with real `image_file` and `audio_file` survive into the retained public feed.
+
 Current scheduler command:
 
 ```powershell
 powershell -File scripts/windows/setup-t019-local-push-task.ps1 -IntervalMinutes 10 -StartHour 8 -EndHour 23 -RunNow
 ```
 
-## Development and deployment lessons from t019
+## Historical t019 launch lessons
 
 ### 1) Missing trader registration sends the page back to the lobby
 
@@ -128,10 +135,16 @@ Reuse this rule for `t_018`: include voice identity in the generated audio cache
 ```bash
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/traders"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
+ssh -p 21522 -i ~/.ssh/cn169_ed25519 root@113.125.202.169 'python3 /opt/onlytrade/scripts/topic_stream/retained_feed_merge.py --help'
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech"
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/images/t_019/<image>.jpg"
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/audio/t_019/<audio>.mp3"
 ```
+
+For retained-feed verification on `t_019`, use the public feed check plus the remote merge-helper check together:
+
+- `curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"` confirms the public canonical feed still serves a playable retained snapshot.
+- `ssh -p 21522 -i ~/.ssh/cn169_ed25519 root@113.125.202.169 'python3 /opt/onlytrade/scripts/topic_stream/retained_feed_merge.py --help'` confirms the VM-side merge helper exists and is callable.
 
 Windows local scheduler checks:
 

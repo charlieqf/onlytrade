@@ -1,6 +1,6 @@
 ---
 name: six-room-stream-ops
-description: Use when operating, troubleshooting, or verifying zhibo stream rooms on Aliyun, especially polymarket (t_015), night-comfort (t_016), oral-english (t_017), and topic-commentary rooms such as t_019 china-bigtech and future t_018 five-league.
+description: Use when operating, troubleshooting, or verifying zhibo stream rooms on Aliyun, especially polymarket (t_015), night-comfort (t_016), oral-english (t_017), topic-commentary rooms such as t_019 china-bigtech / t_018 five-league, and the t_022 content-factory room.
 ---
 
 # Stream Room Ops
@@ -17,6 +17,7 @@ Operator skill for these public rooms:
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/oral-english?trader=t_017`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech`
 - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_018&program=five-league`
+- `http://zhibo.quickdealservice.com:18000/onlytrade/stream/content-factory?trader=t_022&program=china-bigtech`
 
 ## Aliyun baseline
 
@@ -74,6 +75,7 @@ curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/rooms/t_015/str
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/chat/tts/profile?room_id=t_016"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/english-classroom/live?room_id=t_017"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/live?room_id=t_022"
 ```
 
 ## Critical room-specific checks
@@ -143,6 +145,8 @@ bash scripts/topic_stream/local_collect_and_push_t019.sh
 # verify public room + feed on VM/domain
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
+ssh -p 21522 -i ~/.ssh/cn169_ed25519 root@113.125.202.169 'python3 /opt/onlytrade/scripts/topic_stream/retained_feed_merge.py --help'
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/images/t_019/<image>.jpg"
 curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/audio/t_019/<audio>.mp3"
 ```
 
@@ -152,9 +156,41 @@ Current `t_019` baseline:
 - Daytime window: `08:00-23:00`
 - Log file: `logs/t019_local_push.log`
 - Default topic-stream direct voice: `longlaotie_v3`
-- Release feed keeps only rows with both image and pre-generated MP3.
+- Local PC still generates one batch JSON per run, but the VM does not mirror that batch directly anymore.
+- VM canonical file `data/live/onlytrade/topic_stream/china_bigtech_live.json` is now a retained rolling snapshot.
+- VM merge helper path: `/opt/onlytrade/scripts/topic_stream/retained_feed_merge.py`
+- Retained merge contract: dedupe by `topic.id`, keep the newest `20` valid rows.
+- Release feed keeps only rows with both image and pre-generated MP3, and retained rows are filtered against real VM asset existence.
+- VM helper must stay Python `3.6` compatible.
 - Public page resolution depends on `t_019` being present in `/onlytrade/api/traders`.
 - If the public page falls back to lobby, check trader registration first, then check whether the public JS bundle actually contains `topic-commentary` / `t_019` route code.
+- If the feed returns `200` but audio/image assets return `404`, suspect stale retained rows or a failed asset sync before blaming the player.
+
+- `t_022` content-factory local render + VM playback checks:
+
+```bash
+# run on local Windows PC (render + push + retained merge)
+bash scripts/content_factory/local_render_and_push_t022.sh
+
+# verify public room + retained manifest + retained video on VM/domain
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/content-factory?trader=t_022&program=china-bigtech"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/live?room_id=t_022"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/videos/t_022/<segment>.mp4"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/posters/t_022/<poster>.jpg"
+ssh -p 21522 -i ~/.ssh/cn169_ed25519 root@113.125.202.169 'python3 /opt/onlytrade/scripts/content_factory/retained_video_manifest_merge.py --help'
+```
+
+Current `t_022` baseline:
+
+- Local PC scheduler task: `OnlyTrade-T022-LocalPush-10m`
+- Daytime window: `08:00-23:00`
+- Log file: `logs/t022_local_push.log`
+- Local shell entrypoint: `scripts/content_factory/local_render_and_push_t022.sh`
+- VM canonical file `data/live/onlytrade/content_factory/china_bigtech_factory_live.json` is a retained rolling snapshot.
+- VM merge helper path: `/opt/onlytrade/scripts/content_factory/retained_video_manifest_merge.py`
+- Retained merge contract: dedupe by `topic_id`, keep the newest `20` valid rows.
+- Public asset verification must include a `200 video/mp4` response for a retained segment, not just manifest `200`.
+- `t_019` and `t_022` share the upstream `china_bigtech` package layer, so fixes to package summaries/scripts/visual selection should improve both rooms without per-room duplication.
 
 For the next `t_018` launch, reuse the `t_019` topic-stream path:
 

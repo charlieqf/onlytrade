@@ -1,12 +1,13 @@
 # Topic Stream Ops
 
-This runbook captures the real deployment and operations lessons from launching `t_019` `国内大厂每日锐评`, so the next show `t_018` `五大联赛豪门每日评书` can reuse the same path with fewer surprises.
+This runbook captures the real deployment and operations lessons from launching `t_019` `国内大厂每日锐评`, `t_022` `内容工厂`, and the same topic-stream family, so follow-on rooms can reuse the same path with fewer surprises.
 
 ## Public source of truth
 
 - Use the domain route as the real public check target:
   - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech`
   - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_018&program=five-league`
+  - `http://zhibo.quickdealservice.com:18000/onlytrade/stream/content-factory?trader=t_022&program=china-bigtech`
 - Do not treat bare-IP checks as sufficient public validation. The public entry should match the exact domain + port + `/onlytrade/...` path users open.
 
 ## Current runtime baseline
@@ -26,6 +27,53 @@ This runbook captures the real deployment and operations lessons from launching 
 - Public bridge endpoints: `GET /onlytrade/api/topic-stream/live?room_id=<room_id>`, `GET /onlytrade/api/topic-stream/images/<room_id>/<file>`, `GET /onlytrade/api/topic-stream/audio/<room_id>/<file>`
 - Playback rule: page advances only after current audio `ended`
 - Release rule: final feed rows must have both real image and pre-generated MP3
+
+## Content-factory contract (`t_022`)
+
+- Canonical internal API endpoints: `/api/content-factory/live`, `/api/content-factory/videos/<room_id>/<file>`, `/api/content-factory/posters/<room_id>/<file>`
+- Shared page route: `/stream/content-factory?trader=t_022&program=china-bigtech`
+- Public bridge route: `/onlytrade/stream/content-factory?trader=t_022&program=china-bigtech`
+- Public bridge endpoints: `GET /onlytrade/api/content-factory/live?room_id=t_022`, `GET /onlytrade/api/content-factory/videos/t_022/<segment>.mp4`, `GET /onlytrade/api/content-factory/posters/t_022/<poster>.jpg`
+- Playback rule: page holds the current segment until the current video `ended`, then advances to the next retained segment
+- Release rule: final feed rows must have real `video_file` and `poster_file` assets on the VM
+
+## Local PC render + push baseline for t022
+
+- Runner: `scripts/windows/run-t022-local-push.ps1`
+- Scheduler setup: `scripts/windows/setup-t022-local-push-task.ps1`
+- Shell entrypoint: `scripts/content_factory/local_render_and_push_t022.sh`
+- Task name: `OnlyTrade-T022-LocalPush-10m`
+- Log file: `logs/t022_local_push.log`
+- Daytime window: `08:00-23:00` local PC time
+- Local batch manifest: `data/live/onlytrade/content_factory/china_bigtech_factory_live.batch.json`
+- Local video output: `data/live/onlytrade/content_videos/t_022`
+- Local poster output: `data/live/onlytrade/content_posters/t_022`
+- VM retained manifest path: `/opt/onlytrade/data/live/onlytrade/content_factory/china_bigtech_factory_live.json`
+
+Current render/push commands:
+
+```bash
+bash scripts/content_factory/local_render_and_push_t022.sh
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\work\code\onlytrade\scripts\windows\run-t022-local-push.ps1" -RepoRoot "C:\work\code\onlytrade" -BashExe "C:\Program Files\Git\bin\bash.exe"
+powershell -File scripts/windows/setup-t022-local-push-task.ps1 -IntervalMinutes 10 -StartHour 8 -EndHour 23 -RunNow
+```
+
+### t022 retained-manifest MVP behavior
+
+- The VM canonical feed file for `t_022` is a retained rolling buffer, not a mirror of the newest local render batch.
+- The local PC renders one batch manifest per run, uploads the batch assets to the VM, then merges the batch into the canonical retained file.
+- The retained merge contract for this MVP is: canonical file `/opt/onlytrade/data/live/onlytrade/content_factory/china_bigtech_factory_live.json`, dedupe key `topic_id`, keep-count `20`.
+- Only rows whose `video_file` and `poster_file` still exist on the VM survive into the retained public feed.
+- Public verification for asset health must include a `200 video/mp4` check on at least one retained segment, not just the manifest.
+
+### Shared-upstream promise between t019 and t022
+
+- `t_019` and `t_022` both consume the same upstream `TopicPackage` build for `china-bigtech`; the package layer is the shared source of truth for `topic_id`, `screen_title`, `summary_facts`, and `commentary_script`.
+- `t_019` still publishes the single-image + single-audio topic-commentary view, while `t_022` publishes the three-visual `mp4` content-factory view from the same package set.
+- Any quality improvement made in the shared package builder or shared visual-selection logic flows to both rooms in the same cycle, instead of duplicating business logic per room.
 
 ## Local PC collector baseline for t019
 
@@ -51,7 +99,7 @@ Current scheduler command:
 powershell -File scripts/windows/setup-t019-local-push-task.ps1 -IntervalMinutes 10 -StartHour 8 -EndHour 23 -RunNow
 ```
 
-## Historical t019 launch lessons
+## Historical t019/t022 launch lessons
 
 ### 1) Missing trader registration sends the page back to the lobby
 
@@ -65,7 +113,7 @@ curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/traders"
 
 The new room must appear there.
 
-For a new room like `t_018`, prepare both:
+For a new room like `t_018` or `t_022`, prepare both:
 
 - `agents/t_018/agent.json`
 - `data/agents/registry.json`
@@ -135,10 +183,13 @@ Reuse this rule for `t_018`: include voice identity in the generated audio cache
 ```bash
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/traders"
 curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/live?room_id=t_019"
+curl -fsS "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/live?room_id=t_022"
 ssh -p 21522 -i ~/.ssh/cn169_ed25519 root@113.125.202.169 'python3 /opt/onlytrade/scripts/topic_stream/retained_feed_merge.py --help'
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/topic-commentary?trader=t_019&program=china-bigtech"
+curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/stream/content-factory?trader=t_022&program=china-bigtech"
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/images/t_019/<image>.jpg"
 curl -fsS -I "http://zhibo.quickdealservice.com:18000/onlytrade/api/topic-stream/audio/t_019/<audio>.mp3"
+curl -fsS -o /dev/null -w "%{http_code} %{content_type}\n" "http://zhibo.quickdealservice.com:18000/onlytrade/api/content-factory/videos/t_022/<segment>.mp4"
 ```
 
 For retained-feed verification on `t_019`, use the public feed check plus the remote merge-helper check together:
@@ -152,4 +203,7 @@ Windows local scheduler checks:
 Get-ScheduledTask -TaskName "OnlyTrade-T019-LocalPush-10m"
 Get-ScheduledTask -TaskName "OnlyTrade-T019-LocalPush-10m" | Get-ScheduledTaskInfo
 Get-Content logs\t019_local_push.log -Tail 80
+Get-ScheduledTask -TaskName "OnlyTrade-T022-LocalPush-10m"
+Get-ScheduledTask -TaskName "OnlyTrade-T022-LocalPush-10m" | Get-ScheduledTaskInfo
+Get-Content logs\t022_local_push.log -Tail 80
 ```

@@ -17,6 +17,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.english import run_google_news_cycle as english  # noqa: E402
+from scripts.topic_stream.china_bigtech_packages import (  # noqa: E402
+    build_topic_packages,
+    package_to_t019_row,
+)
 
 ROOM_ID = "t_019"
 PROGRAM_SLUG = "china-bigtech"
@@ -27,6 +31,9 @@ DEFAULT_CONFIG_PATH = (
 )
 DEFAULT_OUTPUT_PATH = (
     REPO_ROOT / "data/live/onlytrade/topic_stream/china_bigtech_live.json"
+)
+DEFAULT_PACKAGE_OUTPUT_PATH = (
+    REPO_ROOT / "data/live/onlytrade/topic_packages/china_bigtech_packages.json"
 )
 DEFAULT_IMAGE_DIR = REPO_ROOT / "data/live/onlytrade/topic_images/t_019"
 DEFAULT_AUDIO_DIR = REPO_ROOT / "data/live/onlytrade/topic_audio/t_019"
@@ -645,7 +652,12 @@ def synthesize_audio_direct_selfhosted(
 
 
 def synthesize_audio_via_runtime_api(
-    row: Dict[str, Any], audio_dir: Path, tts_url: str, timeout_sec: int, voice_id: str
+    row: Dict[str, Any],
+    audio_dir: Path,
+    tts_url: str,
+    timeout_sec: int,
+    voice_id: str,
+    room_id: str = ROOM_ID,
 ) -> Optional[str]:
     audio_key, message_id, script = _build_voice_aware_audio_spec(
         row, voice_id, cache_variant="runtime_api"
@@ -660,7 +672,57 @@ def synthesize_audio_via_runtime_api(
     try:
         body, content_type = english._post_json_bytes(
             _safe_text(tts_url, 500),
-            build_runtime_tts_payload(ROOM_ID, script, message_id),
+            build_runtime_tts_payload(room_id, script, message_id),
+            timeout_sec=max(8, int(timeout_sec)),
+        )
+    except Exception:
+        return None
+    if not body or len(body) < 1024:
+        return None
+    ext = english._guess_audio_ext(content_type)
+    target = audio_dir / f"{audio_key}{ext}"
+    try:
+        target.write_bytes(body)
+    except Exception:
+        return None
+    mp3_target = audio_dir / f"{audio_key}.mp3"
+    if ext != ".mp3" and english._convert_audio_to_mp3(target, mp3_target):
+        try:
+            target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return mp3_target.name
+    return target.name
+
+
+def synthesize_audio_via_legacy_tts_api(
+    row: Dict[str, Any],
+    audio_dir: Path,
+    tts_url: str,
+    timeout_sec: int,
+    room_id: str,
+) -> Optional[str]:
+    safe_tts_url = _safe_text(tts_url, 500)
+    if not safe_tts_url:
+        return None
+    audio_key, message_id, script = english._build_audio_spec(row)
+    if not audio_key or not message_id or not script:
+        return None
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    for probe_ext in (".mp3", ".wav", ".ogg", ".aac", ".bin"):
+        existing = audio_dir / f"{audio_key}{probe_ext}"
+        if existing.exists() and existing.is_file() and existing.stat().st_size > 1024:
+            return existing.name
+    try:
+        body, content_type = english._post_json_bytes(
+            safe_tts_url,
+            {
+                "room_id": _safe_text(room_id, 80) or ROOM_ID,
+                "text": script,
+                "message_id": message_id,
+                "tone": "energetic",
+                "speaker_id": "coach_a",
+            },
             timeout_sec=max(8, int(timeout_sec)),
         )
     except Exception:
@@ -723,6 +785,7 @@ def choose_best_rows(
 def build_payload(
     config_path: Path,
     output_path: Path,
+    package_output_path: Optional[Path],
     image_dir: Path,
     audio_dir: Path,
     limit_total: int,
@@ -734,96 +797,63 @@ def build_payload(
     audio_timeout_sec: int,
     audio_tts_voice: str,
 ) -> Dict[str, Any]:
-    english.ROOM_ID = ROOM_ID
     entities = load_enabled_entities(config_path)
     selected = choose_best_rows(entities, lookback_hours, per_entity_limit)[
         : max(1, int(limit_total))
     ]
-    image_dir.mkdir(parents=True, exist_ok=True)
-    audio_dir.mkdir(parents=True, exist_ok=True)
 
-    topics: List[Dict[str, Any]] = []
-    for item in selected:
-        entity = item["entity"]
-        image_key = hashlib.sha1(
-            f"{entity['entity_key']}|{item.get('title', '')}|{item.get('url', '')}|{item.get('published_at', '')}".encode(
-                "utf-8", errors="ignore"
-            )
-        ).hexdigest()[:20]
-        image_url = (
-            _safe_text(item.get("image_url"), 1200)
-            or english._extract_summary_image(
-                _safe_text(item.get("summary_html"), 4000),
-                _safe_text(item.get("url"), 1000),
-            )
-            or english._extract_og_image(_safe_text(item.get("url"), 1000))
-        )
-        image_file = (
-            english._download_image_for_item(image_url, image_dir, image_key)
-            if image_url
-            else None
-        )
-        item["has_image"] = bool(image_file)
-        if not image_file:
-            continue
+    def _generate_package_commentary(
+        entity: Dict[str, Any], item: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return generate_commentary_block(entity, item, timeout_sec, provider)
 
-        generated = generate_commentary_block(entity, item, timeout_sec, provider)
-        topic_day = (
-            _safe_text(item.get("published_at"), 32)
-            .replace(" ", "_")
-            .replace(":", "-")[:16]
-            or english._now_iso()[:10]
-        )
-        topic_id = f"china_bigtech_{entity['entity_key']}_{topic_day}_{image_key[:6]}"
-        row = {
-            "id": topic_id,
-            "entity_key": entity["entity_key"],
-            "entity_label": entity["label"],
-            "category": entity.get("sector") or "tech",
-            "title": _safe_text(item.get("title"), 220),
-            "screen_title": generated["screen_title"],
-            "summary_facts": generated["summary_facts"],
-            "commentary_script": generated["commentary_script"],
-            "screen_tags": generated["screen_tags"],
-            "source": _safe_text(item.get("source"), 80),
-            "source_url": _safe_text(item.get("url"), 1000),
-            "published_at": _safe_text(item.get("published_at"), 80),
-            "image_file": image_file,
-            "script_estimated_seconds": generated.get("script_estimated_seconds"),
-            "priority_score": item.get("priority_score"),
-            "topic_reason": generated["topic_reason"],
-            "teaching_material": generated["commentary_script"],
-        }
+    def _synthesize_package_audio(
+        package: Dict[str, Any], package_audio_dir: Path
+    ) -> Optional[str]:
         safe_tts_url = _safe_text(audio_tts_url, 500)
         target_voice = _safe_text(audio_tts_voice, 80) or DEFAULT_TTS_VOICE_ID
         if safe_tts_url.endswith("/api/chat/tts"):
             audio_file = synthesize_audio_via_runtime_api(
-                row,
-                audio_dir=audio_dir,
+                package,
+                audio_dir=package_audio_dir,
                 tts_url=safe_tts_url,
                 timeout_sec=max(8, int(audio_timeout_sec)),
                 voice_id=target_voice,
+                room_id=ROOM_ID,
             )
         else:
             audio_file = synthesize_audio_direct_selfhosted(
-                row,
-                audio_dir=audio_dir,
+                package,
+                audio_dir=package_audio_dir,
                 tts_url=safe_tts_url,
                 timeout_sec=max(8, int(audio_timeout_sec)),
                 voice_id=target_voice,
             )
         if not audio_file:
-            audio_file = english._synthesize_audio_for_item(
-                row,
-                audio_dir=audio_dir,
+            audio_file = synthesize_audio_via_legacy_tts_api(
+                package,
+                audio_dir=package_audio_dir,
                 tts_url=english.DEFAULT_TTS_URL,
-                tts_timeout_sec=max(8, int(audio_timeout_sec)),
+                timeout_sec=max(8, int(audio_timeout_sec)),
+                room_id=ROOM_ID,
             )
-        if not audio_file:
-            continue
-        row["audio_file"] = audio_file
-        row.pop("teaching_material", None)
-        topics.append(row)
+        return audio_file
+
+    packages = build_topic_packages(
+        selected,
+        image_dir=image_dir,
+        audio_dir=audio_dir,
+        generate_commentary_block=_generate_package_commentary,
+        synthesize_audio=_synthesize_package_audio,
+        download_image_for_item=english._download_image_for_item,
+        extract_summary_image=english._extract_summary_image,
+        extract_og_image=english._extract_og_image,
+        safe_text=english._safe_text,
+        now_iso=english._now_iso,
+    )
+    topics: List[Dict[str, Any]] = [
+        package_to_t019_row(package) for package in packages
+    ]
 
     payload = {
         "schema_version": "topic.stream.feed.v1",
@@ -842,6 +872,19 @@ def build_payload(
         },
     }
     english.atomic_write_json(output_path, payload)
+    if package_output_path is not None:
+        english.atomic_write_json(
+            package_output_path,
+            {
+                "schema_version": "topic.package.feed.v1",
+                "room_id": ROOM_ID,
+                "program_slug": PROGRAM_SLUG,
+                "program_title": PROGRAM_TITLE,
+                "as_of": payload["as_of"],
+                "package_count": len(packages),
+                "packages": packages,
+            },
+        )
     return payload
 
 
@@ -854,6 +897,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--output", default=str(DEFAULT_OUTPUT_PATH), help="Output feed JSON path"
+    )
+    parser.add_argument(
+        "--package-output",
+        default=str(DEFAULT_PACKAGE_OUTPUT_PATH),
+        help="Output shared package JSON path",
     )
     parser.add_argument(
         "--image-dir", default=str(DEFAULT_IMAGE_DIR), help="Image cache directory"
@@ -892,6 +940,7 @@ def main() -> None:
 
     config_path = Path(args.config).resolve()
     output_path = Path(args.output).resolve()
+    package_output_path = Path(args.package_output).resolve()
     image_dir = Path(args.image_dir).resolve()
     audio_dir = Path(args.audio_dir).resolve()
     env_file = Path(args.env_file).resolve()
@@ -901,6 +950,7 @@ def main() -> None:
     payload = build_payload(
         config_path=config_path,
         output_path=output_path,
+        package_output_path=package_output_path,
         image_dir=image_dir,
         audio_dir=audio_dir,
         limit_total=max(1, int(args.limit_total)),
@@ -917,6 +967,7 @@ def main() -> None:
             {
                 "ok": True,
                 "output": str(output_path),
+                "package_output": str(package_output_path),
                 "topic_count": int(payload.get("topic_count") or 0),
                 "image_dir": str(image_dir),
                 "audio_dir": str(audio_dir),

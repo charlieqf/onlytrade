@@ -1,0 +1,22 @@
+{
+  "name": "content-factory-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "render:segment": "remotion render src/index.ts content-factory-segment"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.366"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.438",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.16"
+  }
+}

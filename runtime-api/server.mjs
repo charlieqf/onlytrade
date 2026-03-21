@@ -348,8 +348,22 @@ const TOPIC_STREAM_AUDIO_DIR = path.resolve(
   ROOT_DIR,
   process.env.TOPIC_STREAM_AUDIO_DIR || path.join('data', 'live', 'onlytrade', 'topic_audio')
 )
+const CONTENT_FACTORY_FEED_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.CONTENT_FACTORY_FEED_DIR || path.join('data', 'live', 'onlytrade', 'content_factory')
+)
+const CONTENT_FACTORY_VIDEO_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.CONTENT_FACTORY_VIDEO_DIR || path.join('data', 'live', 'onlytrade', 'content_videos')
+)
+const CONTENT_FACTORY_POSTER_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.CONTENT_FACTORY_POSTER_DIR || path.join('data', 'live', 'onlytrade', 'content_posters')
+)
 const TOPIC_STREAM_REFRESH_MS = Math.max(10_000, Number(process.env.TOPIC_STREAM_REFRESH_MS || 60_000))
 const TOPIC_STREAM_STALE_MS = Math.max(60_000, Number(process.env.TOPIC_STREAM_STALE_MS || 12 * 60 * 60 * 1000))
+const CONTENT_FACTORY_REFRESH_MS = Math.max(10_000, Number(process.env.CONTENT_FACTORY_REFRESH_MS || 60_000))
+const CONTENT_FACTORY_STALE_MS = Math.max(60_000, Number(process.env.CONTENT_FACTORY_STALE_MS || 12 * 60 * 60 * 1000))
 const TOPIC_STREAM_ROOM_CONFIG = new Map([
   ['t_018', {
     room_id: 't_018',
@@ -365,6 +379,13 @@ const TOPIC_STREAM_ROOM_CONFIG = new Map([
     room_id: 't_020',
     program_slug: 'market-radar-lab',
     feed_file: 'market_radar_lab_live.json',
+  }],
+])
+const CONTENT_FACTORY_ROOM_CONFIG = new Map([
+  ['t_022', {
+    room_id: 't_022',
+    program_slug: 'china-bigtech',
+    feed_file: 'china_bigtech_factory_live.json',
   }],
 ])
 
@@ -2999,6 +3020,16 @@ const topicStreamProviderByRoom = new Map(
     }),
   ]))
 )
+const contentFactoryProviderByRoom = new Map(
+  Array.from(CONTENT_FACTORY_ROOM_CONFIG.entries()).map(([roomId, config]) => ([
+    roomId,
+    createLiveJsonFileProvider({
+      filePath: path.join(CONTENT_FACTORY_FEED_DIR, config.feed_file),
+      refreshMs: CONTENT_FACTORY_REFRESH_MS,
+      staleAfterMs: CONTENT_FACTORY_STALE_MS,
+    }),
+  ]))
+)
 const marketBreadthProviderCn = createLiveJsonFileProvider({
   filePath: MARKET_BREADTH_PATH_CN,
   refreshMs: MARKET_BREADTH_REFRESH_MS,
@@ -4235,6 +4266,18 @@ function getTopicStreamProvider(roomId) {
   return topicStreamProviderByRoom.get(safeRoomId) || null
 }
 
+function getContentFactoryRoomConfig(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  return CONTENT_FACTORY_ROOM_CONFIG.get(safeRoomId) || null
+}
+
+function getContentFactoryProvider(roomId) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  if (!safeRoomId) return null
+  return contentFactoryProviderByRoom.get(safeRoomId) || null
+}
+
 function toTopicStreamImageApiUrl(roomId, fileName) {
   const safeRoomId = String(roomId || '').trim().toLowerCase()
   const safeFile = String(fileName || '').trim()
@@ -4247,6 +4290,20 @@ function toTopicStreamAudioApiUrl(roomId, fileName) {
   const safeFile = String(fileName || '').trim()
   if (!safeRoomId || !safeFile || !isSafeAssetFileName(safeFile)) return ''
   return `/api/topic-stream/audio/${encodeURIComponent(safeRoomId)}/${encodeURIComponent(safeFile)}`
+}
+
+function toContentFactoryVideoApiUrl(roomId, fileName) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeFile = String(fileName || '').trim()
+  if (!safeRoomId || !safeFile || !isSafeAssetFileName(safeFile)) return ''
+  return `/api/content-factory/videos/${encodeURIComponent(safeRoomId)}/${encodeURIComponent(safeFile)}`
+}
+
+function toContentFactoryPosterApiUrl(roomId, fileName) {
+  const safeRoomId = String(roomId || '').trim().toLowerCase()
+  const safeFile = String(fileName || '').trim()
+  if (!safeRoomId || !safeFile || !isSafeAssetFileName(safeFile)) return ''
+  return `/api/content-factory/posters/${encodeURIComponent(safeRoomId)}/${encodeURIComponent(safeFile)}`
 }
 
 function normalizeTopicStreamTags(value) {
@@ -4341,6 +4398,73 @@ async function getTopicStreamSnapshot(roomId) {
   const live = normalizeTopicStreamPayload(payload, config.room_id)
   return {
     source_kind: payload ? 'topic_stream_file' : 'empty',
+    room_id: config.room_id,
+    program_slug: config.program_slug,
+    live,
+    status,
+  }
+}
+
+function normalizeContentFactorySegmentRow(row, defaultRoomId = '') {
+  if (!row || typeof row !== 'object') return null
+  const roomId = safePlainText(row.room_id || defaultRoomId || '', 24).toLowerCase()
+  const id = safePlainText(row.id || '', 96)
+  const topicId = safePlainText(row.topic_id || '', 96)
+  const title = safePlainText(row.title || '', 220)
+  const summary = safePlainText(row.summary || '', 600)
+  const publishedAt = safePlainText(row.published_at || '', 80)
+  const videoFile = safePlainText(row.video_file || '', 160)
+  const posterFile = safePlainText(row.poster_file || '', 160)
+  const durationSec = Number(row.duration_sec)
+
+  if (!roomId || !id || !topicId || !title || !videoFile || !posterFile) return null
+  if (!isSafeAssetFileName(videoFile) || !isSafeAssetFileName(posterFile)) return null
+
+  return {
+    id,
+    room_id: roomId,
+    topic_id: topicId,
+    title,
+    summary: summary || '',
+    published_at: publishedAt || null,
+    duration_sec: Number.isFinite(durationSec) ? durationSec : null,
+    video_file: videoFile,
+    video_api_url: toContentFactoryVideoApiUrl(roomId, videoFile),
+    poster_file: posterFile,
+    poster_api_url: toContentFactoryPosterApiUrl(roomId, posterFile),
+  }
+}
+
+function normalizeContentFactoryPayload(payload, roomId = '') {
+  const row = payload && typeof payload === 'object' ? payload : {}
+  const effectiveRoomId = safePlainText(row.room_id || roomId || '', 24).toLowerCase()
+  const config = getContentFactoryRoomConfig(effectiveRoomId)
+  const segmentsRaw = Array.isArray(row.segments)
+    ? row.segments
+    : (Array.isArray(row.videos) ? row.videos : [])
+  const segments = segmentsRaw
+    .map((item) => normalizeContentFactorySegmentRow(item, effectiveRoomId))
+    .filter(Boolean)
+  return {
+    schema_version: safePlainText(row.schema_version || 'content.factory.feed.v1', 64),
+    room_id: effectiveRoomId,
+    program_slug: safePlainText(row.program_slug || config?.program_slug || '', 64),
+    program_title: safePlainText(row.program_title || '', 80),
+    as_of: safePlainText(row.as_of || '', 40) || null,
+    segment_count: segments.length,
+    segments,
+  }
+}
+
+async function getContentFactorySnapshot(roomId) {
+  const config = getContentFactoryRoomConfig(roomId)
+  const provider = getContentFactoryProvider(roomId)
+  if (!config || !provider) return null
+  const payload = await provider.getPayload({ forceRefresh: false })
+  const status = provider.getStatus()
+  const live = normalizeContentFactoryPayload(payload, config.room_id)
+  return {
+    source_kind: payload ? 'content_factory_file' : 'empty',
     room_id: config.room_id,
     program_slug: config.program_slug,
     live,
@@ -10464,6 +10588,86 @@ app.get('/api/topic-stream/audio/:roomId/:file', (req, res) => {
     res.sendFile(target)
   } catch (error) {
     res.status(500).json({ success: false, error: error?.message || 'topic_stream_audio_failed' })
+  }
+})
+
+app.get('/api/content-factory/live', async (req, res) => {
+  try {
+    const roomId = String(req.query.room_id || '').trim().toLowerCase()
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const snapshot = await getContentFactorySnapshot(roomId)
+    if (!snapshot) {
+      res.status(404).json({ success: false, error: 'content_factory_room_not_found' })
+      return
+    }
+    res.json(ok({
+      room_id: roomId,
+      live: snapshot.live,
+      status: snapshot.status,
+    }))
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'content_factory_live_failed' })
+  }
+})
+
+app.get('/api/content-factory/videos/:roomId/:file', (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase()
+    if (!getContentFactoryRoomConfig(roomId)) {
+      res.status(404).json({ success: false, error: 'content_factory_room_not_found' })
+      return
+    }
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw || !isSafeAssetFileName(safe)) {
+      res.status(400).json({ success: false, error: 'invalid_video_file' })
+      return
+    }
+    const roomDir = path.resolve(CONTENT_FACTORY_VIDEO_DIR, roomId)
+    const target = path.resolve(roomDir, safe)
+    if (!target.startsWith(roomDir)) {
+      res.status(400).json({ success: false, error: 'invalid_video_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'video_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'content_factory_video_failed' })
+  }
+})
+
+app.get('/api/content-factory/posters/:roomId/:file', (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase()
+    if (!getContentFactoryRoomConfig(roomId)) {
+      res.status(404).json({ success: false, error: 'content_factory_room_not_found' })
+      return
+    }
+    const raw = String(req.params.file || '').trim()
+    const safe = path.basename(raw)
+    if (!safe || safe !== raw || !isSafeAssetFileName(safe)) {
+      res.status(400).json({ success: false, error: 'invalid_poster_file' })
+      return
+    }
+    const roomDir = path.resolve(CONTENT_FACTORY_POSTER_DIR, roomId)
+    const target = path.resolve(roomDir, safe)
+    if (!target.startsWith(roomDir)) {
+      res.status(400).json({ success: false, error: 'invalid_poster_path' })
+      return
+    }
+    if (!existsSync(target)) {
+      res.status(404).json({ success: false, error: 'poster_not_found' })
+      return
+    }
+    res.sendFile(target)
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'content_factory_poster_failed' })
   }
 })
 

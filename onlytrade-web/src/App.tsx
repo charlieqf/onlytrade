@@ -10,6 +10,7 @@ import T016NightComfortPage from './pages/design/T016NightComfortPage'
 import T017OralEnglishPage from './pages/design/T017OralEnglishPage'
 import TopicCommentaryPage from './pages/design/TopicCommentaryPage'
 import T020MarketRadarLabPage from './pages/design/T020MarketRadarLabPage'
+import T022ContentFactoryPage from './pages/design/T022ContentFactoryPage'
 import TTSManagePage from './pages/TTSManagePage'
 
 import { motion, AnimatePresence } from 'framer-motion'
@@ -63,6 +64,7 @@ type Page =
   | 'oralEnglish'
   | 'topicCommentary'
   | 'marketRadarLab'
+  | 'contentFactory'
   | 'ttsManage'
 
 const PATH_BASE =
@@ -127,6 +129,8 @@ function App() {
       return 'topicCommentary'
     if (path === '/stream/market-radar-lab')
       return 'marketRadarLab'
+    if (path === '/stream/content-factory')
+      return 'contentFactory'
     if (path === '/tts-manage')
       return 'ttsManage'
     return 'lobby'
@@ -162,6 +166,7 @@ function App() {
       oralEnglish: '/stream/oral-english',
       topicCommentary: '/stream/topic-commentary',
       marketRadarLab: '/stream/market-radar-lab',
+      contentFactory: '/stream/content-factory',
       ttsManage: '/tts-manage',
     }
     const path = pathMap[page]
@@ -288,6 +293,11 @@ function App() {
         }
       } else if (path === '/stream/market-radar-lab') {
         setCurrentPage('marketRadarLab')
+        if (traderParam) {
+          setSelectedTraderSlug(traderParam)
+        }
+      } else if (path === '/stream/content-factory') {
+        setCurrentPage('contentFactory')
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
@@ -543,6 +553,8 @@ function App() {
   }, [account])
 
   const selectedTrader = traders?.find((t) => t.trader_id === selectedTraderId)
+  const contentFactoryTrader =
+    selectedTrader || ({ trader_id: 't_022' } as TraderInfo)
 
   // Set current page based on route for consistent navigation state.
   useEffect(() => {
@@ -572,6 +584,16 @@ function App() {
       setCurrentPage('polymarket')
     } else if (route === '/stream/night-comfort' || route === '/stream/night-work') {
       setCurrentPage('nightComfort')
+    } else if (route === '/stream/oral-english') {
+      setCurrentPage('oralEnglish')
+    } else if (route === '/stream/topic-commentary') {
+      setCurrentPage('topicCommentary')
+    } else if (route === '/stream/market-radar-lab') {
+      setCurrentPage('marketRadarLab')
+    } else if (route === '/stream/content-factory') {
+      setCurrentPage('contentFactory')
+    } else if (route === '/tts-manage') {
+      setCurrentPage('ttsManage')
     }
   }, [route])
 
@@ -824,6 +846,17 @@ function App() {
           ? '未选择交易员。请在 URL 中添加 ?trader=t_020'
           : 'No trader selected. Add ?trader=t_020 in URL.'}
       </div>
+    )
+  }
+  if (currentPage === 'contentFactory') {
+    return (
+      <T022ContentFactoryPage
+        selectedTrader={contentFactoryTrader}
+        streamPacket={streamPacket}
+        roomSseState={roomSseState}
+        replayRuntimeStatus={replayRuntimeStatus}
+        language={language}
+      />
     )
   }
   if (currentPage === 'ttsManage') {

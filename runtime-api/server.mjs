@@ -10467,6 +10467,205 @@ app.get('/api/topic-stream/audio/:roomId/:file', (req, res) => {
   }
 })
 
+// ── TTS Management Routes ──────────────────────────────────────────────────────
+
+const TTS_PROMPTS_DIR = path.resolve(
+  ROOT_DIR,
+  process.env.TTS_PROMPTS_DIR || path.join('data', 'live', 'onlytrade', 'tts_prompts')
+)
+
+const TTS_GATEWAY_URL = process.env.TTS_GATEWAY_URL || 'http://101.227.82.130:13002/aliyun_tts/stream/v1/tts'
+const TTS_APPKEY = process.env.TTS_APPKEY || 'MrLMHOUlohZB7AIE'
+
+app.get('/api/tts-manage/topics/:roomId', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase()
+    const config = getTopicStreamRoomConfig(roomId)
+    if (!config) {
+      res.status(404).json({ success: false, error: 'room_not_found' })
+      return
+    }
+    const feedPath = path.join(TOPIC_STREAM_FEED_DIR, config.feed_file)
+    if (!existsSync(feedPath)) {
+      res.status(404).json({ success: false, error: 'feed_file_not_found' })
+      return
+    }
+    const raw = await readFile(feedPath, 'utf8')
+    const feed = JSON.parse(raw)
+    const audioDir = path.resolve(TOPIC_STREAM_AUDIO_DIR, roomId)
+    const topics = (feed.topics || []).map((t) => {
+      const hasAudio = t.audio_file && existsSync(path.join(audioDir, t.audio_file))
+      return {
+        id: t.id,
+        entity_key: t.entity_key,
+        entity_label: t.entity_label,
+        category: t.category,
+        title: t.title,
+        screen_title: t.screen_title,
+        summary_facts: t.summary_facts,
+        commentary_script: t.commentary_script,
+        screen_tags: t.screen_tags,
+        source: t.source,
+        source_url: t.source_url,
+        published_at: t.published_at,
+        script_estimated_seconds: t.script_estimated_seconds,
+        priority_score: t.priority_score,
+        audio_file: t.audio_file || null,
+        audio_status: hasAudio ? 'ready' : 'missing',
+        audio_url: hasAudio
+          ? `/api/topic-stream/audio/${encodeURIComponent(roomId)}/${encodeURIComponent(t.audio_file)}`
+          : null,
+        image_file: t.image_file || null,
+        image_url: t.image_file
+          ? `/api/topic-stream/images/${encodeURIComponent(roomId)}/${encodeURIComponent(t.image_file)}`
+          : null,
+      }
+    })
+    res.json({
+      success: true,
+      data: {
+        room_id: roomId,
+        program_slug: feed.program_slug || config.program_slug,
+        program_title: feed.program_title || '',
+        as_of: feed.as_of || null,
+        topic_count: topics.length,
+        topics,
+      },
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'tts_manage_topics_failed' })
+  }
+})
+
+app.post('/api/tts-manage/synthesize', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const {
+      text,
+      voice_id = 'longxiaochun',
+      format = 'mp3',
+      sample_rate = 16000,
+      speech_rate = 100,
+      volume = 50,
+      room_id,
+      topic_id,
+    } = req.body || {}
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      res.status(400).json({ success: false, error: 'text_required' })
+      return
+    }
+    if (text.length > 5000) {
+      res.status(400).json({ success: false, error: 'text_too_long' })
+      return
+    }
+    const payload = {
+      appkey: TTS_APPKEY,
+      token: '',
+      text: text.trim(),
+      format,
+      sample_rate: Number(sample_rate),
+      voice: String(voice_id),
+      volume: Number(volume),
+      speech_rate: (Number(speech_rate) - 50) * 10,
+      pitch_rate: 0,
+    }
+    const ttsRes = await fetch(TTS_GATEWAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      timeout: 30000,
+    })
+    if (!ttsRes.ok) {
+      const errText = await ttsRes.text().catch(() => 'unknown')
+      res.status(502).json({ success: false, error: 'tts_gateway_error', detail: errText })
+      return
+    }
+    const contentType = ttsRes.headers.get('content-type') || ''
+    if (!contentType.includes('audio')) {
+      const errText = await ttsRes.text().catch(() => 'unknown')
+      res.status(502).json({ success: false, error: 'tts_not_audio', detail: errText })
+      return
+    }
+    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer())
+    let savedFileName = null
+    let savedAudioUrl = null
+    if (room_id) {
+      const safeRoom = String(room_id).replace(/[^a-z0-9_]/gi, '')
+      const hash = randomUUID().replace(/-/g, '').slice(0, 24)
+      const ext = format === 'mp3' ? 'mp3' : format === 'wav' ? 'wav' : 'bin'
+      savedFileName = `${hash}.${ext}`
+      const outDir = path.resolve(TOPIC_STREAM_AUDIO_DIR, safeRoom)
+      await mkdir(outDir, { recursive: true })
+      await writeFile(path.join(outDir, savedFileName), audioBuffer)
+      savedAudioUrl = `/api/topic-stream/audio/${encodeURIComponent(safeRoom)}/${encodeURIComponent(savedFileName)}`
+    }
+    res.json({
+      success: true,
+      data: {
+        audio_base64: audioBuffer.toString('base64'),
+        audio_size_bytes: audioBuffer.length,
+        format,
+        saved_file: savedFileName,
+        saved_audio_url: savedAudioUrl,
+        voice_id,
+        text_length: text.trim().length,
+      },
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'tts_synthesize_failed' })
+  }
+})
+
+app.post('/api/tts-manage/prompt-audio/:roomId', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    if (!req.body || req.body.length === 0) {
+      res.status(400).json({ success: false, error: 'audio_body_required' })
+      return
+    }
+    const outDir = path.resolve(TTS_PROMPTS_DIR, roomId)
+    await mkdir(outDir, { recursive: true })
+    const fileName = `prompt_${Date.now()}_${randomUUID().replace(/-/g, '').slice(0, 8)}.wav`
+    await writeFile(path.join(outDir, fileName), req.body)
+    res.json({
+      success: true,
+      data: {
+        room_id: roomId,
+        file_name: fileName,
+        size_bytes: req.body.length,
+      },
+    })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'prompt_audio_upload_failed' })
+  }
+})
+
+app.get('/api/tts-manage/prompt-audio/:roomId', async (req, res) => {
+  try {
+    const roomId = String(req.params.roomId || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '')
+    if (!roomId) {
+      res.status(400).json({ success: false, error: 'room_id_required' })
+      return
+    }
+    const promptDir = path.resolve(TTS_PROMPTS_DIR, roomId)
+    if (!existsSync(promptDir)) {
+      res.json({ success: true, data: { room_id: roomId, files: [] } })
+      return
+    }
+    const files = (await readdir(promptDir))
+      .filter((f) => /\.(wav|mp3|ogg|webm)$/i.test(f))
+      .sort()
+      .reverse()
+      .slice(0, 20)
+    res.json({ success: true, data: { room_id: roomId, files } })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error?.message || 'prompt_audio_list_failed' })
+  }
+})
+
 app.use('/api', (_req, res) => {
   const payload = fail('not_found', 404)
   res.status(404).json({ success: false, error: payload.error })

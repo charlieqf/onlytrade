@@ -10,6 +10,7 @@ import T016NightComfortPage from './pages/design/T016NightComfortPage'
 import T017OralEnglishPage from './pages/design/T017OralEnglishPage'
 import TopicCommentaryPage from './pages/design/TopicCommentaryPage'
 import T020MarketRadarLabPage from './pages/design/T020MarketRadarLabPage'
+import TTSManagePage from './pages/TTSManagePage'
 
 import { motion, AnimatePresence } from 'framer-motion'
 import useSWR, { useSWRConfig } from 'swr'
@@ -62,6 +63,7 @@ type Page =
   | 'oralEnglish'
   | 'topicCommentary'
   | 'marketRadarLab'
+  | 'ttsManage'
 
 const PATH_BASE =
   window.location.pathname === '/onlytrade' ||
@@ -125,6 +127,8 @@ function App() {
       return 'topicCommentary'
     if (path === '/stream/market-radar-lab')
       return 'marketRadarLab'
+    if (path === '/tts-manage')
+      return 'ttsManage'
     return 'lobby'
   }
 
@@ -158,6 +162,7 @@ function App() {
       oralEnglish: '/stream/oral-english',
       topicCommentary: '/stream/topic-commentary',
       marketRadarLab: '/stream/market-radar-lab',
+      ttsManage: '/tts-manage',
     }
     const path = pathMap[page]
     if (path) {
@@ -286,6 +291,8 @@ function App() {
         if (traderParam) {
           setSelectedTraderSlug(traderParam)
         }
+      } else if (path === '/tts-manage') {
+        setCurrentPage('ttsManage')
       }
       setRoute(path)
     }
@@ -818,6 +825,9 @@ function App() {
           : 'No trader selected. Add ?trader=t_020 in URL.'}
       </div>
     )
+  }
+  if (currentPage === 'ttsManage') {
+    return <TTSManagePage />
   }
 
   if (currentPage === 'streamOnly') {

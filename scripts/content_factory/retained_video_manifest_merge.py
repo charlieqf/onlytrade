@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -65,6 +66,16 @@ def _parse_published_at(value):
     text = str(value or "").strip()
     if not text:
         return None
+
+    try:
+        parsed_rfc = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        parsed_rfc = None
+    if parsed_rfc is not None:
+        if parsed_rfc.tzinfo is None:
+            parsed_rfc = parsed_rfc.replace(tzinfo=timezone.utc)
+        return parsed_rfc.astimezone(timezone.utc)
+
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     normalized = text
@@ -72,6 +83,12 @@ def _parse_published_at(value):
         normalized = normalized[:-3] + normalized[-2:]
     parsed = None
     for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f %z",
+        "%Y-%m-%d %H:%M:%S %z",
+        "%Y-%m-%d %H:%M:%S.%f%z",
+        "%Y-%m-%d %H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S.%f%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S.%f",

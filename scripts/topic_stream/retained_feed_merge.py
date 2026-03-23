@@ -1,4 +1,5 @@
 import argparse
+from email.utils import parsedate_to_datetime
 import json
 import sys
 from datetime import datetime, timezone
@@ -72,6 +73,14 @@ def _parse_published_at(value: Any) -> Optional[datetime]:
     text = str(value or "").strip()
     if not text:
         return None
+    try:
+        parsed_rfc = parsedate_to_datetime(text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        parsed_rfc = None
+    if parsed_rfc is not None:
+        if parsed_rfc.tzinfo is None:
+            parsed_rfc = parsed_rfc.replace(tzinfo=timezone.utc)
+        return parsed_rfc.astimezone(timezone.utc)
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     normalized = text

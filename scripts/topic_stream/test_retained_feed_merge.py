@@ -107,6 +107,46 @@ def test_merge_caps_room_to_latest_twenty_topics() -> None:
     ]
 
 
+def test_merge_sorts_rfc2822_published_at_before_truncation() -> None:
+    existing_topics = [
+        {
+            "id": f"old_{i:02d}",
+            "published_at": f"Fri, 20 Mar 2026 0{i}:00:00 GMT",
+            "image_file": f"old_{i}.jpg",
+            "audio_file": f"old_{i}.mp3",
+        }
+        for i in range(10)
+    ]
+    incoming_topics = [
+        {
+            "id": f"new_{i:02d}",
+            "published_at": f"Fri, 20 Mar 2026 1{i}:00:00 GMT",
+            "image_file": f"new_{i}.jpg",
+            "audio_file": f"new_{i}.mp3",
+        }
+        for i in range(10)
+    ]
+
+    merged = merge_retained_feed(
+        {
+            "room_id": "t_019",
+            "program_slug": "china-bigtech",
+            "topics": existing_topics,
+        },
+        {
+            "room_id": "t_019",
+            "program_slug": "china-bigtech",
+            "topics": incoming_topics,
+        },
+        retain_limit=10,
+    )
+
+    assert merged["topic_count"] == 10
+    assert [row["id"] for row in merged["topics"]] == [
+        f"new_{i:02d}" for i in range(9, -1, -1)
+    ]
+
+
 def test_merge_drops_rows_with_missing_asset_files_when_asset_dirs_are_supplied(
     tmp_path: Path,
 ) -> None:

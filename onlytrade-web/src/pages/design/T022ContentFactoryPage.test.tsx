@@ -135,12 +135,12 @@ describe('T022ContentFactoryPage', () => {
 
     render(<AppWithProviders />)
 
-    expect(await screen.findByText('Content Factory')).toBeInTheDocument()
-    expect(screen.queryByText('未选择交易员。请在 URL 中添加 ?trader=t_022')).not.toBeInTheDocument()
-
     await waitFor(() => {
       expect(getContentFactoryLive).toHaveBeenCalledWith({ room_id: 't_022' })
     })
+
+    expect(document.querySelector('video')).not.toBeNull()
+    expect(screen.queryByText('未选择交易员。请在 URL 中添加 ?trader=t_022')).not.toBeInTheDocument()
   })
 
   it('always requests the dedicated t_022 room feed even if selectedTrader differs', async () => {
@@ -159,7 +159,7 @@ describe('T022ContentFactoryPage', () => {
     })
   })
 
-  it('renders the current segment title and poster state', async () => {
+  it('keeps playback immersive without overlaying title and summary on the mp4', async () => {
     render(
       <T022ContentFactoryPage
         selectedTrader={{ trader_id: 't_022' } as never}
@@ -170,11 +170,17 @@ describe('T022ContentFactoryPage', () => {
       />
     )
 
-    expect(await screen.findByText('内容工厂·国内大厂')).toBeInTheDocument()
-    expect(screen.getByText('小米又把牌桌掀了？')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(getContentFactoryLive).toHaveBeenCalledWith({ room_id: 't_022' })
+    })
 
-    const poster = screen.getByAltText('小米又把牌桌掀了？ 海报') as HTMLImageElement
-    expect(poster.src).toContain('/api/content-factory/posters/t_022/cf_xiaomi_1.jpg')
+    expect(screen.queryByText('内容工厂·国内大厂')).not.toBeInTheDocument()
+    expect(screen.queryByText('小米又把牌桌掀了？')).not.toBeInTheDocument()
+    expect(screen.queryByText('发布节奏、价格策略、后续观察点。')).not.toBeInTheDocument()
+
+    const video = document.querySelector('video') as HTMLVideoElement | null
+    expect(video).not.toBeNull()
+    expect(video?.getAttribute('src')).toContain('/api/content-factory/videos/t_022/cf_xiaomi_1.mp4')
   })
 
   it('only advances after video ended', async () => {
@@ -188,21 +194,22 @@ describe('T022ContentFactoryPage', () => {
       />
     )
 
-    expect(await screen.findByText('小米又把牌桌掀了？')).toBeInTheDocument()
-
     await act(async () => {
       await Promise.resolve()
     })
-    expect(screen.queryByText('华为这次不只是发新品')).not.toBeInTheDocument()
-
     const video = document.querySelector('video')
     expect(video).not.toBeNull()
+    expect(video?.getAttribute('src')).toContain('/api/content-factory/videos/t_022/cf_xiaomi_1.mp4')
 
     await act(async () => {
       fireEvent.ended(video!)
     })
 
-    expect(await screen.findByText('华为这次不只是发新品')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain(
+        '/api/content-factory/videos/t_022/cf_huawei_2.mp4',
+      )
+    })
   })
 
   it('falls back to a stable state after all current segments fail playback', async () => {
@@ -216,16 +223,26 @@ describe('T022ContentFactoryPage', () => {
       />
     )
 
-    expect(await screen.findByText('小米又把牌桌掀了？')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain(
+        '/api/content-factory/videos/t_022/cf_xiaomi_1.mp4',
+      )
+    })
 
     await act(async () => {
       fireEvent.error(document.querySelector('video')!)
     })
 
-    expect(await screen.findByText('华为这次不只是发新品')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain(
+        '/api/content-factory/videos/t_022/cf_huawei_2.mp4',
+      )
+    })
 
     await act(async () => {
-      fireEvent.error(document.querySelector('video')!)
+      const nextVideo = document.querySelector('video')
+      expect(nextVideo).not.toBeNull()
+      fireEvent.error(nextVideo!)
     })
 
     expect(await screen.findByTestId('content-factory-playback-fallback')).toBeInTheDocument()

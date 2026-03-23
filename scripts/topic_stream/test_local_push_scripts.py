@@ -27,3 +27,20 @@ def test_t019_push_script_uses_remote_retained_merge_flow() -> None:
     assert "T019_RETAIN_LIMIT" in content or "--retain-limit" in content
     assert '--image-dir "$REMOTE_IMAGE_DIR"' in content
     assert '--audio-dir "$REMOTE_AUDIO_DIR"' in content
+
+
+def test_t022_push_script_regenerates_packages_before_rendering() -> None:
+    content = (
+        REPO_ROOT / "scripts" / "content_factory" / "local_render_and_push_t022.sh"
+    ).read_text(encoding="utf-8")
+    assert "scripts/topic_stream/run_china_bigtech_cycle.py" in content
+    assert '--package-output "$PACKAGE_JSON"' in content
+    assert "scripts/content_factory/render_publish_t022_from_packages.py" in content
+
+
+def test_t022_push_script_preserves_remote_root_across_msys_boundary() -> None:
+    content = (
+        REPO_ROOT / "scripts" / "content_factory" / "local_render_and_push_t022.sh"
+    ).read_text(encoding="utf-8")
+    assert "MSYS2_ARG_CONV_EXCL='--remote-root='" in content
+    assert '--remote-root="$REMOTE_ROOT"' in content

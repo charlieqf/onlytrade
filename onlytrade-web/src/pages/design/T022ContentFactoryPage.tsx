@@ -53,23 +53,14 @@ function normalizeSegment(raw: unknown): SegmentItem | null {
   }
 }
 
-function getProgramSlugFromUrl(): string {
-  if (typeof window === 'undefined') return 'china-bigtech'
-  const params = new URLSearchParams(window.location.search)
-  return cleanText(params.get('program') || 'china-bigtech', 64).toLowerCase() || 'china-bigtech'
-}
-
 export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
   useFullscreenLock()
 
   const roomId = 't_022'
   const pathBase = useMemo(() => detectPathBase(), [])
-  const initialProgramSlug = useMemo(() => getProgramSlugFromUrl(), [])
 
   const [segments, setSegments] = useState<SegmentItem[]>([])
   const [segmentIndex, setSegmentIndex] = useState(0)
-  const [programTitle, setProgramTitle] = useState('')
-  const [asOfText, setAsOfText] = useState('')
   const [loading, setLoading] = useState(true)
   const [videoReady, setVideoReady] = useState(false)
   const [, setFailedSegmentIds] = useState<string[]>([])
@@ -93,12 +84,8 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
       const nextSegments = Array.isArray(live.segments)
         ? live.segments.map((item) => normalizeSegment(item)).filter(Boolean) as SegmentItem[]
         : []
-      const nextProgramTitle = cleanText(live.program_title || initialProgramSlug, 80)
-      const nextAsOf = cleanText(live.as_of, 40)
       const nextSegmentIdsKey = nextSegments.map((item) => item.id).join('|')
 
-      setProgramTitle(nextProgramTitle)
-      setAsOfText(nextAsOf)
       if (segmentIdsKeyRef.current !== nextSegmentIdsKey) {
         segmentIdsKeyRef.current = nextSegmentIdsKey
         setFailedSegmentIds([])
@@ -119,7 +106,7 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
     } catch {
       setLoading(false)
     }
-  }, [initialProgramSlug, roomId, segmentIndex])
+  }, [roomId, segmentIndex])
 
   useEffect(() => {
     let active = true
@@ -171,25 +158,12 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
     })
   }, [currentSegment, segments])
 
-  const title = currentSegment?.title || ''
-  const summary = currentSegment?.summary || ''
-  const publishedAt = currentSegment?.publishedAt || ''
   const posterUrl = currentSegment ? buildAssetUrl(pathBase, currentSegment.posterApiUrl) : ''
   const videoUrl = currentSegment ? buildAssetUrl(pathBase, currentSegment.videoApiUrl) : ''
-  const metaLine = [publishedAt, asOfText].filter(Boolean).join(' · ')
 
   return (
-    <div className="relative h-[100dvh] w-full overflow-hidden bg-[#05070d] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,122,89,0.20)_0%,rgba(37,65,118,0.16)_28%,rgba(5,7,13,1)_72%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,7,13,0.38)_0%,rgba(5,7,13,0.18)_30%,rgba(5,7,13,0.92)_100%)]" />
-
-      <div className="absolute inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
-        <div className="rounded-full border border-[#ff7a59]/45 bg-[#221212]/75 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-[#ffd5c9] backdrop-blur-md">
-          Content Factory
-        </div>
-      </div>
-
-      <div className="absolute inset-x-3 top-[11vh] bottom-[26vh] z-10 overflow-hidden rounded-[34px] border border-white/12 bg-black/25 shadow-[0_24px_90px_rgba(0,0,0,0.42)] backdrop-blur-[4px]">
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-black text-white">
+      <div className="absolute inset-0 overflow-hidden bg-black">
         {videoUrl && !playbackExhausted ? (
           <video
             key={currentSegment?.id || 'empty'}
@@ -198,7 +172,7 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
             autoPlay
             playsInline
             preload="auto"
-            className="h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full bg-black object-contain"
             onLoadedData={handleVideoReady}
             onCanPlay={handleVideoReady}
             onEnded={advanceSegment}
@@ -209,8 +183,8 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
         {!videoReady && posterUrl ? (
           <img
             src={posterUrl}
-            alt={`${title || '当前内容'} 海报`}
-            className="absolute inset-0 h-full w-full object-cover"
+            alt={`${currentSegment?.title || '当前内容'} 海报`}
+            className="absolute inset-0 h-full w-full bg-black object-contain"
             loading="eager"
           />
         ) : null}
@@ -229,30 +203,6 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
             Playback is unavailable for the current segment batch. Waiting for fresh renders...
           </div>
         ) : null}
-      </div>
-
-      <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-[max(28px,env(safe-area-inset-bottom))] pt-10">
-        <div className="relative overflow-hidden rounded-[32px] border border-white/12 bg-[linear-gradient(180deg,rgba(34,16,18,0.76)_0%,rgba(11,12,16,0.92)_100%)] px-5 pb-5 pt-6 shadow-[0_25px_80px_rgba(0,0,0,0.38)] backdrop-blur-[14px]">
-          <div className="mb-3 flex items-center gap-2">
-            <div className="h-[2px] w-9 bg-[#ff7a59]" />
-            <div className="text-[11px] uppercase tracking-[0.34em] text-[#ff7a59]">
-              {programTitle || '内容工厂·国内大厂'}
-            </div>
-          </div>
-          <h1 className="max-w-[92%] text-[34px] leading-[0.94] font-black tracking-[-0.04em] text-white drop-shadow-[0_12px_28px_rgba(0,0,0,0.72)] sm:text-[42px]">
-            {title || (loading ? 'Loading latest segment...' : 'Waiting for segment...')}
-          </h1>
-          {summary ? (
-            <div className="mt-3 max-w-[92%] text-[13px] leading-[1.45] text-white/80">
-              {summary}
-            </div>
-          ) : null}
-          {metaLine ? (
-            <div className="mt-3 max-w-[92%] text-[11px] leading-relaxed text-white/66">
-              {metaLine}
-            </div>
-          ) : null}
-        </div>
       </div>
     </div>
   )

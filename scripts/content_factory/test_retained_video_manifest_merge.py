@@ -2,6 +2,7 @@ from pathlib import Path
 
 import scripts.content_factory.render_publish_t022_from_packages as publish
 from scripts.content_factory.retained_video_manifest_merge import (
+    _parse_published_at,
     merge_retained_segments,
 )
 
@@ -96,6 +97,42 @@ def test_merge_keeps_newer_retained_segment_when_incoming_is_older() -> None:
     assert merged["segment_count"] == 1
     assert merged["segments"][0]["title"] == "newer retained render"
     assert merged["segments"][0]["video_file"] == "newer.mp4"
+
+
+def test_parse_published_at_supports_rfc2822_and_space_separated_offsets() -> None:
+    rfc = _parse_published_at("Mon, 23 Mar 2026 08:00:18 GMT")
+    offset = _parse_published_at("2026-03-23 16:10:41 +0800")
+
+    assert rfc is not None
+    assert offset is not None
+    assert rfc.isoformat() == "2026-03-23T08:00:18+00:00"
+    assert offset.isoformat() == "2026-03-23T08:10:41+00:00"
+
+
+def test_merge_promotes_new_rfc2822_segments_ahead_of_older_retained_rows() -> None:
+    existing = {
+        "room_id": "t_022",
+        "program_slug": "china-bigtech",
+        "segments": [
+            _row("topic_old_a", "Fri, 20 Mar 2026 14:54:19 GMT", "old-a.mp4"),
+            _row("topic_old_b", "Sat, 21 Mar 2026 04:22:58 GMT", "old-b.mp4"),
+        ],
+    }
+    incoming = {
+        "room_id": "t_022",
+        "program_slug": "china-bigtech",
+        "segments": [
+            _row("topic_new", "Mon, 23 Mar 2026 08:00:18 GMT", "new.mp4"),
+        ],
+    }
+
+    merged = merge_retained_segments(existing, incoming, retain_limit=20)
+
+    assert [row["topic_id"] for row in merged["segments"][:3]] == [
+        "topic_new",
+        "topic_old_b",
+        "topic_old_a",
+    ]
 
 
 def test_merge_drops_rows_with_missing_video_file_when_asset_filtering_enabled(

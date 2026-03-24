@@ -60,6 +60,7 @@ describe('SegmentListPage', () => {
     expect(within(firstRow).getByText('room-a')).toBeTruthy()
     expect(within(firstRow).getByText('草稿')).toBeTruthy()
     expect(within(firstRow).getByText('时长 1:35')).toBeTruthy()
+    expect(within(firstRow).getByText(/同步 03\/21/)).toBeTruthy()
     expect(
       screen.getByRole('img', { name: 'Morning breakout recap poster' }).getAttribute('src'),
     ).toBe('/media/poster/seg-001')

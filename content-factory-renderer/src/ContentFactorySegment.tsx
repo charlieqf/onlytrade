@@ -1,6 +1,7 @@
 import {AbsoluteFill, Audio, Img, Sequence, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 
 import {calculateSegmentMetadata, type SegmentProps, type SegmentVisual} from './calculateMetadata';
+import {buildCommentaryTimeline, getCommentaryFrameState} from './dynamicCommentary';
 import {getHeadlineTypography, getVisualPresentation} from './layoutDecisions';
 import {resolveAssetSrc} from './resolveAssetSrc';
 
@@ -84,12 +85,19 @@ export const ContentFactorySegment = ({
   audioDurationInSeconds,
   visuals,
 }: SegmentProps) => {
+  const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const metadata = calculateSegmentMetadata({audioDurationInSeconds, fps});
   const visualSlots = [0, 1, 2].map((index) => visuals[index] ?? fallbackVisual(index));
   const displayHeadline = (headlineText || title || '').trim();
   const displayCommentary = (commentaryText || summary || '').trim();
   const headlineTypography = getHeadlineTypography(displayHeadline);
+  const commentaryTimeline = buildCommentaryTimeline({
+    commentaryText: displayCommentary,
+    durationInFrames: metadata.durationInFrames,
+  });
+  const commentaryState = getCommentaryFrameState({timeline: commentaryTimeline, frame});
+  const cursorVisible = frame % 24 < 16;
 
   return (
     <AbsoluteFill
@@ -230,70 +238,65 @@ export const ContentFactorySegment = ({
           right: 0,
           bottom: 0,
           height: COMMENTARY_REGION_HEIGHT,
-          padding: `38px ${REGION_PADDING_X}px 74px`,
+          padding: `42px ${REGION_PADDING_X}px 78px`,
           background:
-            'linear-gradient(180deg, rgba(8, 13, 26, 0.68) 0%, rgba(7, 12, 24, 0.94) 24%, rgba(3, 6, 13, 1) 100%)',
-          display: 'flex',
-          alignItems: 'flex-start',
+            'linear-gradient(180deg, rgba(8, 13, 26, 0) 0%, rgba(5, 9, 17, 0.22) 18%, rgba(4, 7, 15, 0.66) 52%, rgba(2, 5, 12, 0.92) 100%)',
         }}
       >
         <div
           style={{
             width: '100%',
-            padding: '28px 30px 34px',
-            borderRadius: 34,
-            background: 'linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.06))',
-            boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.22)',
-            backdropFilter: 'blur(18px)',
             display: 'flex',
             flexDirection: 'column',
-            gap: 18,
+            gap: 14,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <span
-              style={{
-                fontSize: 28,
-                fontWeight: 800,
-                letterSpacing: '0.08em',
-                color: '#fdba74',
-              }}
-            >
-              一句话点评
-            </span>
-            <span
-              style={{
-                fontSize: 72,
-                lineHeight: 1,
-                fontWeight: 900,
-                color: 'rgba(255,255,255,0.24)',
-                transform: 'translateY(10px)',
-              }}
-            >
-              “
-            </span>
-          </div>
+          <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+            {commentaryState.previousLines.slice(-2).map((line, index) => (
+              <div
+                key={`commentary-prev-${index}-${line}`}
+                style={{
+                  fontSize: 34,
+                  lineHeight: 1.18,
+                  fontWeight: 620,
+                  color: 'rgba(226, 232, 240, 0.42)',
+                  letterSpacing: '-0.03em',
+                  textShadow: '0 6px 18px rgba(0,0,0,0.22)',
+                }}
+              >
+                {line}
+              </div>
+            ))}
 
-          <div
-            style={{
-              fontSize: 58,
-              lineHeight: 1.18,
-              fontWeight: 750,
-              color: '#f8fbff',
-              letterSpacing: '-0.045em',
-              display: '-webkit-box',
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-            }}
-          >
-            {displayCommentary}
+            <div
+              style={{
+                minHeight: 142,
+                fontSize: 62,
+                lineHeight: 1.12,
+                fontWeight: 780,
+                color: '#f8fbff',
+                letterSpacing: '-0.045em',
+                textShadow: '0 12px 32px rgba(0, 0, 0, 0.32)',
+              }}
+            >
+              {commentaryState.activeLine}
+              <span style={{opacity: cursorVisible ? 1 : 0.18, color: '#fdba74', marginLeft: 2}}>▍</span>
+            </div>
+
+            {commentaryState.upcomingLines.length ? (
+              <div
+                style={{
+                  fontSize: 26,
+                  lineHeight: 1.16,
+                  fontWeight: 600,
+                  color: 'rgba(226, 232, 240, 0.24)',
+                  letterSpacing: '-0.02em',
+                  textShadow: '0 4px 12px rgba(0,0,0,0.18)',
+                }}
+              >
+                {commentaryState.upcomingLines[0]}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

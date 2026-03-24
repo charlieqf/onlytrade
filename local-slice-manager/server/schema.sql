@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS segments (
   video_path TEXT NOT NULL,
   poster_path TEXT,
   duration_seconds INTEGER,
+  sync_mtime_ms INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

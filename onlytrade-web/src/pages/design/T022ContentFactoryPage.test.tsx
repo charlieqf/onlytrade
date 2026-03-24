@@ -248,4 +248,36 @@ describe('T022ContentFactoryPage', () => {
     expect(await screen.findByTestId('content-factory-playback-fallback')).toBeInTheDocument()
     expect(document.querySelector('video')).toBeNull()
   })
+
+  it('shows a tap-to-play unlock hint when autoplay with sound is blocked', async () => {
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play')
+    playSpy.mockRejectedValueOnce(new DOMException('play() failed', 'NotAllowedError'))
+    playSpy.mockResolvedValue(undefined)
+
+    render(
+      <T022ContentFactoryPage
+        selectedTrader={{ trader_id: 't_022' } as never}
+        streamPacket={null as never}
+        roomSseState={null as never}
+        replayRuntimeStatus={null as never}
+        language="zh"
+      />
+    )
+
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toContain(
+        '/api/content-factory/videos/t_022/cf_xiaomi_1.mp4',
+      )
+    })
+
+    expect(await screen.findByTestId('content-factory-audio-unlock')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.pointerDown(window)
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('content-factory-audio-unlock')).not.toBeInTheDocument()
+    })
+  })
 })

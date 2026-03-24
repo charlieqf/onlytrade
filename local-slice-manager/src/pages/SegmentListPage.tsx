@@ -230,9 +230,9 @@ export function SegmentListPage({ onOpenSegment }: SegmentListPageProps) {
         <div className="slice-panel__header">
           <div>
             <h2 className="slice-panel__title">筛选与检索</h2>
-            <p className="slice-panel__description">
-              用关键词、房间、节目、状态与日期范围快速缩小素材范围。当前优先展示最新已入库切片。
-            </p>
+              <p className="slice-panel__description">
+                用关键词、房间、节目、状态与日期范围快速缩小素材范围。当前优先展示最新已同步切片。
+              </p>
           </div>
         </div>
 
@@ -335,7 +335,7 @@ export function SegmentListPage({ onOpenSegment }: SegmentListPageProps) {
                     </div>
                     <div className="slice-card__footer">
                       <span className="slice-chip">时长 {formatDuration(segment.durationSeconds)}</span>
-                      <span className="slice-chip">入库 {formatTimestamp(segment.createdAt)}</span>
+                      <span className="slice-chip">同步 {formatTimestamp(segment.createdAt)}</span>
                     </div>
                     <div className="slice-card__topic">{segment.topicId}</div>
                   </div>

@@ -167,6 +167,20 @@ For `t_019`, the local generator now uses a voice-aware audio cache key. This is
 
 Reuse this rule for `t_018`: include voice identity in the generated audio cache key.
 
+### 7) `t_022` now has a dedicated handoff baseline
+
+The original launch notes are no longer enough for `t_022`. The room now has additional operating policy that must be preserved:
+
+- current program positioning is `内容工厂·科技大厂`
+- current content pool is mixed domestic tech + global tech + AI-native companies
+- `QbitAI` is now an image-rich direct source for `t_022`
+- Huawei-cluster topics are currently blocked from both package production and render/publish for `t_022`
+- the current video template uses the three-zone layout plus blended dynamic commentary subtitles
+- if the live-room API does not match the manifest file after cleanup, restart `onlytrade-runtime-api`
+- if slice manager still shows archived videos after file moves, rebuild the slice-manager DB and rescan
+
+Use `docs/runbooks/t022-content-factory-handoff.md` as the current source of truth before operating `t_022`.
+
 ## Recommended t018 bring-up checklist
 
 1. Add `agents/t_018/agent.json`

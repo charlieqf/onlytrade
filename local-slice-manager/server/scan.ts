@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 import { sliceManagerConfig } from './config'
@@ -129,6 +129,7 @@ function scanRetainedManifests(options: {
           typeof segment.duration_sec === 'number'
             ? Math.round(segment.duration_sec)
             : null,
+        syncMtimeMs: Math.round(statSync(videoPath).mtimeMs),
       })
       indexedCount += 1
     }
@@ -185,6 +186,7 @@ function scanTopicPackageFallback(options: {
           typeof topicPackage.script_estimated_seconds === 'number'
             ? Math.round(topicPackage.script_estimated_seconds)
             : null,
+        syncMtimeMs: Math.round(statSync(videoPath).mtimeMs),
       })
       indexedCount += 1
     }

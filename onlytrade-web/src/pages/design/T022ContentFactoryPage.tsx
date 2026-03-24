@@ -36,6 +36,16 @@ function buildAssetUrl(pathBase: string, apiPath: string): string {
   return pathBase ? `${pathBase}${safe}` : safe
 }
 
+function isAutoplayBlockedError(error: unknown): boolean {
+  const name = String((error as { name?: unknown } | null)?.name || '')
+  const message = String(
+    error instanceof Error
+      ? error.message
+      : (error as { message?: unknown } | null)?.message || ''
+  )
+  return /NotAllowedError/i.test(name) || /NotAllowedError|play\(\) failed|interact/i.test(message)
+}
+
 function normalizeSegment(raw: unknown): SegmentItem | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Record<string, unknown>
@@ -58,11 +68,13 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
 
   const roomId = 't_022'
   const pathBase = useMemo(() => detectPathBase(), [])
+  const videoRef = useRef<HTMLVideoElement | null>(null)
 
   const [segments, setSegments] = useState<SegmentItem[]>([])
   const [segmentIndex, setSegmentIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [videoReady, setVideoReady] = useState(false)
+  const [audioUnlockRequired, setAudioUnlockRequired] = useState(false)
   const [, setFailedSegmentIds] = useState<string[]>([])
   const [playbackExhausted, setPlaybackExhausted] = useState(false)
   const segmentIdsKeyRef = useRef('')
@@ -126,14 +138,29 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
 
   useEffect(() => {
     setVideoReady(false)
+    setAudioUnlockRequired(false)
   }, [currentSegment?.id])
+
+  const tryStartPlayback = useCallback(async () => {
+    const video = videoRef.current
+    if (!video) return
+    try {
+      await video.play()
+      setAudioUnlockRequired(false)
+    } catch (error) {
+      if (isAutoplayBlockedError(error)) {
+        setAudioUnlockRequired(true)
+      }
+    }
+  }, [])
 
   const handleVideoReady = useCallback(() => {
     if (!currentSegment) return
     setVideoReady(true)
     setPlaybackExhausted(false)
     setFailedSegmentIds((prev) => prev.filter((id) => id !== currentSegment.id))
-  }, [currentSegment])
+    void tryStartPlayback()
+  }, [currentSegment, tryStartPlayback])
 
   const handleVideoError = useCallback(() => {
     if (!currentSegment) return
@@ -161,11 +188,39 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
   const posterUrl = currentSegment ? buildAssetUrl(pathBase, currentSegment.posterApiUrl) : ''
   const videoUrl = currentSegment ? buildAssetUrl(pathBase, currentSegment.videoApiUrl) : ''
 
+  useEffect(() => {
+    if (!audioUnlockRequired) return
+
+    const unlock = () => {
+      void tryStartPlayback()
+    }
+
+    window.addEventListener('pointerdown', unlock)
+    window.addEventListener('touchstart', unlock)
+    window.addEventListener('keydown', unlock)
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('touchstart', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [audioUnlockRequired, tryStartPlayback])
+
+  useEffect(() => {
+    if (!videoUrl || playbackExhausted) return
+    const timer = window.setTimeout(() => {
+      void tryStartPlayback()
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [videoUrl, playbackExhausted, tryStartPlayback])
+
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-black text-white">
       <div className="absolute inset-0 overflow-hidden bg-black">
         {videoUrl && !playbackExhausted ? (
           <video
+            ref={videoRef}
             key={currentSegment?.id || 'empty'}
             src={videoUrl}
             poster={posterUrl || undefined}
@@ -201,6 +256,15 @@ export default function T022ContentFactoryPage(_: FormalStreamDesignPageProps) {
             data-testid="content-factory-playback-fallback"
           >
             Playback is unavailable for the current segment batch. Waiting for fresh renders...
+          </div>
+        ) : null}
+
+        {currentSegment && audioUnlockRequired && !playbackExhausted ? (
+          <div
+            className="absolute inset-x-6 bottom-10 rounded-3xl border border-white/12 bg-black/55 px-5 py-4 text-center text-sm font-medium text-white/92 backdrop-blur"
+            data-testid="content-factory-audio-unlock"
+          >
+            点击页面以开启声音播放
           </div>
         ) : null}
       </div>

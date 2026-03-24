@@ -340,3 +340,63 @@ def test_build_render_props_prefers_editorial_commentary_text() -> None:
         == "关键不只是新车，而是高阶配置开始往更大众的价格段下探。"
     )
     assert props["summary"] == "这是一段事实摘要。"
+
+
+def test_build_render_props_expands_commentary_for_dynamic_subtitles() -> None:
+    package = {
+        "screen_title": "Claude 接管你的 Mac，AI 助手来了！",
+        "title": "原始标题",
+        "summary_facts": "Anthropic 推出 Claude 的电脑操作测试功能。",
+        "commentary_script": "今天我们来聊聊 Claude 新功能。它已经不只是会聊天，而是开始直接控制电脑操作。接下来要看，这种能力会不会进入更常见的办公流程。",
+        "topic_reason": "真正值得看的是，AI助手开始从聊天工具变成执行工具。",
+    }
+
+    props = publish._build_render_props(
+        package=package,
+        segment_id="cf_topic_demo",
+        audio_src="/t022-render-assets/cf_topic_demo/audio.mp3",
+        staged_visuals=[
+            {
+                "type": "article_image",
+                "src": "/t022-render-assets/cf_topic_demo/visual-01.jpg",
+            },
+            {
+                "type": "generated_card",
+                "src": "/t022-render-assets/cf_topic_demo/visual-02.svg",
+            },
+            {
+                "type": "generated_card",
+                "src": "/t022-render-assets/cf_topic_demo/visual-03.svg",
+            },
+        ],
+    )
+
+    assert (
+        props["commentaryText"]
+        == "真正值得看的是，AI助手开始从聊天工具变成执行工具。它已经不只是会聊天，而是开始直接控制电脑操作。接下来要看，这种能力会不会进入更常见的办公流程。"
+    )
+
+
+def test_publish_pipeline_skips_huawei_cluster_package() -> None:
+    assert publish._should_skip_package(
+        {
+            "entity_key": "xpeng",
+            "screen_title": "华为手机全面回归，余承东信心满满！",
+            "commentary_script": "华为和麒麟重新成为市场焦点。",
+        }
+    )
+
+    assert publish._should_skip_package(
+        {
+            "entity_key": "huawei",
+            "screen_title": "华为春季发布会：20款新品齐亮相！",
+        }
+    )
+
+    assert not publish._should_skip_package(
+        {
+            "entity_key": "nvidia",
+            "screen_title": "英伟达开放架构！AI芯片生态再添新气象",
+            "commentary_script": "真正值得看的是，英伟达开始把架构开放转成生态绑定。",
+        }
+    )

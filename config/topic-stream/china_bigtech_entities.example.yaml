@@ -1,7 +1,7 @@
 program_slug: china-bigtech
-program_title: 国内大厂每日锐评
-room_id: t_019
-route: /stream/topic-commentary?trader=t_019&program=china-bigtech
+program_title: 科技大厂每日锐评
+room_id: t_022
+route: /stream/content-factory?trader=t_022&program=china-bigtech
 
 entities:
   - entity_key: huawei
@@ -163,3 +163,133 @@ entities:
     image_query: Tesla China vehicle launch
     fallback_keywords: [Model Y, FSD, 上海超级工厂]
     tone_notes: 降价、智驾、口碑撕裂、行业鲶鱼
+
+  - entity_key: apple
+    label: Apple
+    aliases: [Apple, 苹果]
+    sector: tech
+    priority_weight: 0.95
+    enabled: true
+    image_query: Apple product launch
+    fallback_keywords: [iPhone, Vision Pro, Mac, WWDC]
+    tone_notes: 生态、硬件创新、价格带与用户换机预期
+
+  - entity_key: microsoft
+    label: Microsoft
+    aliases: [Microsoft, 微软]
+    sector: tech
+    priority_weight: 0.95
+    enabled: true
+    image_query: Microsoft AI event
+    fallback_keywords: [Azure, Copilot, Windows, Nadella]
+    tone_notes: 云、AI平台、企业软件与资本叙事
+
+  - entity_key: google
+    label: Google
+    aliases: [Google, 谷歌]
+    sector: tech
+    priority_weight: 0.95
+    enabled: true
+    image_query: Google AI launch
+    fallback_keywords: [Gemini, Search, Android, DeepMind]
+    tone_notes: 搜索护城河、模型竞争、广告与平台策略
+
+  - entity_key: meta
+    label: Meta
+    aliases: [Meta, Facebook]
+    sector: tech
+    priority_weight: 0.96
+    enabled: true
+    image_query: Meta AI event
+    fallback_keywords: [Llama, Instagram, WhatsApp, Zuckerberg]
+    tone_notes: 开源模型、流量平台、资本开支与野心
+
+  - entity_key: amazon
+    label: Amazon
+    aliases: [Amazon, 亚马逊]
+    sector: tech
+    priority_weight: 0.9
+    enabled: true
+    image_query: Amazon AWS event
+    fallback_keywords: [AWS, Alexa, Prime, Kuiper]
+    tone_notes: 云、零售、AI 变现与规模效率
+
+  - entity_key: nvidia
+    label: Nvidia
+    aliases: [Nvidia, 英伟达, NVDA]
+    sector: tech
+    priority_weight: 1.0
+    enabled: true
+    image_query: Nvidia GTC keynote
+    fallback_keywords: [CUDA, Blackwell, GPU, 黄仁勋]
+    tone_notes: AI算力龙头、生态统治力、估值与供给约束
+
+  - entity_key: openai
+    label: OpenAI
+    aliases: [OpenAI]
+    sector: ai
+    priority_weight: 1.0
+    enabled: true
+    image_query: OpenAI launch event
+    fallback_keywords: [ChatGPT, Sora, GPT, Sam Altman]
+    tone_notes: 模型产品化、生态封锁与节奏控制
+
+  - entity_key: anthropic
+    label: Anthropic
+    aliases: [Anthropic, Claude]
+    sector: ai
+    priority_weight: 0.98
+    enabled: true
+    image_query: Anthropic Claude launch
+    fallback_keywords: [Claude, Constitutional AI, MCP]
+    tone_notes: 安全叙事、企业采用、模型能力对比
+
+  - entity_key: xai
+    label: xAI
+    aliases: [xAI, Grok]
+    sector: ai
+    priority_weight: 0.94
+    enabled: true
+    image_query: xAI Grok launch
+    fallback_keywords: [Grok, Elon Musk, xAI]
+    tone_notes: 流量、争议、产品速度与注意力红利
+
+  - entity_key: mistral
+    label: Mistral
+    aliases: [Mistral, Mistral AI]
+    sector: ai
+    priority_weight: 0.88
+    enabled: true
+    image_query: Mistral AI launch
+    fallback_keywords: [Mistral Large, Le Chat, 开源模型]
+    tone_notes: 欧洲模型代表、开源策略、企业合作
+
+  - entity_key: perplexity
+    label: Perplexity
+    aliases: [Perplexity]
+    sector: ai
+    priority_weight: 0.86
+    enabled: true
+    image_query: Perplexity AI product
+    fallback_keywords: [search AI, answer engine, Perplexity]
+    tone_notes: AI搜索、分发入口、产品增长速度
+
+  - entity_key: figure
+    label: Figure
+    aliases: [Figure, Figure AI]
+    sector: ai
+    priority_weight: 0.84
+    enabled: true
+    image_query: Figure humanoid robot
+    fallback_keywords: [humanoid, Figure 02, robotics]
+    tone_notes: 机器人、具身智能、资本预期与落地难度
+
+  - entity_key: one_x
+    label: 1X
+    aliases: [1X, 1X Technologies]
+    sector: ai
+    priority_weight: 0.8
+    enabled: true
+    image_query: 1X robot demo
+    fallback_keywords: [1X robot, humanoid]
+    tone_notes: 人形机器人、演示效果与商业节奏

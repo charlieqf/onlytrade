@@ -25,7 +25,7 @@ from scripts.content_factory.retained_video_manifest_merge import atomic_write_j
 
 ROOM_ID = "t_022"
 PROGRAM_SLUG = "china-bigtech"
-PROGRAM_TITLE = "内容工厂·国内大厂"
+PROGRAM_TITLE = "内容工厂·科技大厂"
 DEFAULT_PACKAGE_JSON = (
     REPO_ROOT
     / "data"
@@ -60,6 +60,18 @@ DEFAULT_VM_PORT = "21522"
 DEFAULT_VM_USER = "root"
 DEFAULT_VM_KEY = str(Path.home() / ".ssh" / "cn169_ed25519")
 DEFAULT_REMOTE_ROOT = "/opt/onlytrade"
+BLOCKED_ENTITY_KEYS = {"huawei", "aito"}
+BLOCKED_TOPIC_PATTERNS = [
+    r"华为",
+    r"huawei",
+    r"余承东",
+    r"麒麟",
+    r"鸿蒙",
+    r"harmonyos",
+    r"鸿蒙智行",
+    r"问界",
+    r"\baito\b",
+]
 
 
 def _npm_executable() -> str:
@@ -275,9 +287,62 @@ def _condense_commentary_script(value: Any) -> str:
     return condensed.strip()
 
 
+def _build_dynamic_commentary_text(package: Dict[str, Any]) -> str:
+    reason = _normalize_text(package.get("topic_reason"))
+    script = _normalize_text(package.get("commentary_script"))
+    merged: list[str] = []
+
+    if reason:
+        if not re.search(r"[。！？!?]$", reason):
+            reason = f"{reason}。"
+        merged.append(reason)
+
+    script = re.sub(
+        r"^(今天我们来聊聊|今天我们看到|今天聊聊|先看这件事)[，,：:]?", "", script
+    )
+    sentences = [
+        part.strip() for part in re.split(r"(?<=[。！？!?])", script) if part.strip()
+    ]
+    for sentence in sentences:
+        if re.match(
+            r"^(Claude|OpenAI|苹果|华为|小米|腾讯|阿里|字节|Meta|Google|Amazon|微软).{0,8}(新功能|新品|新动作|这条消息)[。！？!?]?$",
+            sentence,
+        ):
+            continue
+        if len(sentence) < 12 and not sentence.startswith(
+            ("接下来要看", "真正要看", "关键要看", "后面要看")
+        ):
+            continue
+        if sentence in merged:
+            continue
+        merged.append(sentence)
+        if len(merged) >= 3:
+            break
+
+    return "".join(merged).strip()
+
+
+def _should_skip_package(package: Dict[str, Any]) -> bool:
+    entity_key = _normalize_text(package.get("entity_key") or "")
+    if entity_key and entity_key.lower() in BLOCKED_ENTITY_KEYS:
+        return True
+    haystack = " ".join(
+        [
+            _normalize_text(package.get("title") or ""),
+            _normalize_text(package.get("screen_title") or ""),
+            _normalize_text(package.get("summary_facts") or ""),
+            _normalize_text(package.get("commentary_script") or ""),
+            _normalize_text(package.get("topic_reason") or ""),
+        ]
+    ).lower()
+    return any(
+        re.search(pattern, haystack, flags=re.IGNORECASE)
+        for pattern in BLOCKED_TOPIC_PATTERNS
+    )
+
+
 def _build_commentary_text(package: Dict[str, Any]) -> str:
     for candidate in (
-        package.get("topic_reason"),
         package.get("commentary_text"),
         package.get("screen_commentary"),
     ):
@@ -285,9 +350,9 @@ def _build_commentary_text(package: Dict[str, Any]) -> str:
         if text:
             return text
 
-    condensed_script = _condense_commentary_script(package.get("commentary_script"))
-    if condensed_script:
-        return condensed_script
+    dynamic_text = _build_dynamic_commentary_text(package)
+    if dynamic_text:
+        return dynamic_text
 
     return _normalize_text(package.get("summary_facts"))
 
@@ -594,6 +659,14 @@ def run_publish(args: argparse.Namespace) -> int:
     rendered_posters = []
 
     for package in packages:
+        if _should_skip_package(package):
+            print(
+                "[t022-render] skip topic {0}: blocked by Huawei filter".format(
+                    package.get("topic_id") or package.get("id") or "unknown"
+                ),
+                file=sys.stderr,
+            )
+            continue
         try:
             rendered = render_segment(
                 package,

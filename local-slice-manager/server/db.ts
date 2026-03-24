@@ -20,6 +20,7 @@ export type SegmentUpsertRecord = {
   videoPath: string
   posterPath: string | null
   durationSeconds: number | null
+  syncMtimeMs: number | null
 }
 
 export type SegmentListRow = {
@@ -108,9 +109,10 @@ export function upsertSegment(
         summary,
         video_path,
         poster_path,
-        duration_seconds
+        duration_seconds,
+        sync_mtime_ms
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         room_id = excluded.room_id,
         program_slug = excluded.program_slug,
@@ -120,6 +122,7 @@ export function upsertSegment(
         video_path = excluded.video_path,
         poster_path = excluded.poster_path,
         duration_seconds = excluded.duration_seconds,
+        sync_mtime_ms = excluded.sync_mtime_ms,
         updated_at = CURRENT_TIMESTAMP
     `,
     [
@@ -132,6 +135,7 @@ export function upsertSegment(
       record.videoPath,
       record.posterPath,
       record.durationSeconds,
+      record.syncMtimeMs ?? null,
     ],
   )
 }
@@ -155,9 +159,10 @@ export function listSegments(
         status,
         duration_seconds,
         poster_path IS NOT NULL,
+        sync_mtime_ms,
         created_at
       FROM segments
-      ORDER BY id
+      ORDER BY sync_mtime_ms DESC, created_at DESC, id DESC
       LIMIT ? OFFSET ?
     `,
     [options.pageSize, offset],
@@ -173,7 +178,12 @@ export function listSegments(
       status: String(value[5]),
       durationSeconds: value[6] == null ? null : Number(value[6]),
       hasPoster: Boolean(value[7]),
-      createdAt: value[8] == null ? null : String(value[8]),
+      createdAt:
+        value[8] == null
+          ? value[9] == null
+            ? null
+            : String(value[9])
+          : new Date(Number(value[8])).toISOString(),
     })),
     total,
   }
@@ -252,6 +262,7 @@ export function updateSegmentNotes(
 function initializeSchema(db: Database): void {
   db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'))
   ensureColumn(db, 'segments', 'notes', 'TEXT')
+  ensureColumn(db, 'segments', 'sync_mtime_ms', 'INTEGER')
 }
 
 function persistDatabase(db: Database, dbPath: string): void {

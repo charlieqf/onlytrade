@@ -42,10 +42,11 @@ describe('ContentFactorySegment', () => {
     expect(markup).toContain('height:30%');
     expect(markup).toContain('height:40%');
     expect(markup).toContain('华为开始把高阶智驾往更大众价位压');
-    expect(markup).toContain('真正的看点不是新车，而是高阶能力正在从旗舰往主流价位带下沉。');
     expect(markup).toContain('今日热评');
-    expect(markup).toContain('一句话点评');
+    expect(markup).toContain('▍');
+    expect(markup).toContain('真');
     expect(markup).toContain('object-fit:contain');
+    expect(markup).not.toContain('评论字幕');
     expect(markup).not.toContain('旧摘要');
   });
 });

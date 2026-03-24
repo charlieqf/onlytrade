@@ -34,8 +34,8 @@ export const getHeadlineTypography = (headline: string) => {
 
 export const getVisualPresentation = (visualType: string) => {
   if (visualType === 'article_image') {
-    return {fit: 'cover', inset: 0};
+    return {fit: 'cover' as const, inset: 0};
   }
 
-  return {fit: 'contain', inset: 0};
+  return {fit: 'contain' as const, inset: 0};
 };

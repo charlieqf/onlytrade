@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -24,7 +25,7 @@ from scripts.topic_stream.china_bigtech_packages import (  # noqa: E402
 
 ROOM_ID = "t_019"
 PROGRAM_SLUG = "china-bigtech"
-PROGRAM_TITLE = "国内大厂每日锐评"
+PROGRAM_TITLE = "科技大厂每日锐评"
 PROGRAM_STYLE = "sharp_commentary"
 DEFAULT_CONFIG_PATH = (
     REPO_ROOT / "config/topic-stream/china_bigtech_entities.example.yaml"
@@ -45,16 +46,37 @@ DEFAULT_SELFHOSTED_TTS_URL = os.getenv(
     "TOPIC_STREAM_SELFHOSTED_TTS_URL", "http://101.227.82.130:13002/tts"
 )
 DEFAULT_TTS_VOICE_ID = os.getenv("TOPIC_STREAM_TTS_VOICE", "longlaotie_v3")
+DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_QWEN_MODEL = "qwen3-max"
+COMMENTARY_PROVIDER_RETRIES = 2
 MEDIA_NS = {"media": "http://search.yahoo.com/mrss/"}
+BLOCKED_ENTITY_KEYS = {"huawei", "aito"}
+BLOCKED_TOPIC_PATTERNS = [
+    r"华为",
+    r"huawei",
+    r"余承东",
+    r"麒麟",
+    r"鸿蒙",
+    r"harmonyos",
+    r"鸿蒙智行",
+    r"问界",
+    r"\baito\b",
+]
 DIRECT_FEED_SOURCES = [
-    {"name": "ITHome", "url": "https://www.ithome.com/rss/"},
-    {"name": "36Kr", "url": "https://36kr.com/feed"},
-    {"name": "Leiphone", "url": "https://www.leiphone.com/feed"},
+    {"name": "ITHome", "kind": "rss", "url": "https://www.ithome.com/rss/"},
+    {"name": "36Kr", "kind": "rss", "url": "https://36kr.com/feed"},
+    {"name": "Leiphone", "kind": "rss", "url": "https://www.leiphone.com/feed"},
+    {
+        "name": "QbitAI",
+        "kind": "qbitai_category",
+        "url": "https://www.qbitai.com/category/%e8%b5%84%e8%ae%af",
+    },
 ]
 
 COMMENTARY_SYSTEM_PROMPT = "\n".join(
     [
         "你是《国内大厂每日锐评》的固定主播。",
+        "节目覆盖国内科技大厂、全球科技巨头和 AI 明星公司。",
         "你要把公司新闻改写成可直接口播的中文锐评节目。",
         '输出严格JSON: {"screen_title":"...","summary_facts":"...","commentary_script":"...","screen_tags":["..."],"topic_reason":"..."}',
         "要求：",
@@ -67,6 +89,106 @@ COMMENTARY_SYSTEM_PROMPT = "\n".join(
         "- 不要写成公关稿，不要平铺直叙，不要输出 JSON 以外文本。",
     ]
 )
+
+
+def _strip_html(text: str) -> str:
+    safe = re.sub(r"<[^>]+>", " ", str(text or ""))
+    return _safe_text(html.unescape(safe), 1200)
+
+
+def _parse_qbitai_time(text: str, now_ts_ms: Optional[int] = None) -> Optional[int]:
+    safe = _safe_text(text, 120).replace("\xa0", " ")
+    if not safe:
+        return None
+    now = datetime.fromtimestamp((now_ts_ms or _now_ts_ms()) / 1000, tz=timezone.utc)
+    if match := re.search(r"(\d+)分钟前", safe):
+        minutes = max(0, int(match.group(1)))
+        return int((now.timestamp() - minutes * 60) * 1000)
+    if match := re.search(r"(\d+)小时前", safe):
+        hours = max(0, int(match.group(1)))
+        return int((now.timestamp() - hours * 3600) * 1000)
+    if match := re.search(r"昨天\s*(\d{1,2}):(\d{2})", safe):
+        candidate = now.replace(
+            hour=int(match.group(1)),
+            minute=int(match.group(2)),
+            second=0,
+            microsecond=0,
+        )
+        candidate = (
+            candidate.replace(day=now.day) - english.timedelta(days=1)
+            if hasattr(english, "timedelta")
+            else candidate
+        )
+    if match := re.search(r"前天\s*(\d{1,2}):(\d{2})", safe):
+        candidate = now.replace(
+            hour=int(match.group(1)),
+            minute=int(match.group(2)),
+            second=0,
+            microsecond=0,
+        )
+        candidate = candidate.replace(day=now.day)
+        return int((candidate.timestamp() - 2 * 86400) * 1000)
+    if match := re.search(r"(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?", safe):
+        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        hour = int(match.group(4) or 0)
+        minute = int(match.group(5) or 0)
+        candidate = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+        return int(candidate.timestamp() * 1000)
+    return None
+
+
+def _collect_rows_from_qbitai_html(
+    html_text: str,
+    source_name: str,
+    source_url: str,
+    lookback_hours: int,
+    now_ts_ms: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    safe_html = str(html_text or "")
+    if not safe_html:
+        return rows
+    now_ms = int(now_ts_ms or _now_ts_ms())
+    lookback_ms = max(1, int(lookback_hours)) * 3600 * 1000
+    pattern = re.compile(
+        r'<a[^>]+href="(?P<url>https://www\.qbitai\.com/\d{4}/\d{2}/\d+\.html)"[^>]*>\s*'
+        r'(?:<img[^>]+src="(?P<image>https?://[^"]+)"[^>]*>\s*)?</a>.*?'
+        r'<h4[^>]*>\s*<a[^>]+href="(?P=url)"[^>]*>(?P<title>.*?)</a>\s*</h4>.*?'
+        r"<p[^>]*>(?P<summary>.*?)</p>.*?"
+        r"(?:<a[^>]*>.*?</a>\s*)?(?P<time>(?:\d+分钟前|\d+小时前|昨天\s*\d{1,2}:\d{2}|前天\s*\d{1,2}:\d{2}|\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2})?))",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    seen: set[str] = set()
+    for match in pattern.finditer(safe_html):
+        title = _strip_html(match.group("title"))
+        if not title or english._contains_sensitive(title):
+            continue
+        title_fp = re.sub(r"\s+", "", title.lower())
+        if not title_fp or title_fp in seen:
+            continue
+        summary = _strip_html(match.group("summary") or "")
+        if english._contains_sensitive(summary):
+            continue
+        pub_label = _safe_text(match.group("time"), 80)
+        pub_ts_ms = _parse_qbitai_time(pub_label, now_ts_ms=now_ms)
+        if pub_ts_ms is not None and (now_ms - pub_ts_ms) > lookback_ms:
+            continue
+        rows.append(
+            {
+                "title": title,
+                "summary": summary,
+                "summary_html": summary,
+                "source": _safe_text(source_name, 80),
+                "url": _safe_text(match.group("url"), 1000),
+                "published_at": pub_label,
+                "published_ts_ms": pub_ts_ms,
+                "image_url": _safe_text(match.group("image"), 1200),
+                "has_image": bool(_safe_text(match.group("image"), 1200)),
+                "source_url": _safe_text(source_url, 1000),
+            }
+        )
+        seen.add(title_fp)
+    return rows
 
 
 def _safe_text(value: Any, max_len: int = 220) -> str:
@@ -105,19 +227,46 @@ def load_enabled_entities(config_path: Path) -> List[Dict[str, Any]]:
                 safe_alias = _safe_text(alias, 80)
                 if safe_alias:
                     aliases_clean.append(safe_alias)
-        out.append(
-            {
-                "entity_key": _safe_text(item.get("entity_key"), 64).lower(),
-                "label": _safe_text(item.get("label"), 80),
-                "aliases": aliases_clean,
-                "sector": _safe_text(item.get("sector"), 24).lower() or "tech",
-                "priority_weight": float(item.get("priority_weight") or 1.0),
-                "enabled": True,
-                "image_query": _safe_text(item.get("image_query"), 120),
-                "tone_notes": _safe_text(item.get("tone_notes"), 160),
-            }
-        )
+            entity_key = _safe_text(item.get("entity_key"), 64).lower()
+            if entity_key in BLOCKED_ENTITY_KEYS:
+                continue
+            out.append(
+                {
+                    "entity_key": entity_key,
+                    "label": _safe_text(item.get("label"), 80),
+                    "aliases": aliases_clean,
+                    "sector": _safe_text(item.get("sector"), 24).lower() or "tech",
+                    "priority_weight": float(item.get("priority_weight") or 1.0),
+                    "enabled": True,
+                    "image_query": _safe_text(item.get("image_query"), 120),
+                    "tone_notes": _safe_text(item.get("tone_notes"), 160),
+                }
+            )
     return [item for item in out if item["entity_key"] and item["label"]]
+
+
+def _contains_blocked_topic_text(text: str) -> bool:
+    safe = _safe_text(text, 2000).lower()
+    if not safe:
+        return False
+    return any(
+        re.search(pattern, safe, flags=re.IGNORECASE)
+        for pattern in BLOCKED_TOPIC_PATTERNS
+    )
+
+
+def _is_blocked_topic_row(row: Dict[str, Any]) -> bool:
+    if _safe_text(row.get("entity_key"), 64).lower() in BLOCKED_ENTITY_KEYS:
+        return True
+    haystack = " ".join(
+        [
+            _safe_text(row.get("title"), 400),
+            _safe_text(row.get("summary"), 600),
+            _safe_text(row.get("source_url"), 1000),
+            _safe_text(row.get("url"), 1000),
+        ]
+    )
+    return _contains_blocked_topic_text(haystack)
 
 
 def build_entity_query(entity: Dict[str, Any]) -> str:
@@ -217,21 +366,22 @@ def collect_entity_rows(
             continue
         link = _safe_text(item.findtext("link"), 1000)
         final_url = english._resolve_final_article_url(link)
-        rows.append(
-            {
-                "entity_key": entity["entity_key"],
-                "entity_label": entity["label"],
-                "category": entity.get("sector") or "tech",
-                "title": title,
-                "summary": summary,
-                "summary_html": summary_html,
-                "source": source,
-                "url": final_url or link,
-                "published_at": pub_date,
-                "published_ts_ms": pub_ts_ms,
-                "query": query,
-            }
-        )
+        candidate = {
+            "entity_key": entity["entity_key"],
+            "entity_label": entity["label"],
+            "category": entity.get("sector") or "tech",
+            "title": title,
+            "summary": summary,
+            "summary_html": summary_html,
+            "source": source,
+            "url": final_url or link,
+            "published_at": pub_date,
+            "published_ts_ms": pub_ts_ms,
+            "query": query,
+        }
+        if _is_blocked_topic_row(candidate):
+            continue
+        rows.append(candidate)
         seen.add(title_fp)
     return rows
 
@@ -310,16 +460,27 @@ def collect_direct_source_rows(lookback_hours: int) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     seen = set()
     for source in DIRECT_FEED_SOURCES:
+        source_name = _safe_text(source.get("name"), 80)
+        source_url = _safe_text(source.get("url"), 1000)
+        source_kind = _safe_text(source.get("kind") or "rss", 40).lower()
         try:
-            rss_text = english._fetch_text(
-                _safe_text(source.get("url"), 1000),
-                timeout_sec=english.DEFAULT_TIMEOUT_SEC,
+            body = english._fetch_text(
+                source_url, timeout_sec=english.DEFAULT_TIMEOUT_SEC
             )
         except Exception:
             continue
-        for row in _collect_rows_from_feed_xml(
-            rss_text, _safe_text(source.get("name"), 80), lookback_hours
-        ):
+        if source_kind == "qbitai_category":
+            source_rows = _collect_rows_from_qbitai_html(
+                body,
+                source_name=source_name,
+                source_url=source_url,
+                lookback_hours=lookback_hours,
+            )
+        else:
+            source_rows = _collect_rows_from_feed_xml(body, source_name, lookback_hours)
+        for row in source_rows:
+            if _is_blocked_topic_row(row):
+                continue
             key = (
                 _safe_text(row.get("url"), 1000) or _safe_text(row.get("title"), 220)
             ).lower()
@@ -338,10 +499,13 @@ def _select_best_direct_rows(
 ) -> List[Dict[str, Any]]:
     now_ms = int(now_ts_ms or _now_ts_ms())
     chosen: List[Dict[str, Any]] = []
+    used_urls: set[str] = set()
     for entity in entities:
         aliases = [str(alias).lower() for alias in entity.get("aliases") or []]
         scored: List[Dict[str, Any]] = []
         for row in source_rows:
+            if _is_blocked_topic_row(row):
+                continue
             haystack = f"{_safe_text(row.get('title'), 240)} {_safe_text(row.get('summary'), 360)}"
             if not any(_matches_token(haystack, alias) for alias in aliases):
                 continue
@@ -350,11 +514,22 @@ def _select_best_direct_rows(
             scored.append(item)
         if not scored:
             continue
-        best = sorted(
+        best = None
+        for candidate in sorted(
             scored,
             key=lambda item: float(item.get("priority_score") or 0.0),
             reverse=True,
-        )[: max(1, int(per_entity_limit))][0]
+        )[: max(1, int(per_entity_limit))]:
+            candidate_url = _safe_text(candidate.get("url"), 1000).lower()
+            if candidate_url and candidate_url in used_urls:
+                continue
+            best = candidate
+            break
+        if best is None:
+            continue
+        best_url = _safe_text(best.get("url"), 1000).lower()
+        if best_url:
+            used_urls.add(best_url)
         chosen.append({**best, "entity": entity})
     return sorted(
         chosen, key=lambda item: float(item.get("priority_score") or 0.0), reverse=True
@@ -378,6 +553,14 @@ def validate_generated_block(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if len(screen_tags) < 3:
         return None
     if not topic_reason:
+        return None
+    if re.search(
+        r"这条消息，把情绪直接点着了|这波动静，重点不在表面热闹", screen_title
+    ):
+        return None
+    english_chars = sum(1 for ch in topic_reason if ch.isascii() and ch.isalpha())
+    chinese_chars = sum(1 for ch in topic_reason if "\u4e00" <= ch <= "\u9fff")
+    if english_chars > 12 and english_chars > chinese_chars:
         return None
     estimated_seconds = english._estimate_material_seconds(commentary_script)
     if estimated_seconds < 20 or estimated_seconds > 95:
@@ -437,6 +620,50 @@ def _generate_commentary_with_openai(
         )
         or "gpt-4o-mini"
     )
+    payload = {
+        "model": model,
+        "temperature": 0.65,
+        "max_tokens": 700,
+        "messages": [
+            {"role": "system", "content": COMMENTARY_SYSTEM_PROMPT},
+            {"role": "user", "content": _commentary_user_prompt(entity, row)},
+        ],
+    }
+    parsed = english._post_json(
+        f"{base_url.rstrip('/')}/chat/completions",
+        payload,
+        {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        timeout_sec,
+    )
+    text = ((parsed.get("choices") or [{}])[0].get("message") or {}).get(
+        "content"
+    ) or ""
+    obj = english._parse_json_object_loose(str(text))
+    return validate_generated_block(obj or {})
+
+
+def _generate_commentary_with_qwen(
+    entity: Dict[str, Any], row: Dict[str, Any], timeout_sec: int
+) -> Optional[Dict[str, Any]]:
+    api_key = _safe_text(
+        os.getenv("TOPIC_STREAM_QWEN_API_KEY")
+        or os.getenv("DASHSCOPE_API_KEY")
+        or os.getenv("QWEN_API_KEY"),
+        240,
+    )
+    if not api_key:
+        return None
+    base_url = (
+        _safe_text(
+            os.getenv("TOPIC_STREAM_QWEN_BASE_URL") or os.getenv("DASHSCOPE_BASE_URL"),
+            200,
+        )
+        or DEFAULT_QWEN_BASE_URL
+    )
+    model = _safe_text(os.getenv("TOPIC_STREAM_QWEN_MODEL"), 80) or DEFAULT_QWEN_MODEL
     payload = {
         "model": model,
         "temperature": 0.65,
@@ -533,19 +760,27 @@ def generate_commentary_block(
     provider_mode = _safe_text(provider, 24).lower() or "auto"
     providers = [provider_mode]
     if provider_mode == "auto":
-        providers = ["gemini", "openai", "fallback"]
+        providers = ["qwen", "openai", "gemini", "fallback"]
     for name in providers:
-        try:
-            if name == "gemini":
-                generated = _generate_commentary_with_gemini(entity, row, timeout_sec)
-            elif name == "openai":
-                generated = _generate_commentary_with_openai(entity, row, timeout_sec)
-            else:
-                generated = _fallback_commentary(entity, row)
-            if generated:
-                return generated
-        except Exception:
-            continue
+        attempts = COMMENTARY_PROVIDER_RETRIES if name != "fallback" else 1
+        for _attempt in range(attempts):
+            try:
+                if name == "qwen":
+                    generated = _generate_commentary_with_qwen(entity, row, timeout_sec)
+                elif name == "gemini":
+                    generated = _generate_commentary_with_gemini(
+                        entity, row, timeout_sec
+                    )
+                elif name == "openai":
+                    generated = _generate_commentary_with_openai(
+                        entity, row, timeout_sec
+                    )
+                else:
+                    generated = _fallback_commentary(entity, row)
+                if generated:
+                    return generated
+            except Exception:
+                continue
     return _fallback_commentary(entity, row)
 
 

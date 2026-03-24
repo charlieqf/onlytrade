@@ -192,6 +192,16 @@ Current `t_022` baseline:
 - Public asset verification must include a `200 video/mp4` response for a retained segment, not just manifest `200`.
 - `t_019` and `t_022` share the upstream `china_bigtech` package layer, so fixes to package summaries/scripts/visual selection should improve both rooms without per-room duplication.
 
+Current `t_022` additions:
+
+- Current `t_022` scope is mixed domestic tech + global tech + AI-native companies.
+- `QbitAI` is now a first-class direct source for `t_022`.
+- Huawei-cluster topics are currently blocked from both topic production and `t_022` render/publish.
+- New `t_022` videos are expected to use the current three-zone template with blended dynamic commentary subtitles rather than the older static summary card.
+- If the live-room API still serves old retained rows after replacing the manifest on disk, restart `onlytrade-runtime-api`.
+- If slice manager still shows archived videos after file moves, rebuild `/opt/onlytrade/data/local_slice_manager/slice_manager.db` and rescan.
+- Full handoff details live in `docs/runbooks/t022-content-factory-handoff.md`.
+
 For the next `t_018` launch, reuse the `t_019` topic-stream path:
 
 - add `agents/t_018/agent.json`

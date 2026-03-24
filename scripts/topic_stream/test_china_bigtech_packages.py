@@ -238,7 +238,7 @@ def test_build_topic_packages_keeps_three_slot_visual_precedence_explicit(
                 },
                 "title": "腾讯再推新工具",
                 "image_url": "https://img.example.com/direct.jpg",
-                "summary_html": '<p><img src="https://img.example.com/fallback.jpg" /></p>',
+                "summary_html": "<p>no extra image</p>",
                 "source": "ITHome",
                 "url": "https://example.com/tencent",
                 "published_at": "2026-03-21 09:00",
@@ -260,9 +260,8 @@ def test_build_topic_packages_keeps_three_slot_visual_precedence_explicit(
         download_image_for_item=lambda image_url, image_dir, image_key: str(
             image_dir / f"{image_key}.jpg"
         ),
-        extract_summary_image=lambda _summary_html,
-        _url: "https://img.example.com/fallback.jpg",
-        extract_og_image=lambda _url: "https://img.example.com/og.jpg",
+        extract_summary_image=lambda _summary_html, _url: "",
+        extract_og_image=lambda _url: "",
         safe_text=lambda value, max_len=220: str(value or "")[:max_len],
         now_iso=lambda: "2026-03-21T12:00:00Z",
         brand_asset_dir=brand_asset.parent,
@@ -277,6 +276,185 @@ def test_build_topic_packages_keeps_three_slot_visual_precedence_explicit(
     ]
     assert package["t019_image_file"] == package["selected_visuals"][0]["local_file"]
     assert len(package["selected_visuals"]) == 3
+
+
+def test_build_topic_packages_prefers_three_real_images_before_brand_and_cards(
+    tmp_path: Path,
+) -> None:
+    brand_asset = tmp_path / "brands" / "tencent--cover.png"
+    brand_asset.parent.mkdir(parents=True, exist_ok=True)
+    brand_asset.write_bytes(b"brand")
+
+    selected = [
+        {
+            "entity": {
+                "entity_key": "tencent",
+                "label": "Tencent",
+                "sector": "tech",
+            },
+            "title": "腾讯再推新工具",
+            "image_url": "https://img.example.com/direct.jpg",
+            "image_urls": [
+                "https://img.example.com/direct.jpg",
+                "https://img.example.com/detail-02.jpg",
+                "https://img.example.com/detail-03.jpg",
+            ],
+            "summary_html": '<p><img src="https://img.example.com/detail-02.jpg" /></p><p><img src="https://img.example.com/detail-03.jpg" /></p>',
+            "source": "ITHome",
+            "url": "https://example.com/tencent",
+            "published_at": "2026-03-21 09:00",
+        }
+    ]
+
+    downloaded_urls: list[str] = []
+
+    def fake_download(image_url, image_dir, image_key):
+        downloaded_urls.append(image_url)
+        target = image_dir / f"{image_key}.jpg"
+        target.write_bytes(image_url.encode("utf-8"))
+        return str(target)
+
+    packages = build_topic_packages(
+        selected=selected,
+        image_dir=tmp_path / "images",
+        audio_dir=tmp_path / "audio",
+        generate_commentary_block=lambda _entity, _item: {
+            "screen_title": "腾讯这波动作不只是发工具",
+            "summary_facts": "腾讯发布新工具并带来更多行业讨论。",
+            "commentary_script": "这波看点不只是新工具上线，接下来要看的，是这套动作会不会继续扩到更核心的业务线上。",
+            "screen_tags": ["腾讯", "工具", "业务"],
+            "topic_reason": "关注度高",
+            "script_estimated_seconds": 38,
+        },
+        synthesize_audio=lambda package, audio_dir: str(
+            audio_dir / f"{package['topic_id']}.mp3"
+        ),
+        download_image_for_item=fake_download,
+        extract_summary_image=lambda _summary_html,
+        _url: "https://img.example.com/detail-02.jpg",
+        extract_og_image=lambda _url: "https://img.example.com/detail-03.jpg",
+        safe_text=lambda value, max_len=220: str(value or "")[:max_len],
+        now_iso=lambda: "2026-03-21T12:00:00Z",
+        brand_asset_dir=brand_asset.parent,
+    )
+
+    assert len(packages) == 1
+    package = packages[0]
+    assert [visual["type"] for visual in package["selected_visuals"]] == [
+        "article_image",
+        "article_image",
+        "article_image",
+    ]
+    assert downloaded_urls == [
+        "https://img.example.com/direct.jpg",
+        "https://img.example.com/detail-02.jpg",
+        "https://img.example.com/detail-03.jpg",
+    ]
+    assert package["t019_image_file"] == package["selected_visuals"][0]["local_file"]
+
+
+def test_build_topic_packages_avoids_near_duplicate_article_images(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    brand_asset = tmp_path / "brands" / "huawei--cover.png"
+    brand_asset.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1080, 1920), (24, 36, 64)).save(brand_asset)
+
+    def make_hero(path: Path) -> None:
+        canvas = Image.new("RGB", (800, 800), (247, 247, 244))
+        draw = ImageDraw.Draw(canvas)
+        draw.rounded_rectangle(
+            (120, 80, 680, 720), radius=60, outline=(60, 60, 60), width=8
+        )
+        draw.ellipse((140, 120, 340, 320), outline=(20, 20, 20), width=12)
+        draw.text((220, 680), "HUAWEI", fill=(70, 70, 70))
+        canvas.save(path)
+
+    def make_infographic(path: Path) -> None:
+        canvas = Image.new("RGB", (790, 3494), (255, 255, 255))
+        draw = ImageDraw.Draw(canvas)
+        for index, top in enumerate(range(0, 3494, 320)):
+            fill = (240, 240, 240) if index % 2 == 0 else (255, 255, 255)
+            draw.rectangle((0, top, 790, min(3494, top + 320)), fill=fill)
+        draw.text((70, 70), "HUAWEI Pura 70", fill=(0, 0, 0))
+        draw.text((70, 430), "Camera", fill=(0, 0, 0))
+        draw.text((70, 1330), "Display", fill=(0, 0, 0))
+        draw.text((70, 2230), "Battery", fill=(0, 0, 0))
+        canvas.save(path)
+
+    def make_infographic_crop(source: Path, path: Path) -> None:
+        with Image.open(source) as image:
+            crop = image.crop((0, 1100, 790, 2243))
+            crop.save(path)
+
+    def fake_download(image_url, image_dir, image_key):
+        target = image_dir / f"{image_key}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if image_url.endswith("hero.png"):
+            make_hero(target)
+        elif image_url.endswith("specs.png"):
+            make_infographic(target)
+        elif image_url.endswith("specs-crop.png"):
+            source = image_dir / "full-specs-source.png"
+            if not source.exists():
+                make_infographic(source)
+            make_infographic_crop(source, target)
+        else:
+            Image.new("RGB", (1080, 1080), (128, 128, 128)).save(target)
+        return str(target)
+
+    packages = build_topic_packages(
+        selected=[
+            {
+                "entity": {
+                    "entity_key": "huawei",
+                    "label": "Huawei",
+                    "sector": "tech",
+                },
+                "title": "华为 Pura 70 降价",
+                "image_url": "https://img.example.com/hero.png",
+                "image_urls": [
+                    "https://img.example.com/hero.png",
+                    "https://img.example.com/specs.png",
+                    "https://img.example.com/specs-crop.png",
+                ],
+                "summary_html": '<p><img src="https://img.example.com/specs.png" /></p><p><img src="https://img.example.com/specs-crop.png" /></p>',
+                "source": "ITHome",
+                "url": "https://example.com/huawei",
+                "published_at": "2026-03-23 08:00",
+            }
+        ],
+        image_dir=tmp_path / "images",
+        audio_dir=tmp_path / "audio",
+        generate_commentary_block=lambda _entity, _item: {
+            "screen_title": "华为 Pura 70 再次杀价",
+            "summary_facts": "华为 Pura 70 近期在补贴后价格明显下探。",
+            "commentary_script": "真正值得看的是旗舰能力开始继续往更主流价位带下探。",
+            "screen_tags": ["华为", "手机"],
+            "topic_reason": "关注度高",
+            "script_estimated_seconds": 28,
+        },
+        synthesize_audio=lambda package, audio_dir: str(
+            audio_dir / f"{package['topic_id']}.mp3"
+        ),
+        download_image_for_item=fake_download,
+        extract_summary_image=lambda _summary_html,
+        _url: "https://img.example.com/specs.png",
+        extract_og_image=lambda _url: "https://img.example.com/specs-crop.png",
+        safe_text=lambda value, max_len=220: str(value or "")[:max_len],
+        now_iso=lambda: "2026-03-23T12:00:00Z",
+        brand_asset_dir=brand_asset.parent,
+    )
+
+    assert len(packages) == 1
+    package = packages[0]
+    assert [visual["type"] for visual in package["selected_visuals"]] == [
+        "article_image",
+        "article_image",
+        "brand_asset",
+    ]
 
 
 def test_build_payload_does_not_mutate_english_room_id(

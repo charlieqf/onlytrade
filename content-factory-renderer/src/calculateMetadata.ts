@@ -10,8 +10,10 @@ export type SegmentVisual = {
 };
 
 export type SegmentProps = {
-  title: string;
-  summary: string;
+  title?: string;
+  summary?: string;
+  headlineText?: string;
+  commentaryText?: string;
   audioSrc: string;
   audioDurationInSeconds: number;
   visuals: SegmentVisual[];

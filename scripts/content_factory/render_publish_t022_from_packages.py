@@ -4,6 +4,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -238,6 +239,79 @@ def _copy_poster(package: Dict[str, Any], destination: Path) -> bool:
     return False
 
 
+def _normalize_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _build_headline_text(package: Dict[str, Any], segment_id: str) -> str:
+    return _normalize_text(
+        package.get("screen_title") or package.get("title") or segment_id
+    )
+
+
+def _condense_commentary_script(value: Any) -> str:
+    text = _normalize_text(value)
+    if not text:
+        return ""
+
+    text = re.sub(
+        r"^(今天我们来聊聊|今天我们看到|今天聊聊|先看这件事)[，,：:]?", "", text
+    )
+    sentences = [
+        part.strip() for part in re.split(r"(?<=[。！？!?])", text) if part.strip()
+    ]
+    if not sentences:
+        return text
+
+    preferred = []
+    for sentence in sentences:
+        if sentence.startswith("接下来要看"):
+            continue
+        preferred.append(sentence)
+        if len(preferred) >= 2:
+            break
+
+    condensed = "".join(preferred) if preferred else sentences[0]
+    return condensed.strip()
+
+
+def _build_commentary_text(package: Dict[str, Any]) -> str:
+    for candidate in (
+        package.get("topic_reason"),
+        package.get("commentary_text"),
+        package.get("screen_commentary"),
+    ):
+        text = _normalize_text(candidate)
+        if text:
+            return text
+
+    condensed_script = _condense_commentary_script(package.get("commentary_script"))
+    if condensed_script:
+        return condensed_script
+
+    return _normalize_text(package.get("summary_facts"))
+
+
+def _build_render_props(
+    *,
+    package: Dict[str, Any],
+    segment_id: str,
+    audio_src: str,
+    staged_visuals: Sequence[Dict[str, str]],
+) -> Dict[str, Any]:
+    return {
+        "title": str(package.get("screen_title") or package.get("title") or segment_id),
+        "summary": str(
+            package.get("summary_facts") or package.get("commentary_script") or ""
+        ),
+        "headlineText": _build_headline_text(package, segment_id),
+        "commentaryText": _build_commentary_text(package),
+        "audioSrc": audio_src,
+        "audioDurationInSeconds": _estimated_duration_sec(package),
+        "visuals": list(staged_visuals),
+    }
+
+
 def _stage_render_media(
     *,
     renderer_dir: Path,
@@ -274,7 +348,7 @@ def _build_segment_row(
     package: Dict[str, Any], segment_id: str, video_file: str, poster_file: str
 ) -> Dict[str, Any]:
     topic_id = str(package.get("topic_id") or package.get("id") or segment_id).strip()
-    title = str(package.get("screen_title") or package.get("title") or topic_id).strip()
+    title = _build_headline_text(package, topic_id)
     summary = str(
         package.get("summary_facts") or package.get("commentary_script") or ""
     ).strip()
@@ -283,6 +357,8 @@ def _build_segment_row(
         "topic_id": topic_id,
         "title": title,
         "summary": summary,
+        "headline_text": title,
+        "commentary_text": _build_commentary_text(package),
         "published_at": str(package.get("published_at") or "").strip(),
         "duration_sec": _estimated_duration_sec(package),
         "video_file": video_file,
@@ -334,15 +410,12 @@ def render_segment(
         visuals=visuals,
     )
 
-    props = {
-        "title": str(package.get("screen_title") or package.get("title") or segment_id),
-        "summary": str(
-            package.get("summary_facts") or package.get("commentary_script") or ""
-        ),
-        "audioSrc": audio_src,
-        "audioDurationInSeconds": _estimated_duration_sec(package),
-        "visuals": staged_visuals,
-    }
+    props = _build_render_props(
+        package=package,
+        segment_id=segment_id,
+        audio_src=audio_src,
+        staged_visuals=staged_visuals,
+    )
     command = [
         _npm_executable(),
         "--prefix",

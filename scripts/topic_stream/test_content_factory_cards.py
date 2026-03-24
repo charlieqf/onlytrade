@@ -109,3 +109,42 @@ def test_article_images_outrank_brand_and_generated_visuals_regardless_of_score(
         "generated_card",
     ]
     assert result["selected_visuals"][0]["local_file"] == "hero-low-score.jpg"
+
+
+def test_generated_cards_use_editorial_labels_and_reason_text(tmp_path: Path) -> None:
+    cards = build_generated_cards(
+        {
+            "topic_id": "china_bigtech_huawei_2026",
+            "screen_title": "华为继续把高阶能力往下压",
+            "summary_facts": "Pura 70 国补后价格明显下探。",
+            "topic_reason": "真正的看点不是一次降价，而是旗舰能力开始持续向主流价位带下沉。",
+            "screen_tags": ["华为", "降价", "卫星消息"],
+        },
+        tmp_path,
+    )
+
+    svgs = [Path(card["local_file"]).read_text(encoding="utf-8") for card in cards]
+    joined = "\n".join(svgs)
+    assert "今日看点" in joined
+    assert "一句话点评" in joined
+    assert "关键信息" in joined
+    assert "Content Factory" not in joined
+    assert "Watch Next" not in joined
+    assert "真正的看点不是一次降价" in joined
+
+
+def test_generated_cards_target_middle_band_canvas(tmp_path: Path) -> None:
+    cards = build_generated_cards(
+        {
+            "topic_id": "china_bigtech_tencent_2026",
+            "screen_title": "腾讯这波回馈不只是送游戏",
+            "summary_facts": "Switch 回馈计划将在 3 月底结束。",
+            "topic_reason": "真正值得看的是它在用低成本福利继续固化用户心智。",
+        },
+        tmp_path,
+    )
+
+    svg = Path(cards[0]["local_file"]).read_text(encoding="utf-8")
+    assert 'width="1080"' in svg
+    assert 'height="768"' in svg
+    assert 'viewBox="0 0 1080 768"' in svg

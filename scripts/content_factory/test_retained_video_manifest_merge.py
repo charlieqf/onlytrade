@@ -278,3 +278,65 @@ def test_stage_render_media_copies_assets_into_renderer_public(tmp_path: Path) -
     assert visuals[0]["src"] == "/t022-render-assets/cf_topic_demo/visual-01.jpg"
     assert (stage_root / "audio.mp3").is_file()
     assert (stage_root / "visual-01.jpg").is_file()
+
+
+def test_build_segment_row_includes_headline_and_commentary_text() -> None:
+    package = {
+        "topic_id": "topic_demo",
+        "screen_title": "问界开始抢年轻 SUV 市场",
+        "title": "原始新闻标题",
+        "summary_facts": "问界 M6 发布，激光雷达与价格策略成为焦点。",
+        "topic_reason": "真正值得看的是，华为开始把高阶能力继续往主流价位带下沉。",
+        "published_at": "Mon, 23 Mar 2026 08:00:18 GMT",
+    }
+
+    row = publish._build_segment_row(
+        package,
+        segment_id="cf_topic_demo",
+        video_file="cf_topic_demo.mp4",
+        poster_file="cf_topic_demo.jpg",
+    )
+
+    assert row["title"] == "问界开始抢年轻 SUV 市场"
+    assert row["headline_text"] == "问界开始抢年轻 SUV 市场"
+    assert (
+        row["commentary_text"]
+        == "真正值得看的是，华为开始把高阶能力继续往主流价位带下沉。"
+    )
+
+
+def test_build_render_props_prefers_editorial_commentary_text() -> None:
+    package = {
+        "screen_title": "华为把高阶智驾继续往下打",
+        "title": "原始标题",
+        "summary_facts": "这是一段事实摘要。",
+        "commentary_script": "今天我们来聊聊这波新车发布。它当然很热闹。",
+        "topic_reason": "关键不只是新车，而是高阶配置开始往更大众的价格段下探。",
+    }
+
+    props = publish._build_render_props(
+        package=package,
+        segment_id="cf_topic_demo",
+        audio_src="/t022-render-assets/cf_topic_demo/audio.mp3",
+        staged_visuals=[
+            {
+                "type": "article_image",
+                "src": "/t022-render-assets/cf_topic_demo/visual-01.jpg",
+            },
+            {
+                "type": "generated_card",
+                "src": "/t022-render-assets/cf_topic_demo/visual-02.svg",
+            },
+            {
+                "type": "generated_card",
+                "src": "/t022-render-assets/cf_topic_demo/visual-03.svg",
+            },
+        ],
+    )
+
+    assert props["headlineText"] == "华为把高阶智驾继续往下打"
+    assert (
+        props["commentaryText"]
+        == "关键不只是新车，而是高阶配置开始往更大众的价格段下探。"
+    )
+    assert props["summary"] == "这是一段事实摘要。"

@@ -12,6 +12,8 @@ import {
 const defaultProps: SegmentProps = {
   title: 'China Big Tech Momentum Check',
   summary: 'A short one-topic segment with three visuals and a full-length audio bed.',
+  headlineText: 'China Big Tech Momentum Check',
+  commentaryText: 'The real signal is how quickly platform and device narratives are starting to converge.',
   audioSrc: '',
   audioDurationInSeconds: 10,
   visuals: [

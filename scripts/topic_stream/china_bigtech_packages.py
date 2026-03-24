@@ -1,7 +1,14 @@
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urljoin, urlparse
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 from scripts.topic_stream.content_factory_cards import (
     build_generated_cards,
@@ -11,6 +18,7 @@ from scripts.topic_stream.content_factory_cards import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BRAND_ASSET_DIR = REPO_ROOT / "assets/content_factory/brands"
+ARTICLE_IMAGE_SIMILARITY_MAX_DISTANCE = 8
 
 
 def _default_safe_text(value: Any, max_len: int = 220) -> str:
@@ -102,6 +110,170 @@ def _resolve_image_url(
     )
 
 
+def _extract_summary_image_urls(description_html: str, page_url: str = "") -> List[str]:
+    html = str(description_html or "")
+    if not html:
+        return []
+
+    candidates: List[str] = []
+    patterns = [
+        r'<img[^>]+src=["\']([^"\']+)["\']',
+        r'<media:content[^>]+url=["\']([^"\']+)["\']',
+        r'<media:thumbnail[^>]+url=["\']([^"\']+)["\']',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+            candidate = str(match.group(1) or "").strip()
+            if not candidate:
+                continue
+            resolved = str(urljoin(page_url or "", candidate)).strip()
+            if not resolved:
+                continue
+            parsed = urlparse(resolved)
+            host = parsed.netloc.lower()
+            if parsed.scheme not in {"http", "https"} or not host:
+                continue
+            if host.endswith("gstatic.com"):
+                continue
+            candidates.append(resolved)
+    return candidates
+
+
+def _dedupe_urls(values: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        safe_value = str(value or "").strip()
+        if not safe_value or safe_value in seen:
+            continue
+        seen.add(safe_value)
+        deduped.append(safe_value)
+    return deduped
+
+
+def _collect_candidate_image_urls(
+    item: Dict[str, Any],
+    safe_text: Callable[[Any, int], str],
+    extract_summary_image: Callable[[str, str], str],
+    extract_og_image: Callable[[str], str],
+) -> List[str]:
+    urls: List[str] = []
+    raw_image_urls = item.get("image_urls")
+    if isinstance(raw_image_urls, (list, tuple)):
+        for value in raw_image_urls:
+            candidate = safe_text(value, 1200)
+            if candidate:
+                urls.append(candidate)
+
+    direct_image = safe_text(item.get("image_url"), 1200)
+    if direct_image:
+        urls.append(direct_image)
+
+    page_url = safe_text(item.get("url"), 1000)
+    summary_html = safe_text(item.get("summary_html"), 4000)
+    urls.extend(_extract_summary_image_urls(summary_html, page_url))
+
+    summary_fallback = extract_summary_image(summary_html, page_url)
+    if summary_fallback:
+        urls.append(summary_fallback)
+
+    og_image = extract_og_image(page_url)
+    if og_image:
+        urls.append(og_image)
+
+    return _dedupe_urls(urls)
+
+
+def _build_article_visuals(
+    *,
+    item: Dict[str, Any],
+    image_dir: Path,
+    image_key: str,
+    download_image: Callable[[str, Path, str], Optional[str]],
+    safe_text: Callable[[Any, int], str],
+    extract_summary_image: Callable[[str, str], str],
+    extract_og_image: Callable[[str], str],
+) -> List[Dict[str, Any]]:
+    visuals: List[Dict[str, Any]] = []
+    candidate_urls = _collect_candidate_image_urls(
+        item, safe_text, extract_summary_image, extract_og_image
+    )
+
+    for index, image_url in enumerate(candidate_urls):
+        candidate_key = image_key if index == 0 else f"{image_key}-{index + 1:02d}"
+        image_file = download_image(image_url, image_dir, candidate_key)
+        if not image_file:
+            continue
+
+        local_file = _basename(image_file)
+        local_path = _absolute_local_path(image_file, image_dir)
+        visuals.append(
+            {
+                "type": "article_image",
+                "image_url": image_url,
+                "local_file": local_file,
+                "image_file": local_file,
+                "local_path": local_path,
+                "score": round(max(0.7, 1.0 - (index * 0.05)), 2),
+            }
+        )
+
+    return visuals
+
+
+def _compute_visual_dhash(image_path: Path) -> str:
+    if Image is None:
+        return ""
+    try:
+        with Image.open(image_path) as image:
+            grayscale = image.convert("L").resize((9, 8))
+            pixels = [grayscale.getpixel((x, y)) for y in range(8) for x in range(9)]
+    except Exception:
+        return ""
+
+    bits: List[str] = []
+    for row in range(8):
+        base = row * 9
+        for col in range(8):
+            bits.append("1" if pixels[base + col + 1] > pixels[base + col] else "0")
+    return "".join(bits)
+
+
+def _hamming_distance(left: str, right: str) -> int:
+    if not left or not right or len(left) != len(right):
+        return 9999
+    return sum(a != b for a, b in zip(left, right))
+
+
+def _filter_diverse_article_images(
+    article_images: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    seen_hashes: List[str] = []
+
+    for visual in article_images:
+        local_path = Path(
+            str(
+                visual.get("local_path")
+                or visual.get("local_file")
+                or visual.get("image_file")
+                or ""
+            )
+        ).resolve()
+        visual_hash = _compute_visual_dhash(local_path)
+        if visual_hash and any(
+            _hamming_distance(visual_hash, existing)
+            <= ARTICLE_IMAGE_SIMILARITY_MAX_DISTANCE
+            for existing in seen_hashes
+        ):
+            continue
+        filtered.append(visual)
+        if visual_hash:
+            seen_hashes.append(visual_hash)
+
+    return filtered
+
+
 def build_topic_packages(
     selected: List[Dict[str, Any]],
     image_dir: Path,
@@ -136,12 +308,19 @@ def build_topic_packages(
                 "utf-8", errors="ignore"
             )
         ).hexdigest()[:20]
-        image_url = _resolve_image_url(item, safe_text_fn, summary_image, og_image)
-        image_file = (
-            download_image(image_url, image_dir, image_key) if image_url else None
+        article_images = _filter_diverse_article_images(
+            _build_article_visuals(
+                item=item,
+                image_dir=image_dir,
+                image_key=image_key,
+                download_image=download_image,
+                safe_text=safe_text_fn,
+                extract_summary_image=summary_image,
+                extract_og_image=og_image,
+            )
         )
-        item["has_image"] = bool(image_file)
-        if not image_file:
+        item["has_image"] = bool(article_images)
+        if not article_images:
             continue
 
         generated = generate_commentary_block(entity, item)
@@ -152,16 +331,6 @@ def build_topic_packages(
             or now_iso_fn()[:10]
         )
         topic_id = f"china_bigtech_{entity['entity_key']}_{topic_day}_{image_key[:6]}"
-        article_image_name = _basename(image_file)
-        article_image_local_path = _absolute_local_path(image_file, image_dir)
-        primary_visual = {
-            "type": "article_image",
-            "image_url": image_url,
-            "local_file": article_image_name,
-            "image_file": article_image_name,
-            "local_path": article_image_local_path,
-            "score": 1.0,
-        }
         generated_cards = build_generated_cards(
             package={
                 "topic_id": topic_id,
@@ -172,7 +341,7 @@ def build_topic_packages(
             output_dir=image_dir / "generated",
         )
         selection = choose_visual_slots(
-            article_images=[primary_visual],
+            article_images=article_images,
             brand_assets=_load_brand_assets(entity["entity_key"], brand_dir),
             generated_cards=generated_cards,
         )

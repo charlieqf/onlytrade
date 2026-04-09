@@ -387,7 +387,7 @@ def build_post_recording_package(
         "sourceLabel": _extract_source_label(topic_data),
         "subtitleCues": cues,
         "cutaways": cutaways,
-        "videoSrc": None,
+        "videoSrc": "",
     }
     render_props.update(
         {

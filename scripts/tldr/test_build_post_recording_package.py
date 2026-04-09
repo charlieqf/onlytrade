@@ -229,7 +229,7 @@ def test_build_post_recording_package_supports_audio_only_recordings(
 
     assert result["cutaway_count"] == 1
     assert props["audioSrc"].endswith("audio-bed.mp3")
-    assert props["videoSrc"] is None
+    assert props["videoSrc"] == ""
     assert (public_dir / "audio-bed.mp3").exists()
     assert (public_dir / "card-001.jpg").exists()
 

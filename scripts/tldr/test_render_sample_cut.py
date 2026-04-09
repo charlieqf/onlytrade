@@ -98,6 +98,9 @@ def test_render_sample_cut_invokes_runner_and_writes_metadata_and_process_note(
 
     assert len(calls) == 3
     assert calls[0][1].endswith("content-factory-renderer")
+    assert "--props=" in calls[0][0]
+    assert context.render_props_path.resolve().as_posix() in calls[0][0]
+    assert context.output_video_path.resolve().as_posix() in calls[0][0]
     assert context.output_video_path.exists()
     assert all(path.exists() for path in context.preview_paths)
 
@@ -122,3 +125,46 @@ def test_render_sample_cut_requires_render_props_file(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="render props"):
         render_sample_cut(context, runner=lambda *_args, **_kwargs: None)
+
+
+def test_render_sample_cut_uses_audio_only_entrypoint_when_audio_src_present(
+    tmp_path: Path,
+) -> None:
+    root_dir = tmp_path
+    topic_dir = root_dir / "data/live/onlytrade/tldr_workspace/2026-03-26/02_test_topic"
+    _write_topic_json(topic_dir, topic_key="audio_topic")
+    sample_dir = topic_dir / "sample_cut_v1"
+    sample_dir.mkdir(parents=True)
+    render_props_path = sample_dir / "sample_cut_v1_render_props.json"
+    render_props_path.write_text(
+        json.dumps(
+            {
+                "durationInSeconds": 12,
+                "audioSrc": "tldr-sample/demo/audio.mp3",
+                "videoSrc": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    context = create_render_context(
+        topic_dir,
+        version="v1",
+        root_dir=root_dir,
+        preview_seconds=[1],
+    )
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_runner(command: str, *, workdir: Path) -> None:
+        calls.append((command, str(workdir)))
+        if " remotion render " in f" {command} ":
+            context.output_video_path.write_bytes(b"video")
+        elif " remotion still " in f" {command} ":
+            output_arg = command.split('"')[1]
+            Path(output_arg).write_bytes(b"jpg")
+
+    render_sample_cut(context, runner=fake_runner)
+
+    assert "src/audio-card-index.ts audio-card-sample-cut" in calls[0][0]
+    assert "src/audio-card-index.ts audio-card-sample-cut" in calls[1][0]

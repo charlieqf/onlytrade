@@ -86,6 +86,23 @@ def _default_runner(command: str, *, workdir: Path) -> None:
     subprocess.run(command, cwd=workdir, shell=True, check=True)
 
 
+def _shell_path(path: Path) -> str:
+    return path.resolve().as_posix()
+
+
+def _load_render_props(context: RenderContext) -> dict:
+    return json.loads(context.render_props_path.read_text(encoding="utf-8"))
+
+
+def _resolve_render_entry(context: RenderContext) -> tuple[str, str]:
+    props = _load_render_props(context)
+    audio_src = str(props.get("audioSrc") or "").strip()
+    video_src = str(props.get("videoSrc") or "").strip()
+    if audio_src and not video_src and context.composition_id == "tldr-sample-cut":
+        return ("src/audio-card-index.ts", "audio-card-sample-cut")
+    return ("src/index.ts", context.composition_id)
+
+
 def _write_metadata(context: RenderContext) -> dict:
     payload = {
         "video": context.output_video_path.name,
@@ -129,10 +146,14 @@ def render_sample_cut(
 
     context.output_dir.mkdir(parents=True, exist_ok=True)
 
+    output_video_path = _shell_path(context.output_video_path)
+    render_props_path = _shell_path(context.render_props_path)
+    render_entry, composition_id = _resolve_render_entry(context)
+
     render_command = (
-        f"npx remotion render src/index.ts {context.composition_id} "
-        f'"{context.output_video_path}" '
-        f'--props="{context.render_props_path}"'
+        f"npx remotion render {render_entry} {composition_id} "
+        f'"{output_video_path}" '
+        f"--props={render_props_path}"
     )
     runner(render_command, workdir=context.renderer_workdir)
 
@@ -140,10 +161,11 @@ def render_sample_cut(
         context.preview_seconds, context.preview_paths, strict=True
     ):
         frame = round(second * 30)
+        preview_shell_path = _shell_path(preview_path)
         still_command = (
-            f"npx remotion still src/index.ts {context.composition_id} "
-            f'"{preview_path}" '
-            f'--props="{context.render_props_path}" '
+            f"npx remotion still {render_entry} {composition_id} "
+            f'"{preview_shell_path}" '
+            f"--props={render_props_path} "
             f"--frame={frame}"
         )
         runner(still_command, workdir=context.renderer_workdir)

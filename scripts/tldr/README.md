@@ -24,6 +24,11 @@ If logic is only a temporary experiment for one topic, it may start in that topi
 
 ## Current Shared Scripts
 
+- `analyze_aroll_quality.py`
+- `build_gaze_calibration.py`
+- `build_audio_card_assets.py`
+- `clean_transcript.py`
+- `gaze_calibration.example.json`
 - `build_topic_workspace.py`
 - `build_sample_cut_assets.py`
 - `extract_tldr_topics.py`
@@ -31,12 +36,40 @@ If logic is only a temporary experiment for one topic, it may start in that topi
 - `fetch_tldr_public.py`
 - `rank_tldr_topics.py`
 - `render_sample_cut.py`
+- `run_audio_card_factory.py`
 - `run_tldr_workspace_cycle.py`
 - `transcribe_aroll.py`
+
+## Audio Card Workflow
+
+For audio-only vertical shorts that start from a dropped `mp3` file:
+
+- `clean_transcript.py` - deterministic STT cleanup that rewrites `recording/video.stt.cleaned.md`
+- `build_audio_card_assets.py` - generates pure text card images and `sample_cut_vN_asset_manifest.json`
+- `run_audio_card_factory.py` - watches an input folder, creates per-audio workspaces, skips completed hashes, and renders previews plus mp4 outputs
+
+Recommended macOS / mac mini entrypoint:
+
+```bash
+uv run --with faster-whisper --with pillow python -m scripts.tldr.run_audio_card_factory \
+  --input-dir /path/to/mp3-dropbox \
+  --workspace-root /path/to/audio-card-workspace
+```
+
+Add `--once` for a single scan instead of continuous watching.
 
 ## Missing Shared Scripts To Add Next
 
 - `verify_sample_cut.py`
+
+## Optional A-Roll Quality Analysis
+
+- `analyze_aroll_quality.py` is default-off by design.
+- Enable it only when you want the pipeline to score eye-contact / face-on-camera quality and emit `recording/video.quality.json`.
+- The current v1 implementation is CPU-first and does not require a GPU.
+- The script is intended to suggest weaker A-roll ranges for B-roll coverage, not to hallucinate better face direction where no good take exists.
+- For calibrated `camera` vs `prompter` classification, see `gaze_calibration.example.json` and `docs/runbooks/tldr-prompter-detection.md`.
+- Use `build_gaze_calibration.py` to turn a short camera-looking range and a short prompter-looking range into `recording/video.gaze_calibration.json`.
 
 ## Proven Scope From The Anthropic Harness Run
 

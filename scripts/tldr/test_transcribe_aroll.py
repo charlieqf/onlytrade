@@ -104,3 +104,31 @@ def test_transcribe_topic_aroll_requires_recording_video(tmp_path: Path) -> None
 
     with pytest.raises(FileNotFoundError, match="recording"):
         transcribe_topic_aroll(topic_dir, transcribe_fn=lambda _path: {})
+
+
+def test_transcribe_topic_aroll_falls_back_to_recording_audio_mp3(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "01_test_topic"
+    recording_dir = topic_dir / "recording"
+    recording_dir.mkdir(parents=True)
+    audio_path = recording_dir / "audio.mp3"
+    audio_path.write_bytes(b"fake-audio")
+
+    calls: list[Path] = []
+
+    def fake_transcribe(path: Path) -> dict:
+        calls.append(path)
+        payload = _sample_transcript_payload()
+        payload["source"] = str(path)
+        return payload
+
+    result = transcribe_topic_aroll(
+        topic_dir,
+        transcribe_fn=fake_transcribe,
+        write_cleaned_scaffold=False,
+    )
+
+    assert calls == [audio_path]
+    assert result["video_path"] == str(audio_path)
+    assert (recording_dir / "video.stt.verbose.json").exists()

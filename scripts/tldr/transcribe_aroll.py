@@ -10,6 +10,20 @@ def canonical_recording_video_path(topic_dir: Path) -> Path:
     return topic_dir / "recording" / "video.mp4"
 
 
+def canonical_recording_audio_path(topic_dir: Path) -> Path:
+    return topic_dir / "recording" / "audio.mp3"
+
+
+def canonical_recording_media_path(topic_dir: Path) -> Path:
+    video_path = canonical_recording_video_path(topic_dir)
+    if video_path.exists():
+        return video_path
+    audio_path = canonical_recording_audio_path(topic_dir)
+    if audio_path.exists():
+        return audio_path
+    return video_path
+
+
 def _recording_dir(topic_dir: Path) -> Path:
     return topic_dir / "recording"
 
@@ -135,7 +149,7 @@ def transcribe_topic_aroll(
     transcribe_fn: Callable[[Path], dict[str, Any]] = transcribe_with_faster_whisper,
     write_cleaned_scaffold: bool = False,
 ) -> dict[str, Any]:
-    video_path = canonical_recording_video_path(topic_dir)
+    video_path = canonical_recording_media_path(topic_dir)
     if not video_path.exists():
         raise FileNotFoundError(f"Missing canonical A-roll source: {video_path}")
 
@@ -146,6 +160,7 @@ def transcribe_topic_aroll(
         write_cleaned_scaffold=write_cleaned_scaffold,
     )
     result["video_path"] = str(video_path)
+    result["source_path"] = str(video_path)
     return result
 
 

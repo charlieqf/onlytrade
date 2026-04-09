@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -67,6 +68,27 @@ def _cleaned_transcript_path(job_dir: Path) -> Path:
 
 def _card_plan_path(job_dir: Path) -> Path:
     return _recording_dir(job_dir) / "video.card-plan.json"
+
+
+def _openclaw_bin() -> str:
+    return os.environ.get("OPENCLAW_BIN", "openclaw")
+
+
+def _openclaw_agent_id() -> str:
+    return os.environ.get("OPENCLAW_AGENT_ID", "tldr-pipeline")
+
+
+def _openclaw_workspace_root() -> Path | None:
+    raw = os.environ.get("OPENCLAW_AGENT_WORKSPACE")
+    return Path(raw) if raw else None
+
+
+def _openclaw_env() -> dict[str, str]:
+    env = os.environ.copy()
+    current = env.get("PATH", "")
+    prefix = "/opt/homebrew/bin:/opt/homebrew/opt/python@3.12/libexec/bin"
+    env["PATH"] = f"{prefix}:{current}" if current else prefix
+    return env
 
 
 def _write_topic_json(job_dir: Path, *, topic_key: str, source_mp3: Path) -> None:
@@ -252,19 +274,44 @@ def _validate_agent_outputs(job_dir: Path) -> None:
     _validate_card_plan(job_dir)
 
 
-def run_openclaw_agent_for_job(job_dir: Path) -> dict[str, Any]:
-    prompt = (
-        "Read recording/video.stt.verbose.json. "
-        "Write recording/video.stt.cleaned.md with exactly one non-empty cleaned subtitle line per transcript segment. "
-        "Write recording/video.card-plan.json with 3-6 concise full-screen text cards. "
-        "Do not add facts not grounded in the audio."
+def _build_openclaw_prompt(job_dir: Path) -> str:
+    workspace_root = _openclaw_workspace_root()
+    job_ref = str(job_dir)
+    if workspace_root:
+        try:
+            job_ref = str(job_dir.relative_to(workspace_root))
+        except ValueError:
+            job_ref = str(job_dir)
+    return (
+        f"Operate only inside the job directory '{job_ref}'. "
+        f"Read '{job_ref}/recording/video.stt.verbose.json'. "
+        f"Write '{job_ref}/recording/video.stt.cleaned.md' with exactly one non-empty cleaned subtitle line per transcript segment. "
+        f"Write '{job_ref}/recording/video.card-plan.json' with 3-6 concise full-screen text cards. "
+        "Preserve meaning, remove ASR noise and repetition, and do not add facts not grounded in the audio."
     )
+
+
+def run_openclaw_agent_for_job(job_dir: Path) -> dict[str, Any]:
+    prompt = _build_openclaw_prompt(job_dir)
     result = subprocess.run(
-        ["openclaw", "agent", "--message", prompt, "--thinking", "high"],
+        [
+            _openclaw_bin(),
+            "agent",
+            "--agent",
+            _openclaw_agent_id(),
+            "-m",
+            prompt,
+            "--thinking",
+            "high",
+            "--timeout",
+            "600",
+            "--json",
+        ],
         cwd=str(job_dir),
         capture_output=True,
         text=True,
         check=False,
+        env=_openclaw_env(),
     )
     if result.returncode != 0:
         raise RuntimeError(

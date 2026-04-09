@@ -4,6 +4,7 @@ from pathlib import Path
 from scripts.tldr.run_audio_card_factory import (
     process_content_pipeline_once,
     process_job_once,
+    run_openclaw_agent_for_job,
 )
 
 
@@ -306,3 +307,76 @@ def test_process_job_once_skips_agent_when_cleaned_and_plan_exist(
     )
 
     assert "agent" not in calls
+
+
+def test_run_openclaw_agent_for_job_uses_explicit_agent_and_homebrew_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    job_dir = tmp_path / "2026-04-09" / "job-001"
+    recording_dir = job_dir / "recording"
+    recording_dir.mkdir(parents=True)
+    (recording_dir / "video.stt.verbose.json").write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"id": 0, "start": 0.0, "end": 1.0, "text": "第一句"},
+                    {"id": 1, "start": 1.0, "end": 2.0, "text": "第二句"},
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    calls: dict[str, object] = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = '{"ok":true}'
+        stderr = ""
+
+    def fake_run(cmd, cwd, capture_output, text, check, env):
+        calls["cmd"] = cmd
+        calls["cwd"] = cwd
+        calls["env"] = env
+        (recording_dir / "video.stt.cleaned.md").write_text(
+            "第一句\n\n第二句\n", encoding="utf-8"
+        )
+        (recording_dir / "video.card-plan.json").write_text(
+            json.dumps(
+                {
+                    "headline": "标题",
+                    "cards": [
+                        {
+                            "label": "开场卡",
+                            "headline": "关键点",
+                            "lines": ["第一点", "第二点"],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return FakeResult()
+
+    monkeypatch.setenv("OPENCLAW_AGENT_ID", "tldr-pipeline")
+    monkeypatch.setenv("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw")
+    monkeypatch.setenv("OPENCLAW_AGENT_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    run_openclaw_agent_for_job(job_dir)
+
+    cmd = calls["cmd"]
+    assert cmd[:5] == [
+        "/opt/homebrew/bin/openclaw",
+        "agent",
+        "--agent",
+        "tldr-pipeline",
+        "-m",
+    ]
+    assert "job-001/recording/video.stt.verbose.json" in cmd[5]
+    assert calls["cwd"] == str(job_dir)
+    assert "/opt/homebrew/bin" in calls["env"]["PATH"]

@@ -380,3 +380,54 @@ def test_run_openclaw_agent_for_job_uses_explicit_agent_and_homebrew_path(
     assert "job-001/recording/video.stt.verbose.json" in cmd[5]
     assert calls["cwd"] == str(job_dir)
     assert "/opt/homebrew/bin" in calls["env"]["PATH"]
+
+
+def test_run_openclaw_agent_for_job_accepts_text_only_card_schema(
+    tmp_path: Path, monkeypatch
+) -> None:
+    job_dir = tmp_path / "job-002"
+    recording_dir = job_dir / "recording"
+    recording_dir.mkdir(parents=True)
+    (recording_dir / "video.stt.verbose.json").write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"id": 0, "start": 0.0, "end": 1.0, "text": "第一句"},
+                    {"id": 1, "start": 1.0, "end": 2.0, "text": "第二句"},
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResult:
+        returncode = 0
+        stdout = '{"ok":true}'
+        stderr = ""
+
+    def fake_run(cmd, cwd, capture_output, text, check, env):
+        (recording_dir / "video.stt.cleaned.md").write_text(
+            "第一句\n\n第二句\n", encoding="utf-8"
+        )
+        (recording_dir / "video.card-plan.json").write_text(
+            json.dumps(
+                {
+                    "cards": [
+                        {"text": "开场结论\n第一点\n第二点"},
+                        {"text": "执行动作\n动作一"},
+                    ]
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return FakeResult()
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    result = run_openclaw_agent_for_job(job_dir)
+
+    assert result["status"] == "ok"

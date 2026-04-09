@@ -239,14 +239,17 @@ def _count_cleaned_lines(job_dir: Path) -> int:
 
 def _validate_card_plan(job_dir: Path) -> None:
     payload = json.loads(_card_plan_path(job_dir).read_text(encoding="utf-8"))
-    if not str(payload.get("headline") or "").strip():
-        raise ValueError("video.card-plan.json must contain a non-empty headline")
     cards = payload.get("cards")
     if not isinstance(cards, list) or not cards:
         raise ValueError("video.card-plan.json must contain at least one card")
+    has_global_headline = bool(str(payload.get("headline") or "").strip())
     for card in cards:
         if not isinstance(card, dict):
             raise ValueError("Each card plan entry must be an object")
+        text_only = bool(str(card.get("text") or "").strip())
+        if text_only:
+            has_global_headline = True
+            continue
         if not str(card.get("label") or "").strip():
             raise ValueError("Each card must contain a non-empty label")
         if not str(card.get("headline") or "").strip():
@@ -256,6 +259,10 @@ def _validate_card_plan(job_dir: Path) -> None:
             str(line).strip() for line in lines if str(line).strip()
         ]:
             raise ValueError("Each card must contain at least one non-empty line")
+    if not has_global_headline:
+        raise ValueError(
+            "video.card-plan.json must contain a non-empty headline or text cards"
+        )
 
 
 def _validate_agent_outputs(job_dir: Path) -> None:
@@ -287,6 +294,8 @@ def _build_openclaw_prompt(job_dir: Path) -> str:
         f"Read '{job_ref}/recording/video.stt.verbose.json'. "
         f"Write '{job_ref}/recording/video.stt.cleaned.md' with exactly one non-empty cleaned subtitle line per transcript segment. "
         f"Write '{job_ref}/recording/video.card-plan.json' with 3-6 concise full-screen text cards. "
+        "Preferred JSON schema: {headline, cards:[{label, headline, lines:[...]}]}. "
+        "Fallback schema is allowed only if needed: {cards:[{text:'line1\\nline2'}]}. "
         "Preserve meaning, remove ASR noise and repetition, and do not add facts not grounded in the audio."
     )
 

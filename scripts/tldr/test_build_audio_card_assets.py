@@ -93,3 +93,39 @@ def test_build_audio_card_assets_uses_llm_card_plan_when_present(
     assert result["headline"] == "LLM 清洗后的标题"
     assert result["card_count"] == 2
     assert manifest["recommended_primary_assets"][0]["spoken_section"] == "开场卡"
+
+
+def test_build_audio_card_assets_accepts_text_only_card_plan(tmp_path: Path) -> None:
+    topic_dir = (
+        tmp_path / "data/live/onlytrade/tldr_workspace/2026-04-09/03_audio_topic"
+    )
+    _write_topic_json(topic_dir)
+    recording_dir = topic_dir / "recording"
+    recording_dir.mkdir(parents=True)
+    (recording_dir / "audio.mp3").write_bytes(b"fake-audio")
+    (recording_dir / "video.stt.cleaned.md").write_text(
+        "原始第一句\n\n原始第二句\n",
+        encoding="utf-8",
+    )
+    (recording_dir / "video.card-plan.json").write_text(
+        json.dumps(
+            {
+                "cards": [
+                    {"text": "开场结论\n第一点\n第二点"},
+                    {"text": "执行动作\n动作一\n动作二"},
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = build_audio_card_assets(topic_dir, version="v1")
+    manifest = json.loads(
+        (topic_dir / "sample_cut_v1_asset_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert result["card_count"] == 2
+    assert result["headline"] == "开场结论"
+    assert manifest["recommended_primary_assets"][0]["spoken_section"] == "卡片 1"

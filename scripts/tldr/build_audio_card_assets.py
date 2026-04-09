@@ -89,6 +89,13 @@ def _load_llm_card_plan(topic_dir: Path) -> dict[str, Any] | None:
     return payload
 
 
+def _card_text_lines(card: dict[str, Any]) -> list[str]:
+    text = str(card.get("text") or "").strip()
+    if not text:
+        return []
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font_obj, max_width: int) -> str:
     lines: list[str] = []
     for paragraph in text.split("\n"):
@@ -218,7 +225,7 @@ def build_audio_card_assets(
     card_specs: list[dict[str, Any]] = []
     if llm_plan:
         headline = str(llm_plan.get("headline") or headline).strip() or headline
-        for card in llm_plan.get("cards", []):
+        for index, card in enumerate(llm_plan.get("cards", []), start=1):
             if not isinstance(card, dict):
                 continue
             card_headline = str(card.get("headline") or "").strip()
@@ -227,6 +234,16 @@ def build_audio_card_assets(
             if not isinstance(raw_lines, list):
                 raw_lines = []
             card_lines = [str(line).strip() for line in raw_lines if str(line).strip()]
+            text_only_lines = _card_text_lines(card)
+            if text_only_lines:
+                if not card_headline:
+                    card_headline = text_only_lines[0]
+                if not card_lines:
+                    card_lines = text_only_lines[1:] or [card_headline]
+                if card_label == "核心卡片":
+                    card_label = f"卡片 {index}"
+                if not str(llm_plan.get("headline") or "").strip():
+                    headline = card_headline if index == 1 else headline
             if not card_headline and not card_lines:
                 continue
             card_specs.append(

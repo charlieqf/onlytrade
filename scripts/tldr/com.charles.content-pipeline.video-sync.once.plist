@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.charles.content-pipeline.video-sync.once</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/macmini-4/.openclaw/repos/onlytrade/scripts/tldr/run_content_pipeline_once.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CONTENT_PIPELINE_LANDING_ROOT</key>
+    <string>/Users/macmini-4/.openclaw/runtime/content_pipeline/landing</string>
+    <key>CONTENT_PIPELINE_WORKSPACE_ROOT</key>
+    <string>/Users/macmini-4/.openclaw/runtime/audio_video_jobs</string>
+    <key>CONTENT_PIPELINE_DRIVE_ROOT_ID</key>
+    <string>1YQ_jcbzBae-p-_vMGUxbb9wEcl-L1vbu</string>
+    <key>CONTENT_PIPELINE_DRIVE_ACCOUNT</key>
+    <string>content.pipeline.1@gmail.com</string>
+    <key>CONTENT_PIPELINE_REPLY_ACCOUNT</key>
+    <string>content.pipeline.1@gmail.com</string>
+    <key>CONTENT_PIPELINE_REPLY_AFTER_UPLOAD</key>
+    <string>1</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/macmini-4/.openclaw/runtime/audio_video_jobs/logs/content_pipeline_video_sync_once.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/macmini-4/.openclaw/runtime/audio_video_jobs/logs/content_pipeline_video_sync_once.stderr.log</string>
+</dict>
+</plist>

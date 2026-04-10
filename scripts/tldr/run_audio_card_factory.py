@@ -74,6 +74,10 @@ def _openclaw_bin() -> str:
     return os.environ.get("OPENCLAW_BIN", "openclaw")
 
 
+def _gog_bin() -> str:
+    return os.environ.get("GOG_BIN", shutil.which("gog") or "/opt/homebrew/bin/gog")
+
+
 def _openclaw_agent_id() -> str:
     return os.environ.get("OPENCLAW_AGENT_ID", "tldr-pipeline")
 
@@ -89,6 +93,39 @@ def _openclaw_env() -> dict[str, str]:
     prefix = "/opt/homebrew/bin:/opt/homebrew/opt/python@3.12/libexec/bin"
     env["PATH"] = f"{prefix}:{current}" if current else prefix
     return env
+
+
+def _env_flag(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _content_pipeline_drive_root_id() -> str:
+    return str(os.environ.get("CONTENT_PIPELINE_DRIVE_ROOT_ID") or "").strip()
+
+
+def _content_pipeline_drive_account() -> str:
+    return str(
+        os.environ.get("CONTENT_PIPELINE_DRIVE_ACCOUNT")
+        or os.environ.get("CONTENT_PIPELINE_ACCOUNT")
+        or ""
+    ).strip()
+
+
+def _content_pipeline_reply_account() -> str:
+    return str(
+        os.environ.get("CONTENT_PIPELINE_REPLY_ACCOUNT")
+        or _content_pipeline_drive_account()
+        or ""
+    ).strip()
+
+
+def _content_pipeline_reply_after_upload() -> bool:
+    return _env_flag("CONTENT_PIPELINE_REPLY_AFTER_UPLOAD")
 
 
 def _write_topic_json(job_dir: Path, *, topic_key: str, source_mp3: Path) -> None:
@@ -415,6 +452,378 @@ def process_job_once(
 process_audio_job = process_job_once
 
 
+_TERMINAL_JOB_STATUSES = {"completed", "failed"}
+
+
+def _run_json_command(args: list[str], *, cwd: Path | None = None) -> Any:
+    result = subprocess.run(
+        args,
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_openclaw_env(),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Command failed: "
+            + " ".join(args)
+            + "\n"
+            + (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"exit {result.returncode}"
+            )
+        )
+    stdout = result.stdout.strip()
+    return json.loads(stdout) if stdout else {}
+
+
+def _content_pipeline_state_path(
+    workspace_root: Path, *, date_token: str, message_id: str
+) -> Path:
+    return (
+        workspace_root / date_token / f"content-pipeline-message-{message_id}.sync.json"
+    )
+
+
+def _safe_drive_name(value: str, *, fallback: str) -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|\r\n\t]+", "_", str(value or "")).strip(" ._")
+    return cleaned or fallback
+
+
+def _message_drive_folder_name(group: dict[str, Any]) -> str:
+    subject = _safe_drive_name(
+        str(group.get("source_subject") or "content_pipeline"),
+        fallback="content_pipeline",
+    )
+    return f"{subject}_{group['source_message_id']}"
+
+
+def _message_reply_subject(group: dict[str, Any]) -> str:
+    subject = str(
+        group.get("source_subject") or "Your content pipeline videos are ready"
+    ).strip()
+    if subject.lower().startswith("re:"):
+        return subject
+    return f"Re: {subject}"
+
+
+def _message_reply_body(group: dict[str, Any], state: dict[str, Any]) -> str:
+    lines = [
+        "Your video batch is ready.",
+        f"Google Drive folder: {state['drive_folder_url']}",
+        "",
+        "Uploaded files:",
+    ]
+    lines.extend(
+        f"- {item['filename']}"
+        for item in state.get("uploaded_files", [])
+        if item.get("filename")
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _desired_mp4_filename(job: dict[str, Any]) -> str | None:
+    for key in ("source_attachment_name", "input_name"):
+        raw_name = str(job.get(key) or "").strip()
+        if not raw_name:
+            continue
+        source_name = Path(raw_name).name
+        stem = Path(source_name).stem.strip()
+        if stem:
+            return f"{stem}.mp4"
+    return None
+
+
+def _normalize_completed_output_video(
+    job_dir: Path, job: dict[str, Any]
+) -> dict[str, Any]:
+    output_raw = str(job.get("output_video") or "").strip()
+    if not output_raw:
+        return job
+    output_path = Path(output_raw)
+    if not output_path.exists():
+        return job
+    desired_name = _desired_mp4_filename(job)
+    if not desired_name or output_path.name == desired_name:
+        return job
+
+    desired_path = output_path.with_name(desired_name)
+    if desired_path.exists() and desired_path != output_path:
+        output_path.unlink()
+    elif desired_path != output_path:
+        output_path.rename(desired_path)
+
+    job["output_video"] = str(desired_path)
+    _write_job(job_dir, job)
+
+    for metadata_path in desired_path.parent.glob("*.metadata.json"):
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if metadata.get("video") != desired_path.name:
+            metadata["video"] = desired_path.name
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+    return job
+
+
+def _collect_content_pipeline_message_groups(
+    workspace_root: Path,
+    *,
+    message_ids: set[str] | None = None,
+    date_tokens: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for date_dir in sorted(Path(workspace_root).iterdir()):
+        if not date_dir.is_dir():
+            continue
+        if date_tokens and date_dir.name not in date_tokens:
+            continue
+        for job_json_path in sorted(date_dir.glob("*/job.json")):
+            job_dir = job_json_path.parent
+            job = _load_job(job_dir)
+            message_id = str(job.get("source_message_id") or "").strip()
+            if not message_id:
+                continue
+            if message_ids and message_id not in message_ids:
+                continue
+            key = (date_dir.name, message_id)
+            group = groups.setdefault(
+                key,
+                {
+                    "date_token": date_dir.name,
+                    "source_message_id": message_id,
+                    "source_thread_id": str(job.get("source_thread_id") or ""),
+                    "source_subject": str(job.get("source_subject") or ""),
+                    "source_sender": str(job.get("source_sender") or ""),
+                    "jobs": [],
+                },
+            )
+            group["jobs"].append({"job_dir": job_dir, "job": job})
+    return list(groups.values())
+
+
+def sync_content_pipeline_message_groups(
+    *,
+    workspace_root: Path,
+    message_ids: set[str] | None,
+    date_tokens: set[str] | None,
+    drive_root_id: str,
+    drive_account: str,
+    reply_after_upload: bool = False,
+    reply_account: str | None = None,
+) -> dict[str, Any]:
+    workspace_root = Path(workspace_root)
+    drive_root_id = str(drive_root_id or "").strip()
+    drive_account = str(drive_account or "").strip()
+    reply_account = str(reply_account or drive_account or "").strip()
+    if not drive_root_id or not drive_account:
+        return {
+            "pending_group_count": 0,
+            "uploaded_group_count": 0,
+            "uploaded_file_count": 0,
+            "replied_group_count": 0,
+        }
+
+    pending_group_count = 0
+    uploaded_group_count = 0
+    uploaded_file_count = 0
+    replied_group_count = 0
+
+    for group in _collect_content_pipeline_message_groups(
+        workspace_root,
+        message_ids=message_ids,
+        date_tokens=date_tokens,
+    ):
+        jobs = group["jobs"]
+        if any(
+            str(item["job"].get("status") or "") not in _TERMINAL_JOB_STATUSES
+            for item in jobs
+        ):
+            pending_group_count += 1
+            continue
+
+        completed_jobs = []
+        for item in jobs:
+            job = _normalize_completed_output_video(Path(item["job_dir"]), item["job"])
+            output_video = Path(str(job.get("output_video") or ""))
+            if job.get("status") == "completed" and output_video.exists():
+                completed_jobs.append(
+                    {
+                        "job_dir": Path(item["job_dir"]),
+                        "job": job,
+                        "output_video": output_video,
+                    }
+                )
+        if not completed_jobs:
+            continue
+
+        state_path = _content_pipeline_state_path(
+            workspace_root,
+            date_token=group["date_token"],
+            message_id=group["source_message_id"],
+        )
+        state = (
+            json.loads(state_path.read_text(encoding="utf-8"))
+            if state_path.exists()
+            else {
+                "source_message_id": group["source_message_id"],
+                "source_thread_id": group["source_thread_id"],
+                "source_subject": group["source_subject"],
+                "source_sender": group["source_sender"],
+                "uploaded_files": [],
+                "reply_status": "pending",
+            }
+        )
+        uploaded_by_job = {
+            str(item.get("job_id") or ""): item
+            for item in state.get("uploaded_files", [])
+            if isinstance(item, dict)
+        }
+
+        if not state.get("drive_folder_id"):
+            folder_payload = _run_json_command(
+                [
+                    _gog_bin(),
+                    "drive",
+                    "mkdir",
+                    _message_drive_folder_name(group),
+                    "-a",
+                    drive_account,
+                    "--parent",
+                    drive_root_id,
+                    "--json",
+                    "--results-only",
+                    "--no-input",
+                ]
+            )
+            state["drive_folder_id"] = str(folder_payload.get("id") or "")
+            state["drive_folder_url"] = (
+                f"https://drive.google.com/drive/folders/{state['drive_folder_id']}"
+                if state["drive_folder_id"]
+                else ""
+            )
+
+        uploaded_this_group = False
+        for item in completed_jobs:
+            job_dir = Path(item["job_dir"])
+            output_video = Path(item["output_video"])
+            job_id = job_dir.name
+            size_bytes = output_video.stat().st_size
+            existing = uploaded_by_job.get(job_id)
+            if (
+                existing
+                and existing.get("size_bytes") == size_bytes
+                and existing.get("filename") == output_video.name
+            ):
+                continue
+            existing_drive_file_id = str(
+                (existing or {}).get("drive_file_id") or ""
+            ).strip()
+            if existing_drive_file_id:
+                _run_json_command(
+                    [
+                        _gog_bin(),
+                        "drive",
+                        "delete",
+                        existing_drive_file_id,
+                        "-a",
+                        drive_account,
+                        "--force",
+                        "--json",
+                        "--results-only",
+                        "--no-input",
+                    ]
+                )
+            upload_payload = _run_json_command(
+                [
+                    _gog_bin(),
+                    "drive",
+                    "upload",
+                    str(output_video),
+                    "-a",
+                    drive_account,
+                    "--parent",
+                    str(state["drive_folder_id"]),
+                    "--name",
+                    output_video.name,
+                    "--json",
+                    "--results-only",
+                    "--no-input",
+                ]
+            )
+            uploaded_by_job[job_id] = {
+                "job_id": job_id,
+                "filename": output_video.name,
+                "output_video": str(output_video),
+                "size_bytes": size_bytes,
+                "drive_file_id": str(upload_payload.get("id") or ""),
+            }
+            uploaded_this_group = True
+            uploaded_file_count += 1
+
+        state["uploaded_files"] = sorted(
+            uploaded_by_job.values(), key=lambda item: str(item.get("job_id") or "")
+        )
+        if uploaded_this_group:
+            uploaded_group_count += 1
+
+        state["last_synced_at"] = datetime.now().isoformat()
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        if (
+            reply_after_upload
+            and reply_account
+            and state.get("uploaded_files")
+            and state.get("reply_status") != "sent"
+            and group.get("source_message_id")
+        ):
+            reply_payload = _run_json_command(
+                [
+                    _gog_bin(),
+                    "gmail",
+                    "send",
+                    "-a",
+                    reply_account,
+                    "--subject",
+                    _message_reply_subject(group),
+                    "--body",
+                    _message_reply_body(group, state),
+                    "--reply-to-message-id",
+                    str(group["source_message_id"]),
+                    "--reply-all",
+                    "--json",
+                    "--results-only",
+                    "--no-input",
+                ]
+            )
+            state["reply_status"] = "sent"
+            state["reply_message_id"] = str(reply_payload.get("id") or "")
+            replied_group_count += 1
+
+        state["last_synced_at"] = datetime.now().isoformat()
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    return {
+        "pending_group_count": pending_group_count,
+        "uploaded_group_count": uploaded_group_count,
+        "uploaded_file_count": uploaded_file_count,
+        "replied_group_count": replied_group_count,
+    }
+
+
 def _normalize_landing_date(token: str) -> str:
     digits = "".join(char for char in str(token or "") if char.isdigit())
     if len(digits) >= 8:
@@ -427,16 +836,26 @@ def process_content_pipeline_once(
     landing_root: Path,
     workspace_root: Path,
     process_job_fn: Callable[[Path], dict[str, Any]] = process_job_once,
+    drive_root_id: str | None = None,
+    drive_account: str | None = None,
+    reply_after_upload: bool | None = None,
+    reply_account: str | None = None,
 ) -> dict[str, Any]:
     landing_root = Path(landing_root)
     workspace_root = Path(workspace_root)
     processed_count = 0
     skipped_count = 0
     failed_count = 0
+    message_ids: set[str] = set()
+    date_tokens: set[str] = set()
 
     for metadata_path in sorted(landing_root.glob("**/incoming/*/metadata.json")):
         message_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         date_token = _normalize_landing_date(metadata_path.parts[-4])
+        date_tokens.add(date_token)
+        message_id = str(message_metadata.get("messageId") or "").strip()
+        if message_id:
+            message_ids.add(message_id)
         saved_files = message_metadata.get("savedFiles")
         if not isinstance(saved_files, list):
             continue
@@ -469,11 +888,40 @@ def process_content_pipeline_once(
                 _write_job(job_dir, job)
                 failed_count += 1
 
-    return {
+    result = {
         "processed_count": processed_count,
         "skipped_count": skipped_count,
         "failed_count": failed_count,
     }
+
+    resolved_drive_root_id = str(
+        drive_root_id or _content_pipeline_drive_root_id()
+    ).strip()
+    resolved_drive_account = str(
+        drive_account or _content_pipeline_drive_account()
+    ).strip()
+    resolved_reply_after_upload = (
+        _content_pipeline_reply_after_upload()
+        if reply_after_upload is None
+        else bool(reply_after_upload)
+    )
+    resolved_reply_account = str(
+        reply_account or _content_pipeline_reply_account()
+    ).strip()
+    if resolved_drive_root_id and resolved_drive_account:
+        result.update(
+            sync_content_pipeline_message_groups(
+                workspace_root=workspace_root,
+                message_ids=message_ids,
+                date_tokens=date_tokens,
+                drive_root_id=resolved_drive_root_id,
+                drive_account=resolved_drive_account,
+                reply_after_upload=resolved_reply_after_upload,
+                reply_account=resolved_reply_account,
+            )
+        )
+
+    return result
 
 
 def process_dropbox_once(
@@ -539,10 +987,18 @@ def watch_content_pipeline_factory(
     workspace_root: Path,
     poll_seconds: int = 15,
     once: bool = False,
+    drive_root_id: str | None = None,
+    drive_account: str | None = None,
+    reply_after_upload: bool | None = None,
+    reply_account: str | None = None,
 ) -> dict[str, Any]:
     result = process_content_pipeline_once(
         landing_root=landing_root,
         workspace_root=workspace_root,
+        drive_root_id=drive_root_id,
+        drive_account=drive_account,
+        reply_after_upload=reply_after_upload,
+        reply_account=reply_account,
     )
     if once:
         return result
@@ -551,6 +1007,10 @@ def watch_content_pipeline_factory(
         result = process_content_pipeline_once(
             landing_root=landing_root,
             workspace_root=workspace_root,
+            drive_root_id=drive_root_id,
+            drive_account=drive_account,
+            reply_after_upload=reply_after_upload,
+            reply_account=reply_account,
         )
 
 
@@ -563,6 +1023,10 @@ def main() -> None:
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument("--poll-seconds", type=int, default=15)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--drive-root-id")
+    parser.add_argument("--drive-account")
+    parser.add_argument("--reply-account")
+    parser.add_argument("--reply-after-upload", action="store_true", default=None)
     args = parser.parse_args()
 
     if not args.input_dir and not args.landing_root:
@@ -576,6 +1040,10 @@ def main() -> None:
             workspace_root=Path(args.workspace_root),
             poll_seconds=args.poll_seconds,
             once=args.once,
+            drive_root_id=args.drive_root_id,
+            drive_account=args.drive_account,
+            reply_after_upload=args.reply_after_upload,
+            reply_account=args.reply_account,
         )
     else:
         result = watch_audio_card_factory(

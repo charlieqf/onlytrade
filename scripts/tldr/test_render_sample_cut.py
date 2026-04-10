@@ -27,6 +27,13 @@ def _write_topic_json(
     )
 
 
+def _write_job_json(topic_dir: Path, **payload: object) -> None:
+    (topic_dir / "job.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def test_create_render_context_uses_standard_output_names(tmp_path: Path) -> None:
     root_dir = tmp_path
     topic_dir = root_dir / "data/live/onlytrade/tldr_workspace/2026-03-26/01_test_topic"
@@ -62,6 +69,24 @@ def test_create_render_context_uses_standard_output_names(tmp_path: Path) -> Non
         "preview_7_9s.jpg",
         "preview_24s.jpg",
     ]
+
+
+def test_create_render_context_prefers_job_input_name_for_audio_card_outputs(
+    tmp_path: Path,
+) -> None:
+    root_dir = tmp_path
+    topic_dir = root_dir / "data/live/onlytrade/tldr_workspace/2026-03-26/01_test_topic"
+    _write_topic_json(topic_dir)
+    _write_job_json(topic_dir, input_name="历史的温度.mp3")
+
+    context = create_render_context(
+        topic_dir,
+        version="v1",
+        root_dir=root_dir,
+        preview_seconds=[1],
+    )
+
+    assert context.output_video_path == topic_dir / "sample_cut_v1" / "历史的温度.mp4"
 
 
 def test_render_sample_cut_invokes_runner_and_writes_metadata_and_process_note(

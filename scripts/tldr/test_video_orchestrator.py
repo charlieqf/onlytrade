@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.tldr.run_audio_card_factory import (
     process_content_pipeline_once,
     process_job_once,
     run_openclaw_agent_for_job,
+    sync_content_pipeline_message_groups,
 )
 
 
@@ -431,3 +434,343 @@ def test_run_openclaw_agent_for_job_accepts_text_only_card_schema(
     result = run_openclaw_agent_for_job(job_dir)
 
     assert result["status"] == "ok"
+
+
+def _write_completed_content_pipeline_job(
+    workspace_root: Path,
+    *,
+    date_token: str,
+    job_id: str,
+    message_id: str,
+    thread_id: str = "thread-001",
+    subject: str = "voice_to_video_[1]",
+    sender: str = '"Sender" <sender@example.com>',
+    output_name: str | None = None,
+    input_name: str = "first.mp3",
+    source_attachment_name: str | None = None,
+    status: str = "completed",
+) -> Path:
+    job_dir = workspace_root / date_token / job_id
+    sample_dir = job_dir / "sample_cut_v1"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    output_path = sample_dir / (output_name or f"{job_id}_sample_v1.mp4")
+    output_path.write_bytes(b"fake-mp4")
+    payload = {
+        "status": status,
+        "source_message_id": message_id,
+        "source_thread_id": thread_id,
+        "source_subject": subject,
+        "source_sender": sender,
+        "input_name": input_name,
+        "source_attachment_name": source_attachment_name or input_name,
+        "output_video": str(output_path),
+    }
+    (job_dir / "job.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return job_dir
+
+
+def test_sync_content_pipeline_message_groups_uploads_and_replies(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-1",
+        message_id="msg-001",
+        output_name="first.mp4",
+    )
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-2",
+        message_id="msg-001",
+        output_name="second.mp4",
+    )
+
+    commands: list[list[str]] = []
+
+    class FakeResult:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, cwd, capture_output, text, check, env):
+        commands.append(cmd)
+        if cmd[1:3] == ["drive", "mkdir"]:
+            return FakeResult(json.dumps({"id": "drive-folder-001"}))
+        if cmd[1:3] == ["drive", "upload"]:
+            file_name = Path(cmd[3]).name
+            return FakeResult(json.dumps({"id": f"upload-{file_name}"}))
+        if cmd[1:3] == ["gmail", "send"]:
+            return FakeResult(json.dumps({"id": "reply-001"}))
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    result = sync_content_pipeline_message_groups(
+        workspace_root=workspace_root,
+        message_ids={"msg-001"},
+        date_tokens={"2026-04-09"},
+        drive_root_id="drive-root-001",
+        drive_account="content.pipeline.1@gmail.com",
+        reply_after_upload=True,
+    )
+
+    assert result["uploaded_group_count"] == 1
+    assert result["uploaded_file_count"] == 2
+    assert result["replied_group_count"] == 1
+    state_path = (
+        workspace_root / "2026-04-09" / "content-pipeline-message-msg-001.sync.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["drive_folder_id"] == "drive-folder-001"
+    assert state["drive_folder_url"].endswith("drive-folder-001")
+    assert len(state["uploaded_files"]) == 2
+    assert state["reply_status"] == "sent"
+    assert any(cmd[1:3] == ["drive", "mkdir"] for cmd in commands)
+    assert sum(1 for cmd in commands if cmd[1:3] == ["drive", "upload"]) == 2
+    gmail_send = next(cmd for cmd in commands if cmd[1:3] == ["gmail", "send"])
+    assert "--reply-to-message-id" in gmail_send
+    assert "--thread-id" not in gmail_send
+
+
+def test_sync_content_pipeline_message_groups_waits_for_terminal_jobs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-1",
+        message_id="msg-001",
+    )
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-2",
+        message_id="msg-001",
+        status="agent_completed",
+    )
+
+    def fake_run(*_args, **_kwargs):
+        raise AssertionError(
+            "No external command should run before all jobs are terminal"
+        )
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    result = sync_content_pipeline_message_groups(
+        workspace_root=workspace_root,
+        message_ids={"msg-001"},
+        date_tokens={"2026-04-09"},
+        drive_root_id="drive-root-001",
+        drive_account="content.pipeline.1@gmail.com",
+        reply_after_upload=True,
+    )
+
+    assert result["pending_group_count"] == 1
+    assert result["uploaded_group_count"] == 0
+    assert result["replied_group_count"] == 0
+
+
+def test_sync_content_pipeline_message_groups_is_idempotent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-1",
+        message_id="msg-001",
+        output_name="first.mp4",
+    )
+
+    state_path = (
+        workspace_root / "2026-04-09" / "content-pipeline-message-msg-001.sync.json"
+    )
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "source_message_id": "msg-001",
+                "drive_folder_id": "drive-folder-001",
+                "drive_folder_url": "https://drive.google.com/drive/folders/drive-folder-001",
+                "uploaded_files": [
+                    {
+                        "job_id": "audio-card-job-1",
+                        "filename": "first.mp4",
+                        "output_video": str(
+                            workspace_root
+                            / "2026-04-09"
+                            / "audio-card-job-1"
+                            / "sample_cut_v1"
+                            / "first.mp4"
+                        ),
+                        "size_bytes": len(b"fake-mp4"),
+                        "drive_file_id": "upload-first.mp4",
+                    }
+                ],
+                "reply_status": "sent",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run(*_args, **_kwargs):
+        raise AssertionError("Idempotent sync should not re-upload or re-send")
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    result = sync_content_pipeline_message_groups(
+        workspace_root=workspace_root,
+        message_ids={"msg-001"},
+        date_tokens={"2026-04-09"},
+        drive_root_id="drive-root-001",
+        drive_account="content.pipeline.1@gmail.com",
+        reply_after_upload=True,
+    )
+
+    assert result["uploaded_group_count"] == 0
+    assert result["replied_group_count"] == 0
+
+
+def test_sync_content_pipeline_message_groups_persists_upload_state_before_reply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-1",
+        message_id="msg-001",
+        output_name="first.mp4",
+    )
+
+    class FakeResult:
+        def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, cwd, capture_output, text, check, env):
+        if cmd[1:3] == ["drive", "mkdir"]:
+            return FakeResult(json.dumps({"id": "drive-folder-001"}))
+        if cmd[1:3] == ["drive", "upload"]:
+            return FakeResult(json.dumps({"id": "upload-first.mp4"}))
+        if cmd[1:3] == ["gmail", "send"]:
+            return FakeResult("", returncode=1, stderr="reply failed")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="reply failed"):
+        sync_content_pipeline_message_groups(
+            workspace_root=workspace_root,
+            message_ids={"msg-001"},
+            date_tokens={"2026-04-09"},
+            drive_root_id="drive-root-001",
+            drive_account="content.pipeline.1@gmail.com",
+            reply_after_upload=True,
+        )
+
+    state_path = (
+        workspace_root / "2026-04-09" / "content-pipeline-message-msg-001.sync.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["drive_folder_id"] == "drive-folder-001"
+    assert len(state["uploaded_files"]) == 1
+    assert state["reply_status"] == "pending"
+
+
+def test_sync_content_pipeline_message_groups_repairs_old_output_name_and_reuploads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    job_dir = _write_completed_content_pipeline_job(
+        workspace_root,
+        date_token="2026-04-09",
+        job_id="audio-card-job-1",
+        message_id="msg-001",
+        input_name="历史的温度.mp3",
+        output_name="audio-card-job-1_sample_v1.mp4",
+    )
+
+    state_path = (
+        workspace_root / "2026-04-09" / "content-pipeline-message-msg-001.sync.json"
+    )
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "source_message_id": "msg-001",
+                "drive_folder_id": "drive-folder-001",
+                "drive_folder_url": "https://drive.google.com/drive/folders/drive-folder-001",
+                "uploaded_files": [
+                    {
+                        "job_id": "audio-card-job-1",
+                        "filename": "audio-card-job-1_sample_v1.mp4",
+                        "output_video": str(
+                            job_dir / "sample_cut_v1" / "audio-card-job-1_sample_v1.mp4"
+                        ),
+                        "size_bytes": len(b"fake-mp4"),
+                        "drive_file_id": "upload-old-name",
+                    }
+                ],
+                "reply_status": "sent",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    commands: list[list[str]] = []
+
+    class FakeResult:
+        def __init__(self, stdout: str) -> None:
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(cmd, cwd, capture_output, text, check, env):
+        commands.append(cmd)
+        if cmd[1:3] == ["drive", "delete"]:
+            return FakeResult(json.dumps({"id": cmd[3]}))
+        if cmd[1:3] == ["drive", "upload"]:
+            return FakeResult(json.dumps({"id": "upload-fixed-name"}))
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr("scripts.tldr.run_audio_card_factory.subprocess.run", fake_run)
+
+    result = sync_content_pipeline_message_groups(
+        workspace_root=workspace_root,
+        message_ids={"msg-001"},
+        date_tokens={"2026-04-09"},
+        drive_root_id="drive-root-001",
+        drive_account="content.pipeline.1@gmail.com",
+        reply_after_upload=True,
+    )
+
+    fixed_path = job_dir / "sample_cut_v1" / "历史的温度.mp4"
+    assert fixed_path.exists()
+    assert not (job_dir / "sample_cut_v1" / "audio-card-job-1_sample_v1.mp4").exists()
+    job = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+    assert job["output_video"] == str(fixed_path)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["uploaded_files"][0]["filename"] == "历史的温度.mp4"
+    assert state["uploaded_files"][0]["drive_file_id"] == "upload-fixed-name"
+    delete_cmd = next(cmd for cmd in commands if cmd[1:3] == ["drive", "delete"])
+    assert delete_cmd[3] == "upload-old-name"
+    assert "--force" in delete_cmd
+    upload_cmd = next(cmd for cmd in commands if cmd[1:3] == ["drive", "upload"])
+    assert Path(upload_cmd[3]).name == "历史的温度.mp4"
+    assert result["uploaded_group_count"] == 1
+    assert result["uploaded_file_count"] == 1
+    assert result["replied_group_count"] == 0

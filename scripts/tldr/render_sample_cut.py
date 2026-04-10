@@ -31,6 +31,25 @@ def _load_topic_json(topic_dir: Path) -> dict:
     return json.loads(topic_path.read_text(encoding="utf-8"))
 
 
+def _preferred_output_video_name(
+    topic_dir: Path, *, topic_key: str, version: str
+) -> str:
+    job_path = topic_dir / "job.json"
+    if job_path.exists():
+        try:
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            job = {}
+        for key in ("source_attachment_name", "input_name"):
+            raw_name = str(job.get(key) or "").strip()
+            if raw_name:
+                source_name = Path(raw_name).name
+                stem = Path(source_name).stem.strip()
+                if stem:
+                    return f"{stem}.mp4"
+    return f"{topic_key}_sample_{version}.mp4"
+
+
 @dataclass
 class RenderContext:
     root_dir: Path
@@ -62,7 +81,9 @@ def create_render_context(
     topic_key = str(topic_data["topic_key"])
     version = _normalize_version(version)
     output_dir = topic_dir / f"sample_cut_{version}"
-    output_video_path = output_dir / f"{topic_key}_sample_{version}.mp4"
+    output_video_path = output_dir / _preferred_output_video_name(
+        topic_dir, topic_key=topic_key, version=version
+    )
     preview_values = [float(v) for v in preview_seconds]
     preview_paths = [output_dir / _preview_name(value) for value in preview_values]
     return RenderContext(
